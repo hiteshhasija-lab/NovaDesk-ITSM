@@ -1,0 +1,107 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+      <i class="bi bi-search text-info me-1"></i>Problems
+      <% if (filters.status === 'open') { %>
+        <span class="badge bg-secondary align-middle">Open Only</span>
+        <a href="/problems" class="small ms-1">clear</a>
+      <% } %>
+    </h4>
+    <a href="/problems/new" class="btn btn-info btn-sm text-white"><i class="bi bi-plus-lg"></i> New Problem</a>
+  </div>
+
+  <form class="row g-2 mb-3" id="problemsFilterForm" method="GET">
+    <div class="col-md-3">
+      <input type="text" id="problemsLiveSearch" name="q" value="<%= filters.q || '' %>" class="form-control form-control-sm" placeholder="Search number, description, or CI..." autocomplete="off">
+    </div>
+    <div class="col-md-2">
+      <select name="priority" class="form-select form-select-sm auto-filter">
+        <option value="">All priorities</option>
+        <% [1,2,3,4].forEach(p => { %>
+          <option value="<%= p %>" <%= String(filters.priority) === String(p) ? 'selected' : '' %>>P<%= p %> - <%= h.PRIORITY_LABELS[p] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="status" class="form-select form-select-sm auto-filter">
+        <option value="">All statuses</option>
+        <option value="open" <%= filters.status === 'open' ? 'selected' : '' %>>Open (Not Resolved/Closed)</option>
+        <% ['new','investigating','known_error','resolved','closed'].forEach(s => { %>
+          <option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= h.PROBLEM_STATUS_LABELS[s] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <select name="assigned_to" class="form-select form-select-sm auto-filter">
+        <option value="">Assigned to anyone</option>
+        <option value="unassigned" <%= filters.assigned_to === 'unassigned' ? 'selected' : '' %>>Unassigned</option>
+        <% assignableUsers.forEach(u => { %>
+          <option value="<%= u.id %>" <%= String(filters.assigned_to) === String(u.id) ? 'selected' : '' %>><%= u.full_name %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Go</button>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Number</th><th>Short Description</th><th>Priority</th><th>Status</th>
+            <th>Assigned To</th><th>Affected CI</th><th>Linked Incidents</th><th>Created</th>
+          </tr>
+        </thead>
+        <tbody id="problemsTableBody">
+          <% if (problems.length === 0) { %>
+            <tr><td colspan="8" class="text-center text-muted py-4">No problems found.</td></tr>
+          <% } %>
+          <% problems.forEach(p => { %>
+          <tr onclick="window.location='/problems/<%= p.id %>'" data-search="<%= [p.number, p.short_description, p.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+            <td class="fw-semibold"><%= p.number %></td>
+            <td><%= p.short_description %></td>
+            <td><span class="badge bg-<%= h.PRIORITY_BADGE[p.priority] %>">P<%= p.priority %> · <%= h.PRIORITY_LABELS[p.priority] %></span></td>
+            <td><span class="badge bg-<%= h.PROBLEM_STATUS_BADGE[p.status] %>"><%= h.PROBLEM_STATUS_LABELS[p.status] %></span></td>
+            <td><%= p.assigned_name || 'Unassigned' %></td>
+            <td><%= p.ci_name || '—' %></td>
+            <td><span class="badge bg-secondary"><%= p.incident_count %></span></td>
+            <td class="small text-muted"><%= h.fmtDateShort(p.created_at) %></td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <div id="problemsNoLiveResults" class="text-center text-muted py-4" hidden>No problems match "<span id="problemsNoLiveResultsQuery"></span>".</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('#problemsFilterForm .auto-filter').forEach(function (el) {
+    el.addEventListener('change', function () { el.form.submit(); });
+  });
+
+  (function () {
+    var input = document.getElementById('problemsLiveSearch');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#problemsTableBody tr[data-search]'));
+    var noResults = document.getElementById('problemsNoLiveResults');
+    var noResultsQuery = document.getElementById('problemsNoLiveResultsQuery');
+    if (!input || rows.length === 0) return;
+
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var visibleCount = 0;
+      rows.forEach(function (row) {
+        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+        row.hidden = !match;
+        if (match) visibleCount++;
+      });
+      noResults.hidden = !(q && visibleCount === 0);
+      noResultsQuery.textContent = input.value.trim();
+    });
+  })();
+</script>
+<%- include('../partials/foot') %>

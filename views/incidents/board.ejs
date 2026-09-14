@@ -1,0 +1,77 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-exclamation-triangle text-primary me-1"></i>Incident Board</h4>
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group view-toggle" role="group">
+        <a href="/incidents" class="btn btn-sm btn-outline-secondary"><i class="bi bi-list-ul"></i> List</a>
+        <a href="/incidents/board" class="btn btn-sm btn-secondary"><i class="bi bi-kanban"></i> Board</a>
+      </div>
+      <a href="/incidents/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New Incident</a>
+    </div>
+  </div>
+
+  <div class="board-wrap">
+    <% columns.forEach(col => { %>
+      <div class="board-col">
+        <div class="board-col-head">
+          <span><%= col.label %></span>
+          <span class="board-col-count"><%= col.items.length %></span>
+        </div>
+        <div class="board-col-body" data-status="<%= col.status %>">
+          <% col.items.forEach(inc => { %>
+            <% const sla = h.slaStatus(inc); %>
+            <div class="board-card <%= sla.key === 'breached' ? 'border-danger' : '' %>" data-id="<%= inc.id %>" onclick="if(!window.__dragging) window.location='/incidents/<%= inc.id %>'">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="card-number"><%= inc.number %></span>
+                <span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %>">P<%= inc.priority %></span>
+              </div>
+              <p class="card-desc"><%= inc.short_description %></p>
+              <div class="card-meta">
+                <span><i class="bi bi-person"></i> <%= inc.assigned_name || 'Unassigned' %></span>
+                <% if (inc.ci_name) { %><span><i class="bi bi-hdd-stack"></i> <%= inc.ci_name %></span><% } %>
+              </div>
+              <% if (['breached','at_risk'].includes(sla.key)) { %>
+              <div class="mt-1"><span class="badge bg-<%= sla.badge %>"><i class="bi bi-clock-history"></i> <%= sla.label %></span></div>
+              <% } %>
+            </div>
+          <% }) %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script>
+  function updateCount(colBody) {
+    var count = colBody.querySelectorAll('.board-card').length;
+    var badge = colBody.closest('.board-col').querySelector('.board-col-count');
+    badge.textContent = count;
+  }
+  document.querySelectorAll('.board-col-body').forEach(function (col) {
+    new Sortable(col, {
+      group: 'incidents',
+      animation: 150,
+      forceFallback: true,
+      fallbackTolerance: 3,
+      onStart: function () { window.__dragging = true; },
+      onEnd: function (evt) {
+        setTimeout(function () { window.__dragging = false; }, 50);
+        var id = evt.item.getAttribute('data-id');
+        var newStatus = evt.to.getAttribute('data-status');
+        if (evt.from === evt.to) return;
+        fetch('/incidents/' + id + '/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus })
+        }).then(function (r) {
+          if (!r.ok) { alert('Could not update status — reverting.'); location.reload(); return; }
+          updateCount(evt.from); updateCount(evt.to);
+        }).catch(function () { alert('Network error — reverting.'); location.reload(); });
+      }
+    });
+  });
+</script>
+<%- include('../partials/foot') %>

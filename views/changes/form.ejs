@@ -1,0 +1,76 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-arrow-repeat text-warning me-1"></i>New Change Request</h4>
+  <div class="card">
+    <div class="card-body">
+      <form method="POST" action="/changes">
+        <div class="row g-3">
+          <div class="col-md-12">
+            <label class="form-label">Short Description *</label>
+            <input type="text" name="short_description" class="form-control" required>
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="3"></textarea>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Change Type</label>
+            <select name="change_type" class="form-select">
+              <option value="standard">Standard</option>
+              <option value="normal" selected>Normal</option>
+              <option value="emergency">Emergency</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Risk</label>
+            <select name="risk" class="form-select">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Assigned To</label>
+            <select name="assigned_to" class="form-select">
+              <option value="">Unassigned</option>
+              <% users.filter(u => u.role !== 'user').forEach(u => { %>
+                <option value="<%= u.id %>"><%= u.full_name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Planned Start</label>
+            <input type="datetime-local" name="planned_start" class="form-control">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Planned End</label>
+            <input type="datetime-local" name="planned_end" class="form-control">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Affected Configuration Item</label>
+            <select name="affected_ci_id" class="form-select">
+              <option value="">None</option>
+              <% cis.forEach(c => { %>
+                <option value="<%= c.id %>"><%= c.ci_number %> — <%= c.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Implementation Plan</label>
+            <textarea name="implementation_plan" class="form-control" rows="3"></textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Backout Plan</label>
+            <textarea name="backout_plan" class="form-control" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="mt-4">
+          <button type="submit" class="btn btn-warning"><i class="bi bi-check-lg"></i> Create Change Request</button>
+          <a href="/changes" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

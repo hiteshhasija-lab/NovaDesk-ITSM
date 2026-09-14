@@ -1,0 +1,71 @@
+<nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
+  <div class="container-fluid px-3">
+    <a class="navbar-brand fw-bold" href="/"><i class="bi bi-diagram-3-fill me-1"></i>NovaDesk</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMain">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item"><a class="nav-link <%= path === '/' ? 'active' : '' %>" href="/"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a></li>
+        <% if (currentUser && ['admin','agent'].includes(currentUser.role)) { %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/my-work') ? 'active' : '' %>" href="/my-work"><i class="bi bi-person-workspace me-1"></i>My Work</a></li>
+        <% } %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/incidents') ? 'active' : '' %>" href="/incidents"><i class="bi bi-exclamation-triangle me-1"></i>Incidents</a></li>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/changes') ? 'active' : '' %>" href="/changes"><i class="bi bi-arrow-repeat me-1"></i>Changes</a></li>
+        <% if (currentUser && ['admin','agent'].includes(currentUser.role)) { %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/problems') ? 'active' : '' %>" href="/problems"><i class="bi bi-search me-1"></i>Problems</a></li>
+        <% } %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/cmdb') ? 'active' : '' %>" href="/cmdb"><i class="bi bi-hdd-stack me-1"></i>CMDB</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle <%= (path.startsWith('/catalog') || path.startsWith('/requests') || path.startsWith('/kb')) ? 'active' : '' %>" href="#" role="button" data-bs-toggle="dropdown"><i class="bi bi-life-preserver me-1"></i>Self-Service</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="/catalog"><i class="bi bi-shop me-1"></i> Service Catalog</a></li>
+            <li><a class="dropdown-item" href="/requests"><i class="bi bi-list-check me-1"></i> My Requests</a></li>
+            <li><a class="dropdown-item" href="/kb"><i class="bi bi-journal-text me-1"></i> Knowledge Base</a></li>
+          </ul>
+        </li>
+        <% if (currentUser && ['admin','agent'].includes(currentUser.role)) { %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/notifications') ? 'active' : '' %>" href="/notifications"><i class="bi bi-envelope me-1"></i>Notifications</a></li>
+        <% } %>
+        <% if (currentUser && currentUser.role === 'admin') { %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/users') ? 'active' : '' %>" href="/users"><i class="bi bi-people me-1"></i>Users</a></li>
+        <% } %>
+      </ul>
+      <% if (currentUser) { %>
+      <form class="d-flex me-2" action="/search" method="GET" role="search">
+        <div class="input-group input-group-sm">
+          <input type="search" name="q" class="form-control form-control-sm" placeholder="Search..." value="<%= typeof q !== 'undefined' ? q : '' %>">
+          <button class="btn btn-sm btn-outline-light" type="submit" aria-label="Search"><i class="bi bi-search"></i></button>
+        </div>
+      </form>
+      <% } %>
+      <ul class="navbar-nav align-items-lg-center">
+        <li class="nav-item me-2">
+          <button type="button" class="theme-toggle" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+            <i class="bi bi-sun-fill"></i><i class="bi bi-moon-stars-fill"></i>
+          </button>
+        </li>
+        <% if (currentUser) { %>
+        <li class="nav-item me-2">
+          <a href="/profile" class="badge text-bg-light text-dark text-decoration-none"><%= currentUser.full_name %> · <span class="text-capitalize"><%= currentUser.role %></span></a>
+        </li>
+        <li class="nav-item">
+          <form action="/logout" method="POST" class="d-inline">
+            <button class="btn btn-sm btn-outline-light" type="submit">Log Out</button>
+          </form>
+        </li>
+        <% } %>
+      </ul>
+    </div>
+  </div>
+</nav>
+<script>
+  document.getElementById('themeToggle').addEventListener('click', function () {
+    var root = document.documentElement;
+    var next = root.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-bs-theme', next);
+    localStorage.setItem('novadesk-theme', next);
+    // Let any charts on the page (which cache colors from CSS variables at creation time) know to re-theme themselves.
+    document.dispatchEvent(new CustomEvent('novadesk:themechange', { detail: { theme: next } }));
+  });
+</script>

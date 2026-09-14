@@ -1,0 +1,93 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h4 class="mb-0"><%= request.number %> <span class="badge bg-<%= h.REQUEST_STATUS_BADGE[request.status] %> ms-2"><%= h.REQUEST_STATUS_LABELS[request.status] %></span></h4>
+      <div class="text-muted"><%= request.item_name %></div>
+    </div>
+    <a href="/requests" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="section-title">Request Details</h6>
+          <p class="text-muted"><%= request.item_description %></p>
+          <% if (request.notes) { %>
+            <div class="border rounded p-2 small"><strong>Notes:</strong> <%= request.notes %></div>
+          <% } %>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header fw-semibold">Activity</div>
+        <div class="list-group list-group-flush">
+          <% if (activity.length === 0) { %>
+            <div class="list-group-item text-muted">Nothing here yet.</div>
+          <% } %>
+          <% activity.forEach(a => { %>
+            <div class="list-group-item small text-muted d-flex align-items-center gap-2">
+              <i class="bi bi-clock-history"></i>
+              <span><strong><%= a.actor_name || 'System' %></strong> — <%= a.message %></span>
+              <span class="ms-auto"><%= h.fmtDate(a.created_at) %></span>
+            </div>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-body">
+          <h6 class="section-title">Summary</h6>
+          <dl class="row mb-0 small">
+            <dt class="col-sm-6">Requested By</dt><dd class="col-sm-6"><%= request.requester_name || '—' %></dd>
+            <dt class="col-sm-6">Fulfillment Group</dt><dd class="col-sm-6"><%= request.fulfillment_group || '—' %></dd>
+            <dt class="col-sm-6">Assigned To</dt><dd class="col-sm-6"><%= request.assigned_name || 'Unassigned' %></dd>
+            <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%= h.fmtDate(request.created_at) %></dd>
+            <dt class="col-sm-6">Fulfilled</dt><dd class="col-sm-6"><%= request.fulfilled_at ? h.fmtDate(request.fulfilled_at) : '—' %></dd>
+          </dl>
+        </div>
+      </div>
+
+      <% if (currentUser.role !== 'user') { %>
+      <div class="card mt-3">
+        <div class="card-body">
+          <h6 class="section-title">Update Request</h6>
+          <form method="POST" action="/requests/<%= request.id %>/update">
+            <div class="mb-2">
+              <label class="form-label small">Status</label>
+              <select name="status" class="form-select form-select-sm">
+                <% ['submitted','in_progress','fulfilled','rejected','cancelled'].forEach(s => { %>
+                  <option value="<%= s %>" <%= request.status === s ? 'selected' : '' %>><%= h.REQUEST_STATUS_LABELS[s] %></option>
+                <% }) %>
+              </select>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">Assigned To</label>
+              <select name="assigned_to" class="form-select form-select-sm">
+                <option value="">Unassigned</option>
+                <% staffUsers.forEach(u => { %>
+                  <option value="<%= u.id %>" <%= request.assigned_to === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+                <% }) %>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary w-100">Save</button>
+          </form>
+        </div>
+      </div>
+      <% } else if (request.status === 'submitted') { %>
+      <div class="card mt-3">
+        <div class="card-body">
+          <form method="POST" action="/requests/<%= request.id %>/cancel" onsubmit="return confirm('Cancel this request?');">
+            <button type="submit" class="btn btn-sm btn-outline-danger w-100">Cancel Request</button>
+          </form>
+        </div>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

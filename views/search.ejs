@@ -1,0 +1,85 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-1"><i class="bi bi-search me-1"></i>Search Results</h4>
+  <% if (q) { %>
+    <p class="text-muted">Showing matches for "<strong><%= q %></strong>" across incidents, changes, and CMDB.</p>
+  <% } else { %>
+    <p class="text-muted">Type something into the search box above to look across incidents, changes, and the CMDB.</p>
+  <% } %>
+
+  <% if (q) { %>
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-exclamation-triangle text-primary me-1"></i>Incidents</span>
+          <span class="badge bg-secondary"><%= incidents.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (incidents.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching incidents.</div>
+          <% } %>
+          <% incidents.forEach(inc => { %>
+            <a href="/incidents/<%= inc.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %> me-2">P<%= inc.priority %></span>
+                <span class="badge bg-<%= h.INCIDENT_STATUS_BADGE[inc.status] %>"><%= h.INCIDENT_STATUS_LABELS[inc.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= inc.number %></div>
+              <div class="small"><%= inc.short_description %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-arrow-repeat text-warning me-1"></i>Changes</span>
+          <span class="badge bg-secondary"><%= changes.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (changes.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching change requests.</div>
+          <% } %>
+          <% changes.forEach(ch => { %>
+            <a href="/changes/<%= ch.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.CHANGE_STATUS_BADGE[ch.status] %>"><%= h.CHANGE_STATUS_LABELS[ch.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= ch.number %></div>
+              <div class="small"><%= ch.short_description %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-hdd-stack text-primary me-1"></i>CMDB</span>
+          <span class="badge bg-secondary"><%= cis.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (cis.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching configuration items.</div>
+          <% } %>
+          <% cis.forEach(ci => { %>
+            <a href="/cmdb/<%= ci.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.CI_STATUS_BADGE[ci.status] %>"><%= h.CI_STATUS_LABELS[ci.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= ci.ci_number %> — <%= ci.name %></div>
+              <div class="small text-muted"><%= ci.ip_address || h.CI_TYPE_LABELS[ci.ci_type] %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

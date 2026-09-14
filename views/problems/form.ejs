@@ -1,0 +1,52 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-search text-info me-1"></i>New Problem</h4>
+  <div class="card">
+    <div class="card-body">
+      <form method="POST" action="/problems">
+        <div class="row g-3">
+          <div class="col-md-12">
+            <label class="form-label">Short Description *</label>
+            <input type="text" name="short_description" class="form-control" required placeholder="e.g. Recurring performance degradation on PRD-WEB cluster">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="3" placeholder="What pattern of incidents led to this problem being raised?"></textarea>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Priority</label>
+            <select name="priority" class="form-select">
+              <% [1,2,3,4].forEach(p => { %>
+                <option value="<%= p %>" <%= p === 3 ? 'selected' : '' %>>P<%= p %> - <%= h.PRIORITY_LABELS[p] %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Assigned To</label>
+            <select name="assigned_to" class="form-select">
+              <option value="">Unassigned</option>
+              <% users.forEach(u => { %>
+                <option value="<%= u.id %>"><%= u.full_name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Affected Configuration Item</label>
+            <select name="affected_ci_id" class="form-select">
+              <option value="">None</option>
+              <% cis.forEach(c => { %>
+                <option value="<%= c.id %>"><%= c.ci_number %> — <%= c.name %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+        <div class="mt-4">
+          <button type="submit" class="btn btn-info text-white"><i class="bi bi-check-lg"></i> Create Problem</button>
+          <a href="/problems" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

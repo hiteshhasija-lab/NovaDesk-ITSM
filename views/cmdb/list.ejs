@@ -1,0 +1,111 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-hdd-stack text-success me-1"></i>CMDB — Configuration Items</h4>
+    <% if (currentUser.role !== 'user') { %>
+    <div class="d-flex gap-2">
+      <a href="/cmdb/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/cmdb/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> New CI</a>
+    </div>
+    <% } %>
+  </div>
+
+  <form class="row g-2 mb-3" id="cmdbFilterForm" method="GET">
+    <div class="col-md-3">
+      <input type="text" id="cmdbLiveSearch" name="q" value="<%= filters.q || '' %>" class="form-control form-control-sm" placeholder="Search name or IP address..." autocomplete="off">
+    </div>
+    <div class="col-md-2">
+      <select name="ci_type" class="form-select form-select-sm auto-filter">
+        <option value="">All types</option>
+        <% ['server','network_device','application','database','workstation','storage'].forEach(t => { %>
+          <option value="<%= t %>" <%= filters.ci_type === t ? 'selected' : '' %>><%= h.CI_TYPE_LABELS[t] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="environment" class="form-select form-select-sm auto-filter">
+        <option value="">All environments</option>
+        <% ['production','staging','uat','development','dr'].forEach(e => { %>
+          <option value="<%= e %>" <%= filters.environment === e ? 'selected' : '' %>><%= h.ENVIRONMENT_LABELS[e] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="status" class="form-select form-select-sm auto-filter">
+        <option value="">All statuses</option>
+        <% ['in_use','in_stock','maintenance','retired'].forEach(s => { %>
+          <option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= h.CI_STATUS_LABELS[s] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="location" class="form-select form-select-sm auto-filter">
+        <option value="">All locations</option>
+        <% locations.forEach(l => { %>
+          <option value="<%= l %>" <%= filters.location === l ? 'selected' : '' %>><%= l %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-1">
+      <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Go</button>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>CI #</th><th>Name</th><th>Type</th><th>Environment</th><th>Status</th>
+            <th>IP Address</th><th>Location</th><th>Owner</th>
+          </tr>
+        </thead>
+        <tbody id="cmdbTableBody">
+          <% if (items.length === 0) { %>
+            <tr><td colspan="8" class="text-center text-muted py-4">No configuration items found.</td></tr>
+          <% } %>
+          <% items.forEach(ci => { %>
+          <tr onclick="window.location='/cmdb/<%= ci.id %>'" data-search="<%= [ci.ci_number, ci.name, ci.ip_address].filter(Boolean).join(' ').toLowerCase() %>">
+            <td class="fw-semibold"><%= ci.ci_number %></td>
+            <td><%= ci.name %></td>
+            <td><%= h.CI_TYPE_LABELS[ci.ci_type] || ci.ci_type %></td>
+            <td><%= h.ENVIRONMENT_LABELS[ci.environment] || ci.environment %></td>
+            <td><span class="badge bg-<%= h.CI_STATUS_BADGE[ci.status] %>"><%= h.CI_STATUS_LABELS[ci.status] %></span></td>
+            <td><%= ci.ip_address || '—' %></td>
+            <td><%= ci.location || '—' %></td>
+            <td><%= ci.owner_name || '—' %></td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <div id="cmdbNoLiveResults" class="text-center text-muted py-4" hidden>No configuration items match "<span id="cmdbNoLiveResultsQuery"></span>".</div>
+    </div>
+  </div>
+</div>
+<script>
+  (function () {
+    var input = document.getElementById('cmdbLiveSearch');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#cmdbTableBody tr[data-search]'));
+    var noResults = document.getElementById('cmdbNoLiveResults');
+    var noResultsQuery = document.getElementById('cmdbNoLiveResultsQuery');
+    if (!input || rows.length === 0) return;
+
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var visibleCount = 0;
+      rows.forEach(function (row) {
+        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+        row.hidden = !match;
+        if (match) visibleCount++;
+      });
+      noResults.hidden = !(q && visibleCount === 0);
+      noResultsQuery.textContent = input.value.trim();
+    });
+  })();
+
+  document.querySelectorAll('#cmdbFilterForm .auto-filter').forEach(function (el) {
+    el.addEventListener('change', function () { el.form.submit(); });
+  });
+</script>
+<%- include('../partials/foot') %>

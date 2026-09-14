@@ -1,0 +1,93 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-exclamation-triangle text-primary me-1"></i>New Incident</h4>
+  <div class="card">
+    <div class="card-body">
+      <form method="POST" action="/incidents">
+        <div class="row g-3">
+          <div class="col-md-12">
+            <label class="form-label">Short Description *</label>
+            <input type="text" name="short_description" class="form-control" required>
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="4"></textarea>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Category</label>
+            <select name="category" class="form-select">
+              <option value="hardware">Hardware</option>
+              <option value="software">Software</option>
+              <option value="network">Network</option>
+              <option value="access">Access</option>
+              <option value="other" selected>Other</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Subcategory</label>
+            <input type="text" name="subcategory" class="form-control">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Impact</label>
+            <select name="impact" class="form-select">
+              <option value="1">1 - High</option>
+              <option value="2">2 - Medium</option>
+              <option value="3" selected>3 - Low</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Urgency</label>
+            <select name="urgency" class="form-select">
+              <option value="1">1 - High</option>
+              <option value="2">2 - Medium</option>
+              <option value="3" selected>3 - Low</option>
+            </select>
+          </div>
+          <% if (currentUser.role !== 'user') { %>
+          <div class="col-md-4">
+            <label class="form-label">Caller</label>
+            <select name="caller_id" class="form-select">
+              <% users.forEach(u => { %>
+                <option value="<%= u.id %>" <%= currentUser.id === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Assigned To</label>
+            <select name="assigned_to" class="form-select">
+              <option value="">Unassigned</option>
+              <% users.filter(u => u.role !== 'user').forEach(u => { %>
+                <option value="<%= u.id %>"><%= u.full_name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Assignment Group</label>
+            <select name="assignment_group" class="form-select">
+              <option value="">Unassigned</option>
+              <% h.ASSIGNMENT_GROUPS.forEach(g => { %>
+                <option value="<%= g %>"><%= g %></option>
+              <% }) %>
+            </select>
+          </div>
+          <% } %>
+          <div class="col-md-6">
+            <label class="form-label">Affected Configuration Item</label>
+            <select name="affected_ci_id" class="form-select">
+              <option value="">None</option>
+              <% cis.forEach(c => { %>
+                <option value="<%= c.id %>"><%= c.ci_number %> — <%= c.name %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+        <div class="mt-4">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Create Incident</button>
+          <a href="/incidents" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

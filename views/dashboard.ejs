@@ -1,0 +1,322 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-4">Welcome, <%= currentUser.full_name %></h4>
+
+  <%
+    function countFor(arr, key) {
+      const row = arr.find(r => r.status === key);
+      return row ? row.c : 0;
+    }
+    const openInc = incidentCounts.reduce((s, r) => ['new','in_progress','on_hold'].includes(r.status) ? s + r.c : s, 0);
+    const openChg = changeCounts.reduce((s, r) => ['submitted','approved','scheduled'].includes(r.status) ? s + r.c : s, 0);
+  %>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-exclamation-triangle fs-5 text-primary"></i></div>
+          <div class="text-muted small">Open Incidents</div>
+          <div class="stat-number text-primary flex-grow-1"><%= openInc %></div>
+          <a href="/incidents?status=open" class="btn btn-sm btn-primary w-100">View all</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-clock-history fs-5 <%= slaBreaches > 0 ? 'text-danger' : 'text-success' %>"></i></div>
+          <div class="text-muted small">SLA Breaches</div>
+          <div class="stat-number <%= slaBreaches > 0 ? 'text-danger' : 'text-success' %> flex-grow-1"><%= slaBreaches %></div>
+          <a href="/incidents?status=open&sla=breached" class="btn btn-sm <%= slaBreaches > 0 ? 'btn-danger' : 'btn-success' %> w-100">Review</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-arrow-repeat fs-5 text-warning"></i></div>
+          <div class="text-muted small">Active Changes</div>
+          <div class="stat-number text-warning flex-grow-1"><%= openChg %></div>
+          <a href="/changes?status=open" class="btn btn-sm btn-warning w-100">View all</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-hdd-stack fs-5 text-success"></i></div>
+          <div class="text-muted small">CMDB Items</div>
+          <div class="stat-number text-success flex-grow-1"><%= totalCis %></div>
+          <a href="/cmdb" class="btn btn-sm btn-success w-100">View all</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-bag-check fs-5 text-info"></i></div>
+          <div class="text-muted small">Service Requests</div>
+          <div class="stat-number text-info flex-grow-1"><%= openRequests %></div>
+          <a href="/requests?status=open" class="btn btn-sm btn-info w-100">View all</a>
+        </div>
+      </div>
+    </div>
+    <% if (currentUser.role !== 'user') { %>
+    <div class="col-6 col-md">
+      <div class="card stat-card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="ci-icon mb-2"><i class="bi bi-search fs-5 text-secondary"></i></div>
+          <div class="text-muted small">Problems</div>
+          <div class="stat-number text-secondary flex-grow-1"><%= openProblems %></div>
+          <a href="/problems?status=open" class="btn btn-sm btn-secondary w-100">View all</a>
+        </div>
+      </div>
+    </div>
+    <% } %>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold"><i class="bi bi-exclamation-triangle text-primary me-1"></i>Open Incidents (by priority)</div>
+        <div class="list-group list-group-flush">
+          <% if (openIncidents.length === 0) { %>
+            <div class="list-group-item text-muted">No open incidents. Nice!</div>
+          <% } %>
+          <% openIncidents.forEach(inc => { %>
+            <% const sla = h.slaStatus(inc); %>
+            <a href="/incidents/<%= inc.id %>" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+              <div>
+                <span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %> me-2">P<%= inc.priority %></span>
+                <% if (['breached','at_risk'].includes(sla.key)) { %><span class="badge bg-<%= sla.badge %> me-2"><%= sla.label %></span><% } %>
+                <strong><%= inc.number %></strong> — <%= inc.short_description %>
+                <div class="small text-muted"><%= inc.caller_name %> · <%= h.INCIDENT_STATUS_LABELS[inc.status] %></div>
+              </div>
+              <i class="bi bi-chevron-right text-muted"></i>
+            </a>
+          <% }) %>
+        </div>
+        <div class="card-footer text-end">
+          <a href="/incidents/new" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> New Incident</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold"><i class="bi bi-arrow-repeat text-warning me-1"></i>Upcoming / Active Changes</div>
+        <div class="list-group list-group-flush">
+          <% if (upcomingChanges.length === 0) { %>
+            <div class="list-group-item text-muted">No active change requests.</div>
+          <% } %>
+          <% upcomingChanges.forEach(ch => { %>
+            <a href="/changes/<%= ch.id %>" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+              <div>
+                <span class="badge bg-<%= h.CHANGE_STATUS_BADGE[ch.status] %> me-2"><%= h.CHANGE_STATUS_LABELS[ch.status] %></span>
+                <strong><%= ch.number %></strong> — <%= ch.short_description %>
+                <div class="small text-muted"><%= ch.requester_name %> · Planned: <%= h.fmtDateShort(ch.planned_start) %></div>
+              </div>
+              <i class="bi bi-chevron-right text-muted"></i>
+            </a>
+          <% }) %>
+        </div>
+        <div class="card-footer text-end">
+          <a href="/changes/new" class="btn btn-sm btn-warning"><i class="bi bi-plus-lg"></i> New Change</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-lg-8">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-graph-up text-primary me-1"></i>Incident Volume — Last 14 Days</div>
+        <div class="card-body"><canvas id="trendChart"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-bar-chart text-primary me-1"></i>Incidents by Priority</div>
+        <div class="card-body"><canvas id="priorityChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-lg-4">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-arrow-repeat text-warning me-1"></i>Changes by Status</div>
+        <div class="card-body"><canvas id="changeStatusChart"></canvas></div>
+      </div>
+    </div>
+    <% if (currentUser.role !== 'user') { %>
+    <div class="col-lg-4">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-search text-secondary me-1"></i>Problems by Status</div>
+        <div class="card-body"><canvas id="problemStatusChart"></canvas></div>
+      </div>
+    </div>
+    <% } %>
+    <div class="col-lg-4">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-bag-check text-info me-1"></i>Service Requests by Status</div>
+        <div class="card-body"><canvas id="requestStatusChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <% if (currentUser.role !== 'user') { %>
+  <div class="row g-3 mt-1">
+    <div class="col-lg-6">
+      <div class="card chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-hdd-stack text-success me-1"></i>CMDB by Type</div>
+        <div class="card-body"><canvas id="ciTypeChart"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-pie-chart text-secondary me-1"></i>CMDB by Status</div>
+        <div class="card-body"><canvas id="ciStatusChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<script>
+  (function () {
+    var allCharts = [];
+    var styles = getComputedStyle(document.documentElement);
+    var textColor = styles.getPropertyValue('--text').trim() || '#1c2530';
+    var mutedColor = styles.getPropertyValue('--text-muted').trim() || '#6c757d';
+    var gridColor = styles.getPropertyValue('--border').trim() || '#e3e7ee';
+    Chart.defaults.color = mutedColor;
+    Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+    var trendLabels = <%- JSON.stringify(trend.map(t => h.fmtDateShort(t.day).replace(/, \d{4}$/, ''))) %>;
+    var trendData = <%- JSON.stringify(trend.map(t => t.c)) %>;
+
+    allCharts.push(new Chart(document.getElementById('trendChart'), {
+      type: 'line',
+      data: {
+        labels: trendLabels,
+        datasets: [{
+          label: 'Incidents created',
+          data: trendData,
+          borderColor: '#0d6efd',
+          backgroundColor: 'rgba(13,110,253,0.12)',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, border: { color: gridColor } },
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: gridColor }, border: { color: gridColor } }
+        }
+      }
+    }));
+
+    var priorityLabels = <%- JSON.stringify(priorityCounts.map(p => 'P' + p.priority + ' · ' + h.PRIORITY_LABELS[p.priority])) %>;
+    var priorityData = <%- JSON.stringify(priorityCounts.map(p => p.c)) %>;
+    var priorityColorMap = { 1: '#dc3545', 2: '#fd7e14', 3: '#0dcaf0', 4: '#6c757d' };
+    var priorityColors = <%- JSON.stringify(priorityCounts.map(p => p.priority)) %>.map(function(p){ return priorityColorMap[p]; });
+
+    allCharts.push(new Chart(document.getElementById('priorityChart'), {
+      type: 'doughnut',
+      data: { labels: priorityLabels, datasets: [{ data: priorityData, backgroundColor: priorityColors, borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+
+    var requestLabels = <%- JSON.stringify(requestStatusCounts.map(r => h.REQUEST_STATUS_LABELS[r.status] || r.status)) %>;
+    var requestData = <%- JSON.stringify(requestStatusCounts.map(r => r.c)) %>;
+    var requestColorMap = { 'Submitted': '#0d6efd', 'In Progress': '#fd7e14', 'Fulfilled': '#198754', 'Rejected': '#dc3545', 'Cancelled': '#6c757d' };
+    allCharts.push(new Chart(document.getElementById('requestStatusChart'), {
+      type: 'doughnut',
+      data: { labels: requestLabels, datasets: [{ data: requestData, backgroundColor: requestLabels.map(function(l){ return requestColorMap[l] || '#adb5bd'; }), borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+
+    var changeLabels = <%- JSON.stringify(changeCounts.map(r => h.CHANGE_STATUS_LABELS[r.status] || r.status)) %>;
+    var changeData = <%- JSON.stringify(changeCounts.map(r => r.c)) %>;
+    var changeColorMap = { 'Draft': '#6c757d', 'Submitted': '#0dcaf0', 'Approved': '#0d6efd', 'Rejected': '#dc3545', 'Scheduled': '#fd7e14', 'Implemented': '#198754', 'Closed': '#495057', 'Cancelled': '#adb5bd' };
+    allCharts.push(new Chart(document.getElementById('changeStatusChart'), {
+      type: 'doughnut',
+      data: { labels: changeLabels, datasets: [{ data: changeData, backgroundColor: changeLabels.map(function(l){ return changeColorMap[l] || '#adb5bd'; }), borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+
+    <% if (currentUser.role !== 'user') { %>
+    var problemLabels = <%- JSON.stringify(problemStatusCounts.map(r => h.PROBLEM_STATUS_LABELS[r.status] || r.status)) %>;
+    var problemData = <%- JSON.stringify(problemStatusCounts.map(r => r.c)) %>;
+    var problemColorMap = { 'New': '#0d6efd', 'Investigating': '#fd7e14', 'Known Error': '#0dcaf0', 'Resolved': '#198754', 'Closed': '#495057' };
+    allCharts.push(new Chart(document.getElementById('problemStatusChart'), {
+      type: 'doughnut',
+      data: { labels: problemLabels, datasets: [{ data: problemData, backgroundColor: problemLabels.map(function(l){ return problemColorMap[l] || '#adb5bd'; }), borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+    <% } %>
+
+    <% if (currentUser.role !== 'user') { %>
+    var ciTypeLabels = <%- JSON.stringify(ciCounts.map(r => h.CI_TYPE_LABELS[r.ci_type] || r.ci_type)) %>;
+    var ciTypeData = <%- JSON.stringify(ciCounts.map(r => r.c)) %>;
+    allCharts.push(new Chart(document.getElementById('ciTypeChart'), {
+      type: 'bar',
+      data: { labels: ciTypeLabels, datasets: [{ label: 'Configuration items', data: ciTypeData, backgroundColor: '#198754', borderRadius: 4 }] },
+      options: {
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: gridColor }, border: { color: gridColor } },
+          y: { grid: { display: false }, border: { color: gridColor } }
+        }
+      }
+    }));
+
+    var ciStatusLabels = <%- JSON.stringify(ciStatusCounts.map(r => h.CI_STATUS_LABELS[r.status] || r.status)) %>;
+    var ciStatusData = <%- JSON.stringify(ciStatusCounts.map(r => r.c)) %>;
+    var ciStatusColorMap = { 'In Use': '#198754', 'In Stock': '#0dcaf0', 'Maintenance': '#fd7e14', 'Retired': '#6c757d' };
+    allCharts.push(new Chart(document.getElementById('ciStatusChart'), {
+      type: 'doughnut',
+      data: { labels: ciStatusLabels, datasets: [{ data: ciStatusData, backgroundColor: ciStatusLabels.map(function(l){ return ciStatusColorMap[l] || '#adb5bd'; }), borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+    <% } %>
+
+    document.addEventListener('novadesk:themechange', function () {
+      var freshStyles = getComputedStyle(document.documentElement);
+      var freshText = freshStyles.getPropertyValue('--text').trim() || '#1c2530';
+      var freshMuted = freshStyles.getPropertyValue('--text-muted').trim() || '#6c757d';
+      var freshGrid = freshStyles.getPropertyValue('--border').trim() || '#e3e7ee';
+      var freshSurface = freshStyles.getPropertyValue('--surface').trim() || '#fff';
+
+      Chart.defaults.color = freshMuted;
+
+      allCharts.forEach(function (chart) {
+        if (chart.options.scales) {
+          ['x', 'y'].forEach(function (axis) {
+            var scale = chart.options.scales[axis];
+            if (!scale) return;
+            if (scale.grid && scale.grid.color !== undefined) scale.grid.color = freshGrid;
+            if (scale.border) scale.border.color = freshGrid;
+            if (scale.ticks) scale.ticks.color = freshMuted;
+          });
+        }
+        if (chart.config.type === 'doughnut') {
+          chart.data.datasets.forEach(function (ds) { ds.borderColor = freshSurface; });
+        }
+        if (chart.options.plugins && chart.options.plugins.legend && chart.options.plugins.legend.labels) {
+          chart.options.plugins.legend.labels.color = freshText;
+        }
+        chart.update();
+      });
+    });
+  })();
+</script>
+<%- include('partials/foot') %>

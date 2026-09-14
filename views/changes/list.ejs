@@ -1,0 +1,203 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">
+      <i class="bi bi-arrow-repeat text-warning me-1"></i>Change Requests
+      <% if (filters.status === 'open') { %>
+        <span class="badge bg-warning text-dark align-middle">Active Only</span>
+        <a href="/changes" class="small ms-1">clear</a>
+      <% } %>
+    </h4>
+    <div class="d-flex align-items-center gap-2">
+      <% if (currentUser.role !== 'user') { %>
+      <div class="btn-group view-toggle" role="group">
+        <a href="/changes" class="btn btn-sm btn-secondary"><i class="bi bi-list-ul"></i> List</a>
+        <a href="/changes/board" class="btn btn-sm btn-outline-secondary"><i class="bi bi-kanban"></i> Board</a>
+        <a href="/changes/calendar" class="btn btn-sm btn-outline-secondary"><i class="bi bi-calendar3"></i> Calendar</a>
+      </div>
+      <% } %>
+      <% if (currentUser.role !== 'user') { %>
+      <a href="/changes/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <% } %>
+      <a href="/changes/new" class="btn btn-warning btn-sm"><i class="bi bi-plus-lg"></i> New Change</a>
+    </div>
+  </div>
+
+  <form class="row g-2 mb-3" id="changesFilterForm" method="GET">
+    <div class="col-md-3">
+      <input type="text" id="changesLiveSearch" name="q" value="<%= filters.q || '' %>" class="form-control form-control-sm" placeholder="Search number, description, or CI..." autocomplete="off">
+    </div>
+    <div class="col-md-2">
+      <select name="change_type" class="form-select form-select-sm auto-filter">
+        <option value="">All types</option>
+        <% ['standard','normal','emergency'].forEach(t => { %>
+          <option value="<%= t %>" <%= filters.change_type === t ? 'selected' : '' %>><%= t[0].toUpperCase()+t.slice(1) %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="risk" class="form-select form-select-sm auto-filter">
+        <option value="">All risk levels</option>
+        <% ['low','medium','high'].forEach(r => { %>
+          <option value="<%= r %>" <%= filters.risk === r ? 'selected' : '' %>><%= r[0].toUpperCase()+r.slice(1) %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="status" class="form-select form-select-sm auto-filter">
+        <option value="">All statuses</option>
+        <option value="open" <%= filters.status === 'open' ? 'selected' : '' %>>Active (Submitted/Approved/Scheduled)</option>
+        <% ['draft','submitted','approved','rejected','scheduled','implemented','closed','cancelled'].forEach(s => { %>
+          <option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= h.CHANGE_STATUS_LABELS[s] %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="assigned_to" class="form-select form-select-sm auto-filter">
+        <option value="">Assigned to anyone</option>
+        <option value="unassigned" <%= filters.assigned_to === 'unassigned' ? 'selected' : '' %>>Unassigned</option>
+        <% assignableUsers.forEach(u => { %>
+          <option value="<%= u.id %>" <%= String(filters.assigned_to) === String(u.id) ? 'selected' : '' %>><%= u.full_name %></option>
+        <% }) %>
+      </select>
+    </div>
+    <div class="col-md-1">
+      <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Go</button>
+    </div>
+  </form>
+
+  <% if (currentUser.role !== 'user') { %>
+  <div id="bulkToolbar" class="card mb-3 border-primary" hidden>
+    <div class="card-body d-flex align-items-center gap-2 flex-wrap">
+      <span class="fw-semibold small"><span id="bulkCount">0</span> selected</span>
+      <select id="bulkStatus" class="form-select form-select-sm" style="max-width:180px;">
+        <option value="">Set status...</option>
+        <% ['draft','submitted','approved','rejected','scheduled','implemented','closed','cancelled'].forEach(s => { %>
+          <option value="<%= s %>"><%= h.CHANGE_STATUS_LABELS[s] %></option>
+        <% }) %>
+      </select>
+      <select id="bulkAssignee" class="form-select form-select-sm" style="max-width:200px;">
+        <option value="">Reassign to...</option>
+        <option value="__unassign__">Unassigned</option>
+        <% staffUsers.forEach(u => { %>
+          <option value="<%= u.id %>"><%= u.full_name %></option>
+        <% }) %>
+      </select>
+      <button id="bulkApply" class="btn btn-sm btn-primary"><i class="bi bi-check-lg"></i> Apply</button>
+      <button id="bulkClear" class="btn btn-sm btn-outline-secondary">Clear selection</button>
+    </div>
+  </div>
+  <% } %>
+
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <% if (currentUser.role !== 'user') { %><th style="width:2rem;"><input type="checkbox" id="selectAll" class="form-check-input"></th><% } %>
+            <th>Number</th><th>Short Description</th><th>Type</th><th>Risk</th><th>Status</th>
+            <th>Requested By</th><th>Affected CI</th><th>Planned Start</th>
+          </tr>
+        </thead>
+        <tbody id="changesTableBody">
+          <% if (changes.length === 0) { %>
+            <tr><td colspan="9" class="text-center text-muted py-4">No change requests found.</td></tr>
+          <% } %>
+          <% changes.forEach(ch => { %>
+          <tr onclick="window.location='/changes/<%= ch.id %>'" data-search="<%= [ch.number, ch.short_description, ch.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+            <% if (currentUser.role !== 'user') { %>
+            <td onclick="event.stopPropagation()"><input type="checkbox" class="form-check-input row-check" value="<%= ch.id %>"></td>
+            <% } %>
+            <td class="fw-semibold"><%= ch.number %></td>
+            <td><%= ch.short_description %></td>
+            <td class="text-capitalize"><%= ch.change_type %></td>
+            <td><span class="badge bg-<%= ch.risk === 'high' ? 'danger' : ch.risk === 'medium' ? 'warning' : 'secondary' %> text-capitalize"><%= ch.risk %></span></td>
+            <td><span class="badge bg-<%= h.CHANGE_STATUS_BADGE[ch.status] %>"><%= h.CHANGE_STATUS_LABELS[ch.status] %></span></td>
+            <td><%= ch.requester_name || '—' %></td>
+            <td><%= ch.ci_name || '—' %></td>
+            <td class="small text-muted"><%= h.fmtDateShort(ch.planned_start) %></td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <div id="changesNoLiveResults" class="text-center text-muted py-4" hidden>No change requests match "<span id="changesNoLiveResultsQuery"></span>".</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('#changesFilterForm .auto-filter').forEach(function (el) {
+    el.addEventListener('change', function () { el.form.submit(); });
+  });
+
+  (function () {
+    var input = document.getElementById('changesLiveSearch');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#changesTableBody tr[data-search]'));
+    var noResults = document.getElementById('changesNoLiveResults');
+    var noResultsQuery = document.getElementById('changesNoLiveResultsQuery');
+    if (!input || rows.length === 0) return;
+
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var visibleCount = 0;
+      rows.forEach(function (row) {
+        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+        row.hidden = !match;
+        if (match) visibleCount++;
+      });
+      noResults.hidden = !(q && visibleCount === 0);
+      noResultsQuery.textContent = input.value.trim();
+    });
+  })();
+</script>
+
+<% if (currentUser.role !== 'user') { %>
+<script>
+  (function () {
+    const toolbar = document.getElementById('bulkToolbar');
+    const countEl = document.getElementById('bulkCount');
+    const selectAll = document.getElementById('selectAll');
+    const checks = () => Array.from(document.querySelectorAll('.row-check'));
+
+    function refresh() {
+      const selected = checks().filter(c => c.checked);
+      countEl.textContent = selected.length;
+      toolbar.hidden = selected.length === 0;
+    }
+
+    selectAll.addEventListener('change', function () {
+      checks().forEach(c => { c.checked = selectAll.checked; });
+      refresh();
+    });
+    checks().forEach(c => c.addEventListener('change', refresh));
+
+    document.getElementById('bulkClear').addEventListener('click', function () {
+      checks().forEach(c => { c.checked = false; });
+      selectAll.checked = false;
+      refresh();
+    });
+
+    document.getElementById('bulkApply').addEventListener('click', function () {
+      const ids = checks().filter(c => c.checked).map(c => Number(c.value));
+      const status = document.getElementById('bulkStatus').value;
+      const assigneeRaw = document.getElementById('bulkAssignee').value;
+      if (ids.length === 0) return;
+      if (!status && !assigneeRaw) { alert('Choose a status or assignee to apply.'); return; }
+
+      const body = { ids };
+      if (status) body.status = status;
+      if (assigneeRaw) body.assigned_to = assigneeRaw === '__unassign__' ? null : Number(assigneeRaw);
+
+      fetch('/changes/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(r => r.json()).then(function (res) {
+        if (res.ok) { location.reload(); } else { alert(res.error || 'Something went wrong.'); }
+      }).catch(() => alert('Network error.'));
+    });
+  })();
+</script>
+<% } %>
+<%- include('../partials/foot') %>

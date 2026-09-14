@@ -1,0 +1,35 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-journal-text text-primary me-1"></i><%= article ? 'Edit Article' : 'New Article' %></h4>
+  <div class="card" style="max-width:760px;">
+    <div class="card-body">
+      <form method="POST" action="<%= article ? '/kb/' + article.id + '/update' : '/kb' %>">
+        <div class="mb-3">
+          <label class="form-label">Title *</label>
+          <input type="text" name="title" class="form-control" value="<%= article ? article.title : '' %>" required>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label">Category</label>
+            <input type="text" name="category" class="form-control" value="<%= article ? article.category : 'general' %>">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select">
+              <option value="published" <%= (!article || article.status === 'published') ? 'selected' : '' %>>Published</option>
+              <option value="draft" <%= article && article.status === 'draft' ? 'selected' : '' %>>Draft</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Body *</label>
+          <textarea name="body" class="form-control" rows="12" required placeholder="Plain text — line breaks are preserved."><%= article ? article.body : '' %></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Article</button>
+        <a href="/kb" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

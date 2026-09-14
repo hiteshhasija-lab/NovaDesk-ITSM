@@ -1,0 +1,64 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-calendar3 text-warning me-1"></i>Change Calendar</h4>
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group view-toggle" role="group">
+        <a href="/changes" class="btn btn-sm btn-outline-secondary"><i class="bi bi-list-ul"></i> List</a>
+        <a href="/changes/board" class="btn btn-sm btn-outline-secondary"><i class="bi bi-kanban"></i> Board</a>
+        <a href="/changes/calendar" class="btn btn-sm btn-secondary"><i class="bi bi-calendar3"></i> Calendar</a>
+      </div>
+      <a href="/changes/new" class="btn btn-warning btn-sm"><i class="bi bi-plus-lg"></i> New Change</a>
+    </div>
+  </div>
+
+  <% if (conflictCount > 0) { %>
+  <div class="alert alert-danger d-flex align-items-center gap-2">
+    <i class="bi bi-exclamation-octagon-fill"></i>
+    <span><%= conflictCount %> scheduling conflict<%= conflictCount === 1 ? '' : 's' %> this month — two or more changes overlap on the same configuration item. Conflicting changes are outlined in red below.</span>
+  </div>
+  <% } %>
+
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <a href="/changes/calendar?month=<%= prevMonth %>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chevron-left"></i></a>
+      <span class="fw-semibold"><%= monthLabel %></span>
+      <a href="/changes/calendar?month=<%= nextMonth %>" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chevron-right"></i></a>
+    </div>
+    <div class="card-body p-2">
+      <div class="calendar-grid">
+        <% ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d => { %>
+          <div class="calendar-dow"><%= d %></div>
+        <% }) %>
+        <% weeks.forEach(week => { %>
+          <% week.forEach(cell => { %>
+            <% if (!cell) { %>
+              <div class="calendar-cell calendar-cell-empty"></div>
+            <% } else { %>
+              <div class="calendar-cell">
+                <div class="calendar-daynum"><%= cell.day %></div>
+                <% cell.changes.forEach(ch => { %>
+                  <a href="/changes/<%= ch.id %>" class="calendar-event <%= ch.conflict ? 'calendar-event-conflict' : '' %> bg-<%= ch.risk === 'high' ? 'danger' : ch.risk === 'medium' ? 'warning' : 'secondary' %>-subtle">
+                    <% if (ch.conflict) { %><i class="bi bi-exclamation-triangle-fill text-danger"></i><% } %>
+                    <%= ch.number %> <%= ch.ci_name ? '· ' + ch.ci_name : '' %>
+                  </a>
+                <% }) %>
+              </div>
+            <% } %>
+          <% }) %>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .calendar-dow { text-align: center; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); padding: 4px 0; }
+  .calendar-cell { min-height: 90px; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: var(--surface); }
+  .calendar-cell-empty { background: transparent; border: none; }
+  .calendar-daynum { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 2px; }
+  .calendar-event { display: block; font-size: 0.7rem; padding: 2px 4px; border-radius: 4px; margin-bottom: 2px; text-decoration: none; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .calendar-event-conflict { border: 1px solid var(--bs-danger, #dc3545); }
+</style>
+<%- include('../partials/foot') %>

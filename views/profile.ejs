@@ -1,0 +1,58 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-person-circle text-secondary me-1"></i>My Profile</h4>
+
+  <div class="card" style="max-width:600px;">
+    <div class="card-body">
+      <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
+      <% if (error) { %><div class="alert alert-warning py-2"><%= error %></div><% } %>
+
+      <form method="POST" action="/profile">
+        <h6 class="section-title">Details</h6>
+        <div class="row g-3 mb-4">
+          <div class="col-md-6">
+            <label class="form-label">Full Name</label>
+            <input type="text" name="full_name" class="form-control" value="<%= profileUser.full_name %>" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Username</label>
+            <input type="text" class="form-control" value="<%= profileUser.username %>" readonly>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" value="<%= profileUser.email || '' %>">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Department</label>
+            <input type="text" name="department" class="form-control" value="<%= profileUser.department || '' %>">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Role</label>
+            <input type="text" class="form-control text-capitalize" value="<%= profileUser.role %>" readonly>
+          </div>
+        </div>
+
+        <h6 class="section-title">Change Password</h6>
+        <p class="small text-muted">Leave these blank to keep your current password.</p>
+        <div class="row g-3 mb-4">
+          <div class="col-md-4">
+            <label class="form-label">Current Password</label>
+            <input type="password" name="current_password" class="form-control">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">New Password</label>
+            <input type="password" name="new_password" class="form-control">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Confirm New Password</label>
+            <input type="password" name="confirm_password" class="form-control">
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Changes</button>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -1,0 +1,74 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-arrow-repeat text-warning me-1"></i>Change Board</h4>
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group view-toggle" role="group">
+        <a href="/changes" class="btn btn-sm btn-outline-secondary"><i class="bi bi-list-ul"></i> List</a>
+        <a href="/changes/board" class="btn btn-sm btn-secondary"><i class="bi bi-kanban"></i> Board</a>
+        <a href="/changes/calendar" class="btn btn-sm btn-outline-secondary"><i class="bi bi-calendar3"></i> Calendar</a>
+      </div>
+      <a href="/changes/new" class="btn btn-warning btn-sm"><i class="bi bi-plus-lg"></i> New Change</a>
+    </div>
+  </div>
+
+  <div class="board-wrap">
+    <% columns.forEach(col => { %>
+      <div class="board-col">
+        <div class="board-col-head">
+          <span><%= col.label %></span>
+          <span class="board-col-count"><%= col.items.length %></span>
+        </div>
+        <div class="board-col-body" data-status="<%= col.status %>">
+          <% col.items.forEach(ch => { %>
+            <div class="board-card" data-id="<%= ch.id %>" onclick="if(!window.__dragging) window.location='/changes/<%= ch.id %>'">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="card-number"><%= ch.number %></span>
+                <span class="badge bg-<%= ch.risk === 'high' ? 'danger' : ch.risk === 'medium' ? 'warning' : 'secondary' %> text-capitalize"><%= ch.risk %></span>
+              </div>
+              <p class="card-desc"><%= ch.short_description %></p>
+              <div class="card-meta">
+                <span><i class="bi bi-person"></i> <%= ch.assigned_name || 'Unassigned' %></span>
+                <% if (ch.planned_start) { %><span><i class="bi bi-calendar-event"></i> <%= h.fmtDateShort(ch.planned_start) %></span><% } %>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script>
+  function updateCount(colBody) {
+    var count = colBody.querySelectorAll('.board-card').length;
+    var badge = colBody.closest('.board-col').querySelector('.board-col-count');
+    badge.textContent = count;
+  }
+  document.querySelectorAll('.board-col-body').forEach(function (col) {
+    new Sortable(col, {
+      group: 'changes',
+      animation: 150,
+      forceFallback: true,
+      fallbackTolerance: 3,
+      onStart: function () { window.__dragging = true; },
+      onEnd: function (evt) {
+        setTimeout(function () { window.__dragging = false; }, 50);
+        var id = evt.item.getAttribute('data-id');
+        var newStatus = evt.to.getAttribute('data-status');
+        if (evt.from === evt.to) return;
+        fetch('/changes/' + id + '/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus })
+        }).then(function (r) {
+          if (!r.ok) { alert('Could not update status — reverting.'); location.reload(); return; }
+          updateCount(evt.from); updateCount(evt.to);
+        }).catch(function () { alert('Network error — reverting.'); location.reload(); });
+      }
+    });
+  });
+</script>
+<%- include('../partials/foot') %>

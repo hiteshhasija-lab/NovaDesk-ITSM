@@ -1,0 +1,55 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-people text-secondary me-1"></i><%= user ? 'Edit User' : 'New User' %></h4>
+  <div class="card" style="max-width:600px;">
+    <div class="card-body">
+      <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+      <form method="POST" action="<%= user && user.id ? '/users/' + user.id + '/update' : '/users' %>">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Full Name *</label>
+            <input type="text" name="full_name" class="form-control" value="<%= user ? user.full_name : '' %>" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Username *</label>
+            <input type="text" name="username" class="form-control" value="<%= user ? user.username : '' %>" <%= user && user.id ? 'readonly' : 'required' %>>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" value="<%= user ? (user.email||'') : '' %>">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Department</label>
+            <input type="text" name="department" class="form-control" value="<%= user ? (user.department||'') : '' %>">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Role</label>
+            <select name="role" class="form-select">
+              <% ['admin','agent','user'].forEach(r => { %>
+                <option value="<%= r %>" <%= user && user.role === r ? 'selected' : '' %>><%= r[0].toUpperCase()+r.slice(1) %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label"><%= user && user.id ? 'Reset Password' : 'Password' %></label>
+            <input type="password" name="password" class="form-control" placeholder="<%= user && user.id ? 'Leave blank to keep current' : '' %>" <%= user && user.id ? '' : 'required' %>>
+          </div>
+          <% if (user && user.id) { %>
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="active" id="active" <%= user.active ? 'checked' : '' %>>
+              <label class="form-check-label" for="active">Active</label>
+            </div>
+          </div>
+          <% } %>
+        </div>
+        <div class="mt-4">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> <%= user && user.id ? 'Save Changes' : 'Create User' %></button>
+          <a href="/users" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

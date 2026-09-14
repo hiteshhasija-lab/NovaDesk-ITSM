@@ -1,0 +1,82 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-person-workspace text-primary me-1"></i>My Work</h4>
+
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-exclamation-triangle text-primary me-1"></i>My Assigned Incidents</span>
+          <span class="badge bg-secondary"><%= myIncidents.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (myIncidents.length === 0) { %>
+            <div class="list-group-item text-muted small">Nothing assigned to you. Nice!</div>
+          <% } %>
+          <% myIncidents.forEach(inc => { %>
+            <% const sla = h.slaStatus(inc); %>
+            <a href="/incidents/<%= inc.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %>">P<%= inc.priority %></span>
+                <% if (['breached','at_risk'].includes(sla.key)) { %><span class="badge bg-<%= sla.badge %>"><%= sla.label %></span><% } %>
+              </div>
+              <div class="fw-semibold small mt-1"><%= inc.number %></div>
+              <div class="small"><%= inc.short_description %></div>
+              <div class="small text-muted"><%= inc.caller_name %> · <%= h.INCIDENT_STATUS_LABELS[inc.status] %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-arrow-repeat text-warning me-1"></i>My Assigned Changes</span>
+          <span class="badge bg-secondary"><%= myChanges.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (myChanges.length === 0) { %>
+            <div class="list-group-item text-muted small">No changes assigned to you.</div>
+          <% } %>
+          <% myChanges.forEach(ch => { %>
+            <a href="/changes/<%= ch.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.CHANGE_STATUS_BADGE[ch.status] %>"><%= h.CHANGE_STATUS_LABELS[ch.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= ch.number %></div>
+              <div class="small"><%= ch.short_description %></div>
+              <% if (ch.planned_start) { %><div class="small text-muted">Planned: <%= h.fmtDateShort(ch.planned_start) %></div><% } %>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-clipboard-check text-primary me-1"></i>Pending Approvals</span>
+          <span class="badge bg-secondary"><%= pendingApprovals.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (pendingApprovals.length === 0) { %>
+            <div class="list-group-item text-muted small">No changes awaiting CAB approval.</div>
+          <% } %>
+          <% pendingApprovals.forEach(ch => { %>
+            <a href="/changes/<%= ch.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= ch.risk === 'high' ? 'danger' : ch.risk === 'medium' ? 'warning' : 'secondary' %> text-capitalize"><%= ch.risk %> risk</span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= ch.number %></div>
+              <div class="small"><%= ch.short_description %></div>
+              <div class="small text-muted">Requested by <%= ch.requester_name %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('partials/foot') %>

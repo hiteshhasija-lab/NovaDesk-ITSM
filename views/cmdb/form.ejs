@@ -1,0 +1,111 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-hdd-stack text-success me-1"></i><%= ci ? 'Edit ' + ci.ci_number : 'New Configuration Item' %></h4>
+  <div class="card">
+    <div class="card-body">
+      <form method="POST" action="<%= ci ? '/cmdb/' + ci.id + '/update' : '/cmdb' %>">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Name *</label>
+            <input type="text" name="name" class="form-control" value="<%= ci ? ci.name : '' %>" required placeholder="e.g. PRD-WEB-03">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Type *</label>
+            <select name="ci_type" class="form-select" required>
+              <% ['server','network_device','application','database','workstation','storage'].forEach(t => { %>
+                <option value="<%= t %>" <%= ci && ci.ci_type === t ? 'selected' : '' %>><%= h.CI_TYPE_LABELS[t] %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Environment</label>
+            <select name="environment" class="form-select">
+              <% ['production','staging','uat','development','dr'].forEach(e => { %>
+                <option value="<%= e %>" <%= ci && ci.environment === e ? 'selected' : '' %>><%= h.ENVIRONMENT_LABELS[e] %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select">
+              <% ['in_use','in_stock','maintenance','retired'].forEach(s => { %>
+                <option value="<%= s %>" <%= ci && ci.status === s ? 'selected' : '' %>><%= h.CI_STATUS_LABELS[s] %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">IP Address</label>
+            <input type="text" name="ip_address" class="form-control" value="<%= ci ? (ci.ip_address||'') : '' %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">OS</label>
+            <input type="text" name="os" class="form-control" value="<%= ci ? (ci.os||'') : '' %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Manufacturer</label>
+            <input type="text" name="manufacturer" class="form-control" value="<%= ci ? (ci.manufacturer||'') : '' %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Model</label>
+            <input type="text" name="model" class="form-control" value="<%= ci ? (ci.model||'') : '' %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Serial Number</label>
+            <input type="text" name="serial_number" class="form-control" value="<%= ci ? (ci.serial_number||'') : '' %>">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Location</label>
+            <input type="text" name="location" class="form-control" value="<%= ci ? (ci.location||'') : '' %>" placeholder="e.g. DC1 - Rack A12">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Owner</label>
+            <select name="owner_id" class="form-select">
+              <option value="">Unassigned</option>
+              <% users.forEach(u => { %>
+                <option value="<%= u.id %>" <%= ci && ci.owner_id === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Support Group</label>
+            <input type="text" name="support_group" class="form-control" value="<%= ci ? (ci.support_group||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">CPU</label>
+            <input type="text" name="cpu" class="form-control" value="<%= ci ? (ci.cpu||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">RAM</label>
+            <input type="text" name="ram" class="form-control" value="<%= ci ? (ci.ram||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Disk</label>
+            <input type="text" name="disk" class="form-control" value="<%= ci ? (ci.disk||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Purchase Date</label>
+            <input type="date" name="purchase_date" class="form-control" value="<%= ci ? (ci.purchase_date||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Warranty Expiry</label>
+            <input type="date" name="warranty_expiry" class="form-control" value="<%= ci ? (ci.warranty_expiry||'') : '' %>">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Install Date</label>
+            <input type="date" name="install_date" class="form-control" value="<%= ci ? (ci.install_date||'') : '' %>">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label">Notes</label>
+            <textarea name="notes" class="form-control" rows="3"><%= ci ? (ci.notes||'') : '' %></textarea>
+          </div>
+        </div>
+        <div class="mt-4">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> <%= ci ? 'Save Changes' : 'Create CI' %></button>
+          <a href="/cmdb" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

@@ -1,0 +1,161 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h4 class="mb-0"><%= problem.number %> <span class="badge bg-<%= h.PRIORITY_BADGE[problem.priority] %> ms-2">P<%= problem.priority %> · <%= h.PRIORITY_LABELS[problem.priority] %></span>
+      <span class="badge bg-<%= h.PROBLEM_STATUS_BADGE[problem.status] %>"><%= h.PROBLEM_STATUS_LABELS[problem.status] %></span></h4>
+      <div class="text-muted"><%= problem.short_description %></div>
+    </div>
+    <a href="/problems" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="section-title">Details</h6>
+          <form method="POST" action="/problems/<%= problem.id %>/update">
+            <div class="row g-3">
+              <div class="col-md-12">
+                <label class="form-label">Short Description</label>
+                <input type="text" name="short_description" class="form-control" value="<%= problem.short_description %>" required>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Description</label>
+                <textarea name="description" class="form-control" rows="3"><%= problem.description || '' %></textarea>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                  <% ['new','investigating','known_error','resolved','closed'].forEach(s => { %>
+                    <option value="<%= s %>" <%= problem.status === s ? 'selected' : '' %>><%= h.PROBLEM_STATUS_LABELS[s] %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Priority</label>
+                <select name="priority" class="form-select">
+                  <% [1,2,3,4].forEach(p => { %>
+                    <option value="<%= p %>" <%= problem.priority === p ? 'selected' : '' %>>P<%= p %> - <%= h.PRIORITY_LABELS[p] %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Assigned To</label>
+                <select name="assigned_to" class="form-select">
+                  <option value="">Unassigned</option>
+                  <% users.forEach(u => { %>
+                    <option value="<%= u.id %>" <%= problem.assigned_to === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Affected Configuration Item</label>
+                <select name="affected_ci_id" class="form-select">
+                  <option value="">None</option>
+                  <% cis.forEach(c => { %>
+                    <option value="<%= c.id %>" <%= problem.affected_ci_id === c.id ? 'selected' : '' %>><%= c.ci_number %> — <%= c.name %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Root Cause</label>
+                <textarea name="root_cause" class="form-control" rows="2" placeholder="What's the confirmed underlying cause? Leave blank while still investigating."><%= problem.root_cause || '' %></textarea>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Workaround</label>
+                <textarea name="workaround" class="form-control" rows="2" placeholder="How can agents mitigate this until a permanent fix ships?"><%= problem.workaround || '' %></textarea>
+              </div>
+            </div>
+            <div class="mt-3">
+              <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Linked Incidents</div>
+        <div class="list-group list-group-flush">
+          <% if (linkedIncidents.length === 0) { %>
+            <div class="list-group-item text-muted small">No incidents linked yet. Open an incident and set its Problem field to link it here.</div>
+          <% } %>
+          <% linkedIncidents.forEach(inc => { %>
+            <a href="/incidents/<%= inc.id %>" class="list-group-item list-group-item-action d-flex justify-content-between">
+              <span><span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %> me-2">P<%= inc.priority %></span><%= inc.number %> — <%= inc.short_description %></span>
+              <span class="badge bg-<%= h.INCIDENT_STATUS_BADGE[inc.status] %>"><%= h.INCIDENT_STATUS_LABELS[inc.status] %></span>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header fw-semibold">Activity &amp; Comments</div>
+        <div class="list-group list-group-flush">
+          <% if (timeline.length === 0) { %>
+            <div class="list-group-item text-muted">Nothing here yet.</div>
+          <% } %>
+          <% timeline.forEach(item => { %>
+            <% if (item.type === 'activity') { %>
+              <div class="list-group-item small text-muted d-flex align-items-center gap-2">
+                <i class="bi bi-clock-history"></i>
+                <span><strong><%= item.author_name || 'System' %></strong> — <%= item.text %></span>
+                <span class="ms-auto"><%= h.fmtDate(item.created_at) %></span>
+              </div>
+            <% } else { %>
+              <div class="list-group-item">
+                <div class="d-flex justify-content-between">
+                  <strong><%= item.author_name || 'Unknown' %></strong>
+                  <span class="small text-muted"><%= h.fmtDate(item.created_at) %></span>
+                </div>
+                <div><%= item.text %></div>
+              </div>
+            <% } %>
+          <% }) %>
+        </div>
+        <div class="card-body">
+          <form method="POST" action="/problems/<%= problem.id %>/comments">
+            <textarea name="comment" class="form-control mb-2" rows="2" placeholder="Add a comment..." required></textarea>
+            <button type="submit" class="btn btn-sm btn-primary">Post</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-body">
+          <h6 class="section-title">Summary</h6>
+          <dl class="row mb-0 small">
+            <dt class="col-sm-6">Raised By</dt><dd class="col-sm-6"><%= problem.raiser_name || '—' %></dd>
+            <dt class="col-sm-6">Assigned To</dt><dd class="col-sm-6"><%= problem.assigned_name || 'Unassigned' %></dd>
+            <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%= h.fmtDate(problem.created_at) %></dd>
+            <dt class="col-sm-6">Updated</dt><dd class="col-sm-6"><%= h.fmtDate(problem.updated_at) %></dd>
+            <dt class="col-sm-6">Resolved</dt><dd class="col-sm-6"><%= problem.resolved_at ? h.fmtDate(problem.resolved_at) : '—' %></dd>
+            <dt class="col-sm-6">Closed</dt><dd class="col-sm-6"><%= problem.closed_at ? h.fmtDate(problem.closed_at) : '—' %></dd>
+          </dl>
+          <% if (problem.affected_ci_id) { %>
+          <hr>
+          <a href="/cmdb/<%= problem.affected_ci_id %>" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-hdd-stack"></i> View Affected CI: <%= problem.ci_name %>
+          </a>
+          <% } %>
+        </div>
+      </div>
+
+      <% if (currentUser.role === 'admin') { %>
+      <div class="card mt-3 border-danger">
+        <div class="card-body">
+          <h6 class="text-danger">Danger Zone</h6>
+          <p class="small text-muted">Deleting unlinks any incidents pointing to this problem and removes it permanently.</p>
+          <form method="POST" action="/problems/<%= problem.id %>/delete" onsubmit="return confirm('Delete problem <%= problem.number %>? This cannot be undone.');">
+            <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete Problem</button>
+          </form>
+        </div>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

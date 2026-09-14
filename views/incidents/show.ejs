@@ -1,0 +1,231 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h4 class="mb-0"><%= incident.number %> <span class="badge bg-<%= h.PRIORITY_BADGE[incident.priority] %> ms-2">P<%= incident.priority %> · <%= h.PRIORITY_LABELS[incident.priority] %></span>
+      <span class="badge bg-<%= h.INCIDENT_STATUS_BADGE[incident.status] %>"><%= h.INCIDENT_STATUS_LABELS[incident.status] %></span></h4>
+      <div class="text-muted"><%= incident.short_description %></div>
+    </div>
+    <a href="/incidents" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>
+  </div>
+
+  <% const sla = h.slaStatus(incident); %>
+  <% if (sla.key === 'breached') { %>
+  <div class="alert alert-danger d-flex align-items-center gap-2">
+    <i class="bi bi-exclamation-octagon-fill"></i>
+    <span>SLA breached — this incident was due <%= h.fmtDate(incident.sla_due_at) %>.</span>
+  </div>
+  <% } else if (sla.key === 'at_risk') { %>
+  <div class="alert alert-warning d-flex align-items-center gap-2">
+    <i class="bi bi-hourglass-split"></i>
+    <span>SLA at risk — due <%= h.fmtDate(incident.sla_due_at) %>.</span>
+  </div>
+  <% } %>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h6 class="section-title">Details</h6>
+          <% if (currentUser.role === 'user') { %>
+            <dl class="row mb-0">
+              <dt class="col-sm-3">Description</dt><dd class="col-sm-9"><%= incident.description || '—' %></dd>
+              <dt class="col-sm-3">Category</dt><dd class="col-sm-9 text-capitalize"><%= incident.category %><%= incident.subcategory ? ' / ' + incident.subcategory : '' %></dd>
+              <dt class="col-sm-3">Affected CI</dt><dd class="col-sm-9"><%= incident.ci_name ? incident.ci_number + ' — ' + incident.ci_name : '—' %></dd>
+              <dt class="col-sm-3">Assigned To</dt><dd class="col-sm-9"><%= incident.assigned_name || 'Unassigned' %></dd>
+              <dt class="col-sm-3">Created</dt><dd class="col-sm-9"><%= h.fmtDate(incident.created_at) %></dd>
+              <% if (incident.resolution_notes) { %>
+              <dt class="col-sm-3">Resolution Notes</dt><dd class="col-sm-9"><%= incident.resolution_notes %></dd>
+              <% } %>
+            </dl>
+          <% } else { %>
+          <form method="POST" action="/incidents/<%= incident.id %>/update">
+            <div class="row g-3">
+              <div class="col-md-12">
+                <label class="form-label">Short Description</label>
+                <input type="text" name="short_description" class="form-control" value="<%= incident.short_description %>" required>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Description</label>
+                <textarea name="description" class="form-control" rows="3"><%= incident.description || '' %></textarea>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Category</label>
+                <select name="category" class="form-select">
+                  <% ['hardware','software','network','access','other'].forEach(c => { %>
+                    <option value="<%= c %>" <%= incident.category === c ? 'selected' : '' %>><%= c[0].toUpperCase()+c.slice(1) %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Subcategory</label>
+                <input type="text" name="subcategory" class="form-control" value="<%= incident.subcategory || '' %>">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Impact</label>
+                <select name="impact" class="form-select">
+                  <% [1,2,3].forEach(v => { %><option value="<%= v %>" <%= incident.impact === v ? 'selected' : '' %>><%= v %> - <%= v===1?'High':v===2?'Medium':'Low' %></option><% }) %>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Urgency</label>
+                <select name="urgency" class="form-select">
+                  <% [1,2,3].forEach(v => { %><option value="<%= v %>" <%= incident.urgency === v ? 'selected' : '' %>><%= v %> - <%= v===1?'High':v===2?'Medium':'Low' %></option><% }) %>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                  <% ['new','in_progress','on_hold','resolved','closed','cancelled'].forEach(s => { %>
+                    <option value="<%= s %>" <%= incident.status === s ? 'selected' : '' %>><%= h.INCIDENT_STATUS_LABELS[s] %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Assigned To</label>
+                <select name="assigned_to" class="form-select">
+                  <option value="">Unassigned</option>
+                  <% users.filter(u => u.role !== 'user').forEach(u => { %>
+                    <option value="<%= u.id %>" <%= incident.assigned_to === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Assignment Group</label>
+                <select name="assignment_group" class="form-select">
+                  <option value="">Unassigned</option>
+                  <% h.ASSIGNMENT_GROUPS.forEach(g => { %>
+                    <option value="<%= g %>" <%= incident.assignment_group === g ? 'selected' : '' %>><%= g %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Affected Configuration Item</label>
+                <select name="affected_ci_id" class="form-select">
+                  <option value="">None</option>
+                  <% cis.forEach(c => { %>
+                    <option value="<%= c.id %>" <%= incident.affected_ci_id === c.id ? 'selected' : '' %>><%= c.ci_number %> — <%= c.name %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Problem</label>
+                <select name="problem_id" class="form-select">
+                  <option value="">Not linked</option>
+                  <% problems.forEach(p => { %>
+                    <option value="<%= p.id %>" <%= incident.problem_id === p.id ? 'selected' : '' %>><%= p.number %> — <%= p.short_description %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Resolution Notes</label>
+                <textarea name="resolution_notes" class="form-control" rows="2"><%= incident.resolution_notes || '' %></textarea>
+              </div>
+            </div>
+            <div class="mt-3">
+              <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
+            </div>
+          </form>
+          <% } %>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header fw-semibold">Activity &amp; Comments</div>
+        <div class="list-group list-group-flush">
+          <% if (timeline.length === 0) { %>
+            <div class="list-group-item text-muted">Nothing here yet.</div>
+          <% } %>
+          <% timeline.forEach(item => { %>
+            <% if (item.type === 'activity') { %>
+              <div class="list-group-item small text-muted d-flex align-items-center gap-2">
+                <i class="bi bi-clock-history"></i>
+                <span><strong><%= item.author_name || 'System' %></strong> — <%= item.text %></span>
+                <span class="ms-auto"><%= h.fmtDate(item.created_at) %></span>
+              </div>
+            <% } else { %>
+              <div class="list-group-item <%= item.is_work_note ? 'bg-light-subtle' : '' %>">
+                <div class="d-flex justify-content-between">
+                  <strong><%= item.author_name || 'Unknown' %></strong>
+                  <span class="small text-muted"><%= h.fmtDate(item.created_at) %></span>
+                </div>
+                <% if (item.is_work_note) { %><span class="badge bg-secondary mb-1">Work Note</span><% } %>
+                <div><%= item.text %></div>
+              </div>
+            <% } %>
+          <% }) %>
+        </div>
+        <div class="card-body">
+          <form method="POST" action="/incidents/<%= incident.id %>/comments">
+            <textarea name="comment" class="form-control mb-2" rows="2" placeholder="Add a comment..." required></textarea>
+            <div class="d-flex justify-content-between align-items-center">
+              <% if (currentUser.role !== 'user') { %>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="is_work_note" id="workNote">
+                <label class="form-check-label small" for="workNote">Internal work note (hidden from caller)</label>
+              </div>
+              <% } else { %><div></div><% } %>
+              <button type="submit" class="btn btn-sm btn-primary">Post</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <% if (relatedArticles.length > 0) { %>
+      <div class="card mb-3 border-info">
+        <div class="card-body">
+          <h6 class="text-info"><i class="bi bi-lightbulb"></i> Suggested Knowledge Articles</h6>
+          <div class="list-group list-group-flush">
+            <% relatedArticles.forEach(a => { %>
+              <a href="/kb/<%= a.id %>" class="list-group-item list-group-item-action px-0 py-2 small"><%= a.number %> — <%= a.title %></a>
+            <% }) %>
+          </div>
+        </div>
+      </div>
+      <% } %>
+      <div class="card">
+        <div class="card-body">
+          <h6 class="section-title">Summary</h6>
+          <dl class="row mb-0 small">
+            <dt class="col-sm-6">Caller</dt><dd class="col-sm-6"><%= incident.caller_name || '—' %></dd>
+            <dt class="col-sm-6">Assigned To</dt><dd class="col-sm-6"><%= incident.assigned_name || 'Unassigned' %></dd>
+            <dt class="col-sm-6">Assignment Group</dt><dd class="col-sm-6"><%= incident.assignment_group || '—' %></dd>
+            <dt class="col-sm-6">SLA Due</dt><dd class="col-sm-6"><%= incident.sla_due_at ? h.fmtDate(incident.sla_due_at) : '—' %></dd>
+            <dt class="col-sm-6">SLA Status</dt><dd class="col-sm-6"><span class="badge bg-<%= sla.badge %>"><%= sla.label %></span></dd>
+            <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%= h.fmtDate(incident.created_at) %></dd>
+            <dt class="col-sm-6">Updated</dt><dd class="col-sm-6"><%= h.fmtDate(incident.updated_at) %></dd>
+            <dt class="col-sm-6">Resolved</dt><dd class="col-sm-6"><%= incident.resolved_at ? h.fmtDate(incident.resolved_at) : '—' %></dd>
+            <dt class="col-sm-6">Closed</dt><dd class="col-sm-6"><%= incident.closed_at ? h.fmtDate(incident.closed_at) : '—' %></dd>
+          </dl>
+          <% if (incident.ci_id) { %>
+          <hr>
+          <a href="/cmdb/<%= incident.ci_id %>" class="btn btn-sm btn-outline-primary w-100">
+            <i class="bi bi-hdd-stack"></i> View Affected CI: <%= incident.ci_name %>
+          </a>
+          <% } %>
+          <% if (incident.problem_id && currentUser.role !== 'user') { %>
+          <a href="/problems/<%= incident.problem_id %>" class="btn btn-sm btn-outline-info text-white mt-2 w-100">
+            <i class="bi bi-search"></i> Linked Problem: <%= incident.problem_number %>
+          </a>
+          <% } %>
+        </div>
+      </div>
+
+      <% if (currentUser.role === 'admin') { %>
+      <div class="card mt-3 border-danger">
+        <div class="card-body">
+          <h6 class="text-danger">Danger Zone</h6>
+          <p class="small text-muted">Deleting removes this incident and its comments permanently. Consider setting status to Cancelled instead if you need to preserve the record.</p>
+          <form method="POST" action="/incidents/<%= incident.id %>/delete" onsubmit="return confirm('Delete incident <%= incident.number %>? This cannot be undone.');">
+            <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete Incident</button>
+          </form>
+        </div>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>
