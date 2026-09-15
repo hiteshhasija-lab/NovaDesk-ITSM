@@ -234,26 +234,38 @@ a { color: var(--brand); }
 .login-wrapper {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
   overflow: hidden;
+  background: #0a0e1a;
+}
+.login-photo-panel {
+  flex: 1 1 auto;
+  min-width: 0;
   background: #0a0e1a url('/img/login-bg.jpg') center / cover no-repeat;
-  padding: 2rem 1rem;
+}
+.login-form-panel {
+  flex: 0 0 480px;
+  max-width: 44%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #0a0e1a, #10192e);
+  padding: 2rem 1.5rem;
+  position: relative;
+  z-index: 1;
+}
+@media (max-width: 900px) {
+  .login-photo-panel { display: none; }
+  .login-form-panel { flex: 1 1 100%; max-width: 100%; }
 }
 
 .login-content {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 1300px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 1.5rem;
-}
-@media (min-width: 992px) {
-  .login-content { justify-content: flex-end; padding: 0 0.5rem 0 4rem; }
 }
 .login-card {
   position: relative;
