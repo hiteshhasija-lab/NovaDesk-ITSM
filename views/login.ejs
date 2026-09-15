@@ -50,8 +50,9 @@
 
       <div class="login-divider-row my-4"><span>or</span></div>
 
-      <button type="button" class="btn login-btn-sso w-100 py-2" disabled title="SSO is not configured for this instance">
+      <button type="button" class="btn login-btn-sso w-100 py-2" aria-disabled="true" tabindex="-1" onclick="return false;" title="SSO is not configured for this instance">
         <i class="bi bi-building me-2"></i>Sign in with SSO
+        <i class="bi bi-slash-circle login-btn-sso-disabled-icon"></i>
       </button>
 
       <div class="login-trust-row">

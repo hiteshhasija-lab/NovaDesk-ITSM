@@ -376,19 +376,26 @@ a { color: var(--brand); }
 }
 
 .login-btn-sso {
+  position: relative;
   border-radius: 2rem;
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(255,255,255,0.03);
   color: rgba(255,255,255,0.4);
   font-weight: 600;
 }
-.login-btn-sso:disabled { opacity: 1; cursor: not-allowed; }
+.login-btn-sso { cursor: not-allowed; }
+.login-btn-sso-disabled-icon {
+  position: absolute; right: 1.1rem; top: 50%; transform: translateY(-50%);
+  color: #ff8a8a; opacity: 0; transition: opacity 0.15s ease;
+  margin-right: 0 !important;
+}
+.login-btn-sso:hover .login-btn-sso-disabled-icon { opacity: 1; }
 
 .login-trust-row {
-  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-  margin-top: 1.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.45);
+  display: flex; align-items: center; justify-content: center; gap: 0.6rem;
+  margin-top: 1.5rem; font-size: 0.85rem; color: rgba(255,255,255,0.45);
 }
-.login-trust-row i { color: #4fd8ff; margin-right: 0.25rem; }
+.login-trust-row i { color: #4fd8ff; margin-right: 0.3rem; font-size: 1rem; }
 .login-trust-sep { color: rgba(255,255,255,0.2); }
 
 @media (min-width: 901px) and (max-width: 1180px) {
