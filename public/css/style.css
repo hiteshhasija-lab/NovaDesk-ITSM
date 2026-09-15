@@ -162,9 +162,10 @@ a { color: var(--brand); }
   cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,0.18); }
-.theme-toggle .bi-moon-stars-fill { display: none; }
-[data-bs-theme="dark"] .theme-toggle .bi-sun-fill { display: none; }
-[data-bs-theme="dark"] .theme-toggle .bi-moon-stars-fill { display: inline; }
+.theme-toggle .theme-icon-sun { display: inline-block; }
+.theme-toggle .bi-moon-stars { display: none; }
+[data-bs-theme="dark"] .theme-toggle .theme-icon-sun { display: none; }
+[data-bs-theme="dark"] .theme-toggle .bi-moon-stars { display: inline; }
 
 .card {
   background: var(--surface-glass);
