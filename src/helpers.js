@@ -107,6 +107,14 @@ function toCsv(rows, columns) {
   return [header, ...lines].join('\n');
 }
 
+function initials(fullName) {
+  if (!fullName) return '';
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function fmtDate(d) {
   if (!d) return '';
   return dayjs(d.replace(' ', 'T')).format('MMM D, YYYY h:mm A');
@@ -138,6 +146,6 @@ module.exports = {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
-  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery,
+  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials,
   fmtDate, fmtDateShort
 };
