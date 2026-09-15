@@ -21,26 +21,34 @@
     <div class="card login-card">
     <div class="card-body p-4 p-md-5">
       <div class="text-center mb-4">
-        <div class="login-logo-mark mx-auto"><i class="bi bi-diagram-3-fill"></i></div>
+        <div class="login-logo-mark mx-auto"><img src="/img/novadesk-icon.png" alt=""></div>
+        <div class="login-welcome">Welcome to</div>
         <div class="login-title">NovaDesk</div>
-        <div class="login-tagline">IT Service Management</div>
+        <div class="login-tagline">Sign in to your account</div>
       </div>
 
       <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
 
       <form method="POST" action="/login">
-        <div class="mb-3">
-          <label class="form-label">Username</label>
-          <input type="text" name="username" id="loginUsername" class="form-control" required autofocus>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-person"></i></span>
+          <input type="text" name="username" id="loginUsername" class="form-control" placeholder="Username" required autofocus>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Password</label>
-          <input type="password" name="password" id="loginPassword" class="form-control" required>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-lock-fill"></i></span>
+          <input type="password" name="password" id="loginPassword" class="form-control" placeholder="Password" required>
+          <button type="button" class="login-field-toggle" id="togglePassword" aria-label="Show password"><i class="bi bi-eye"></i></button>
         </div>
-        <button type="submit" class="btn btn-primary w-100 py-2">Log In</button>
+        <div class="d-flex align-items-center justify-content-between mb-4">
+          <div class="form-check">
+            <input type="checkbox" name="remember" value="1" class="form-check-input" id="loginRemember">
+            <label class="form-check-label login-remember-label" for="loginRemember">Remember me</label>
+          </div>
+        </div>
+        <button type="submit" class="btn login-btn-primary w-100 py-2">Sign In <i class="bi bi-arrow-right ms-1"></i></button>
       </form>
 
-      <hr class="login-divider my-4">
+      <div class="login-divider-row my-4"><span>or</span></div>
 
       <div class="login-demo-label">Demo accounts — click to fill</div>
       <div class="login-demo-pills">
@@ -48,6 +56,14 @@
         <button type="button" class="login-demo-pill" data-user="jdoe" data-pass="agent123">Agent · Infra</button>
         <button type="button" class="login-demo-pill" data-user="bsmith" data-pass="agent123">Agent · Network</button>
         <button type="button" class="login-demo-pill" data-user="mchen" data-pass="user123">End User</button>
+      </div>
+
+      <div class="login-trust-row">
+        <span><i class="bi bi-shield-check"></i> Secure</span>
+        <span class="login-trust-sep">|</span>
+        <span>Encrypted</span>
+        <span class="login-trust-sep">|</span>
+        <span>Enterprise-Ready</span>
       </div>
     </div>
   </div>
@@ -59,6 +75,14 @@
       document.getElementById('loginUsername').value = btn.dataset.user;
       document.getElementById('loginPassword').value = btn.dataset.pass;
     });
+  });
+  document.getElementById('togglePassword').addEventListener('click', function () {
+    var input = document.getElementById('loginPassword');
+    var icon = this.querySelector('i');
+    var showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    icon.className = showing ? 'bi bi-eye' : 'bi bi-eye-slash';
+    this.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
   });
 </script>
 <%- include('partials/foot') %>
