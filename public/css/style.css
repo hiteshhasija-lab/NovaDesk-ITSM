@@ -376,20 +376,13 @@ a { color: var(--brand); }
 }
 
 .login-btn-sso {
-  position: relative;
   border-radius: 2rem;
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(255,255,255,0.03);
   color: rgba(255,255,255,0.4);
   font-weight: 600;
 }
-.login-btn-sso { cursor: not-allowed; }
-.login-btn-sso-disabled-icon {
-  position: absolute; right: 1.1rem; top: 50%; transform: translateY(-50%);
-  color: #ff8a8a; opacity: 0; transition: opacity 0.15s ease;
-  margin-right: 0 !important;
-}
-.login-btn-sso:hover .login-btn-sso-disabled-icon { opacity: 1; }
+.btn.login-btn-sso { cursor: not-allowed; }
 
 .login-trust-row {
   display: flex; align-items: center; justify-content: center; gap: 0.6rem;
