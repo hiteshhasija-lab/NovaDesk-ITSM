@@ -135,6 +135,14 @@ a { color: var(--brand); }
 }
 .app-navbar form[action="/search"] input[type="search"] {
   min-width: 140px;
+  background-color: #fff;
+  color: #212529;
+  border-color: rgba(255,255,255,0.5);
+}
+.app-navbar form[action="/search"] input[type="search"]::placeholder { color: rgba(33,37,41,0.6); }
+.app-navbar form[action="/search"] input[type="search"]:focus {
+  background-color: #fff;
+  color: #212529;
 }
 .user-avatar {
   width: 2rem; height: 2rem; border-radius: 50%;
