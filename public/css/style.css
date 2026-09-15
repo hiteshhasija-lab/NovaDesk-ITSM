@@ -241,13 +241,6 @@ a { color: var(--brand); }
   background: #0a0e1a url('/img/login-bg.jpg') center / cover no-repeat;
   padding: 2rem 1rem;
 }
-.login-wrapper::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to right, transparent 40%, rgba(6,10,22,0.55) 62%, rgba(6,10,22,0.85) 78%);
-  pointer-events: none;
-}
 
 .login-content {
   position: relative;
