@@ -375,14 +375,24 @@ a { color: var(--brand); }
   font-size: 0.78rem; color: rgba(255,255,255,0.4);
 }
 
-.login-btn-sso {
+.btn.login-btn-sso {
+  --bs-btn-color: rgba(255,255,255,0.4);
+  --bs-btn-bg: rgba(255,255,255,0.03);
+  --bs-btn-border-color: rgba(255,255,255,0.18);
+  --bs-btn-hover-color: rgba(255,255,255,0.4);
+  --bs-btn-hover-bg: rgba(255,255,255,0.03);
+  --bs-btn-hover-border-color: rgba(255,255,255,0.18);
+  --bs-btn-active-color: rgba(255,255,255,0.4);
+  --bs-btn-active-bg: rgba(255,255,255,0.03);
+  --bs-btn-active-border-color: rgba(255,255,255,0.18);
+  --bs-btn-focus-box-shadow: none;
   border-radius: 2rem;
   border: 1px solid rgba(255,255,255,0.18);
   background: rgba(255,255,255,0.03);
   color: rgba(255,255,255,0.4);
   font-weight: 600;
+  cursor: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyOCIgaGVpZ2h0PSIyOCIgdmlld0JveD0iMCAwIDI4IDI4Ij48Y2lyY2xlIGN4PSIxNCIgY3k9IjE0IiByPSIxMSIgZmlsbD0icmdiYSgxMCwxNCwyNiwwLjkpIiBzdHJva2U9IiNmZjZiNmIiIHN0cm9rZS13aWR0aD0iMi41Ii8+PGxpbmUgeDE9IjYuNSIgeTE9IjIxLjUiIHgyPSIyMS41IiB5Mj0iNi41IiBzdHJva2U9IiNmZjZiNmIiIHN0cm9rZS13aWR0aD0iMi41Ii8+PC9zdmc+") 14 14, not-allowed;
 }
-.btn.login-btn-sso { cursor: not-allowed; }
 
 .login-trust-row {
   display: flex; align-items: center; justify-content: center; gap: 0.6rem;
