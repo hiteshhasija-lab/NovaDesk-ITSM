@@ -217,14 +217,14 @@ a { color: var(--brand); }
   justify-content: center;
   position: relative;
   overflow: hidden;
-  background: #0a0e1a url('/img/login-bg.jpg') center / cover no-repeat;
+  background: #0a0e1a url('/img/login-bg.jpg') top center / cover no-repeat;
   padding: 2rem 1rem;
 }
 .login-wrapper::before {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(160deg, rgba(6,10,22,0.6), rgba(6,10,22,0.72));
+  background: rgba(6,10,22,0.15);
 }
 
 .login-content {
@@ -236,6 +236,9 @@ a { color: var(--brand); }
   align-items: center;
   justify-content: center;
   padding: 0 1.5rem;
+}
+@media (min-width: 992px) {
+  .login-content { justify-content: flex-end; padding: 0 4rem; }
 }
 .login-card {
   position: relative;
