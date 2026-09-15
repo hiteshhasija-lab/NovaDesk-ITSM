@@ -28,9 +28,6 @@
         <li class="nav-item"><a class="nav-link <%= path.startsWith('/reports') ? 'active' : '' %>" href="/reports"><i class="bi bi-graph-up-arrow me-1"></i>Reports</a></li>
         <li class="nav-item"><a class="nav-link <%= path.startsWith('/notifications') ? 'active' : '' %>" href="/notifications"><i class="bi bi-envelope me-1"></i>Notifications</a></li>
         <% } %>
-        <% if (currentUser && currentUser.role === 'admin') { %>
-        <li class="nav-item"><a class="nav-link <%= path.startsWith('/users') ? 'active' : '' %>" href="/users"><i class="bi bi-people me-1"></i>Users</a></li>
-        <% } %>
       </ul>
       <% if (currentUser) { %>
       <form class="d-flex me-2" action="/search" method="GET" role="search">
@@ -66,6 +63,9 @@
           <ul class="dropdown-menu dropdown-menu-end user-menu">
             <li><a class="dropdown-item" href="/profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
             <li><a class="dropdown-item" href="/profile#password"><i class="bi bi-gear me-2"></i>Settings</a></li>
+            <% if (currentUser.role === 'admin') { %>
+            <li><a class="dropdown-item" href="/users"><i class="bi bi-people me-2"></i>Users</a></li>
+            <% } %>
             <li><hr class="dropdown-divider"></li>
             <li>
               <form action="/logout" method="POST">
