@@ -375,14 +375,14 @@ a { color: var(--brand); }
   font-size: 0.78rem; color: rgba(255,255,255,0.4);
 }
 
-.login-demo-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.4); margin-bottom: 0.6rem; }
-.login-demo-pills { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.login-demo-pill {
-  font-size: 0.75rem; padding: 0.35rem 0.75rem; border-radius: 2rem;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(56,214,255,0.25);
-  color: rgba(255,255,255,0.85); cursor: pointer;
+.login-btn-sso {
+  border-radius: 2rem;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.4);
+  font-weight: 600;
 }
-.login-demo-pill:hover { background: rgba(56,214,255,0.14); border-color: rgba(56,214,255,0.45); }
+.login-btn-sso:disabled { opacity: 1; cursor: not-allowed; }
 
 .login-trust-row {
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
