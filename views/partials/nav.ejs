@@ -25,6 +25,7 @@
           </ul>
         </li>
         <% if (currentUser && ['admin','agent'].includes(currentUser.role)) { %>
+        <li class="nav-item"><a class="nav-link <%= path.startsWith('/reports') ? 'active' : '' %>" href="/reports"><i class="bi bi-graph-up-arrow me-1"></i>Reports</a></li>
         <li class="nav-item"><a class="nav-link <%= path.startsWith('/notifications') ? 'active' : '' %>" href="/notifications"><i class="bi bi-envelope me-1"></i>Notifications</a></li>
         <% } %>
         <% if (currentUser && currentUser.role === 'admin') { %>

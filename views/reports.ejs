@@ -1,0 +1,212 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-graph-up-arrow text-primary me-1"></i>Reports</h4>
+    <form class="d-flex align-items-center gap-2" method="GET" id="reportsRangeForm">
+      <label class="small text-muted mb-0">Range</label>
+      <select name="range" class="form-select form-select-sm auto-filter" style="width:auto;">
+        <option value="7" <%= days === 7 ? 'selected' : '' %>>Last 7 days</option>
+        <option value="30" <%= days === 30 ? 'selected' : '' %>>Last 30 days</option>
+        <option value="90" <%= days === 90 ? 'selected' : '' %>>Last 90 days</option>
+      </select>
+    </form>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <div class="ci-icon mb-2"><i class="bi bi-stopwatch fs-5 text-primary"></i></div>
+          <div class="text-muted small">Avg. Resolution Time (MTTR)</div>
+          <div class="stat-number text-primary">
+            <% if (mttr.c === 0) { %>—<% } else if (mttr.avg_hours < 1) { %><%= Math.round(mttr.avg_hours * 60) %>m
+            <% } else { %><%= mttr.avg_hours.toFixed(1) %>h<% } %>
+          </div>
+          <div class="small text-muted"><%= mttr.c %> incidents resolved</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <div class="ci-icon mb-2"><i class="bi bi-shield-check fs-5 <%= slaCompliance === null ? 'text-muted' : slaCompliance >= 90 ? 'text-success' : slaCompliance >= 70 ? 'text-warning' : 'text-danger' %>"></i></div>
+          <div class="text-muted small">SLA Compliance</div>
+          <div class="stat-number <%= slaCompliance === null ? 'text-muted' : slaCompliance >= 90 ? 'text-success' : slaCompliance >= 70 ? 'text-warning' : 'text-danger' %>">
+            <%= slaCompliance === null ? '—' : slaCompliance + '%' %>
+          </div>
+          <div class="small text-muted"><%= slaRow.total || 0 %> incidents measured</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <div class="ci-icon mb-2"><i class="bi bi-arrow-repeat fs-5 <%= changeSuccessRate === null ? 'text-muted' : changeSuccessRate >= 90 ? 'text-success' : changeSuccessRate >= 70 ? 'text-warning' : 'text-danger' %>"></i></div>
+          <div class="text-muted small">Change Success Rate</div>
+          <div class="stat-number <%= changeSuccessRate === null ? 'text-muted' : changeSuccessRate >= 90 ? 'text-success' : changeSuccessRate >= 70 ? 'text-warning' : 'text-danger' %>">
+            <%= changeSuccessRate === null ? '—' : changeSuccessRate + '%' %>
+          </div>
+          <div class="small text-muted"><%= changeTotal %> changes decided</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card h-100">
+        <div class="card-body">
+          <div class="ci-icon mb-2"><i class="bi bi-ticket-perforated fs-5 text-info"></i></div>
+          <div class="text-muted small">Tickets Created</div>
+          <div class="stat-number text-info"><%= ticketsCreated %></div>
+          <div class="small text-muted">incidents + changes + problems</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-1">
+    <div class="col-lg-8">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-graph-up text-primary me-1"></i>Incident Volume</div>
+        <div class="card-body"><canvas id="volumeChart"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-bar-chart text-primary me-1"></i>Incidents by Priority</div>
+        <div class="card-body"><canvas id="priorityChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-lg-6">
+      <div class="card h-100 chart-card">
+        <div class="card-header fw-semibold"><i class="bi bi-stopwatch text-primary me-1"></i>MTTR by Priority</div>
+        <div class="card-body"><canvas id="mttrChart"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header fw-semibold"><i class="bi bi-people text-secondary me-1"></i>Agent Workload (current, open items)</div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+              <tr><th>Agent</th><th class="text-end">Incidents</th><th class="text-end">Changes</th><th class="text-end">Problems</th><th class="text-end">Total</th></tr>
+            </thead>
+            <tbody>
+              <% if (agentWorkload.length === 0) { %>
+                <tr><td colspan="5" class="text-center text-muted py-3">No staff users found.</td></tr>
+              <% } %>
+              <% agentWorkload.forEach(a => { %>
+                <tr>
+                  <td><%= a.full_name %></td>
+                  <td class="text-end"><%= a.open_incidents %></td>
+                  <td class="text-end"><%= a.open_changes %></td>
+                  <td class="text-end"><%= a.open_problems %></td>
+                  <td class="text-end fw-semibold"><%= a.total %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<script>
+  document.querySelectorAll('#reportsRangeForm .auto-filter').forEach(function (el) {
+    el.addEventListener('change', function () { el.form.submit(); });
+  });
+
+  (function () {
+    var allCharts = [];
+    var styles = getComputedStyle(document.documentElement);
+    var mutedColor = styles.getPropertyValue('--text-muted').trim() || '#6c757d';
+    var gridColor = styles.getPropertyValue('--border').trim() || '#e3e7ee';
+    Chart.defaults.color = mutedColor;
+    Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+    var volumeLabels = <%- JSON.stringify(volume.map(v => h.fmtDateShort(v.day).replace(/, \d{4}$/, ''))) %>;
+    var volumeData = <%- JSON.stringify(volume.map(v => v.c)) %>;
+    allCharts.push(new Chart(document.getElementById('volumeChart'), {
+      type: 'line',
+      data: {
+        labels: volumeLabels,
+        datasets: [{
+          label: 'Incidents created',
+          data: volumeData,
+          borderColor: '#0d6efd',
+          backgroundColor: 'rgba(13,110,253,0.12)',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: gridColor }, border: { color: gridColor }, ticks: { maxTicksLimit: 12 } },
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: gridColor }, border: { color: gridColor } }
+        }
+      }
+    }));
+
+    var priorityLabels = <%- JSON.stringify(priorityBreakdown.map(p => 'P' + p.priority + ' · ' + h.PRIORITY_LABELS[p.priority])) %>;
+    var priorityData = <%- JSON.stringify(priorityBreakdown.map(p => p.c)) %>;
+    var priorityColorMap = { 1: '#dc3545', 2: '#fd7e14', 3: '#0dcaf0', 4: '#6c757d' };
+    var priorityColors = <%- JSON.stringify(priorityBreakdown.map(p => p.priority)) %>.map(function(p){ return priorityColorMap[p]; });
+    allCharts.push(new Chart(document.getElementById('priorityChart'), {
+      type: 'doughnut',
+      data: { labels: priorityLabels, datasets: [{ data: priorityData, backgroundColor: priorityColors, borderColor: styles.getPropertyValue('--surface').trim() || '#fff' }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    }));
+
+    var mttrLabels = <%- JSON.stringify(mttrByPriority.map(p => 'P' + p.priority)) %>;
+    var mttrData = <%- JSON.stringify(mttrByPriority.map(p => Math.round(p.avg_hours * 10) / 10)) %>;
+    var mttrColorMap = { 'P1': '#dc3545', 'P2': '#fd7e14', 'P3': '#0dcaf0', 'P4': '#6c757d' };
+    allCharts.push(new Chart(document.getElementById('mttrChart'), {
+      type: 'bar',
+      data: { labels: mttrLabels, datasets: [{ label: 'Avg hours to resolve', data: mttrData, backgroundColor: mttrLabels.map(function(l){ return mttrColorMap[l] || '#adb5bd'; }), borderRadius: 4 }] },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false }, border: { color: gridColor } },
+          y: { beginAtZero: true, grid: { color: gridColor }, border: { color: gridColor }, title: { display: true, text: 'Hours' } }
+        }
+      }
+    }));
+
+    document.addEventListener('novadesk:themechange', function () {
+      var freshStyles = getComputedStyle(document.documentElement);
+      var freshText = freshStyles.getPropertyValue('--text').trim() || '#1c2530';
+      var freshMuted = freshStyles.getPropertyValue('--text-muted').trim() || '#6c757d';
+      var freshGrid = freshStyles.getPropertyValue('--border').trim() || '#e3e7ee';
+      var freshSurface = freshStyles.getPropertyValue('--surface').trim() || '#fff';
+
+      Chart.defaults.color = freshMuted;
+
+      allCharts.forEach(function (chart) {
+        if (chart.options.scales) {
+          ['x', 'y'].forEach(function (axis) {
+            var scale = chart.options.scales[axis];
+            if (!scale) return;
+            if (scale.grid && scale.grid.color !== undefined) scale.grid.color = freshGrid;
+            if (scale.border) scale.border.color = freshGrid;
+            if (scale.ticks) scale.ticks.color = freshMuted;
+          });
+        }
+        if (chart.config.type === 'doughnut') {
+          chart.data.datasets.forEach(function (ds) { ds.borderColor = freshSurface; });
+        }
+        if (chart.options.plugins && chart.options.plugins.legend && chart.options.plugins.legend.labels) {
+          chart.options.plugins.legend.labels.color = freshText;
+        }
+        chart.update();
+      });
+    });
+  })();
+</script>
+<%- include('partials/foot') %>

@@ -22,6 +22,7 @@ const myWorkRoutes = require('./routes/mywork');
 const catalogRoutes = require('./routes/catalog');
 const requestRoutes = require('./routes/requests');
 const kbRoutes = require('./routes/kb');
+const reportRoutes = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -63,6 +64,7 @@ app.use('/my-work', myWorkRoutes);
 app.use('/catalog', catalogRoutes);
 app.use('/requests', requestRoutes);
 app.use('/kb', kbRoutes);
+app.use('/reports', reportRoutes);
 
 app.use((req, res) => {
   res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
