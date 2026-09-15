@@ -373,11 +373,11 @@ a { color: var(--brand); }
 .login-signup-row a:hover { text-decoration: underline; }
 
 .login-trust-row {
-  display: flex; align-items: center; justify-content: center; gap: 0.35rem;
-  margin-top: 1rem; font-size: 0.7rem; color: rgba(255,255,255,0.45);
+  display: flex; align-items: center; justify-content: center; gap: 0.3rem;
+  margin-top: 1rem; font-size: 0.75rem; color: rgba(255,255,255,0.45);
   flex-wrap: nowrap; white-space: nowrap;
 }
-.login-trust-row i { color: #4fd8ff; margin-right: 0.2rem; font-size: 0.82rem; }
+.login-trust-row i { color: #4fd8ff; margin-right: 0.18rem; font-size: 0.86rem; }
 .login-trust-sep { color: rgba(255,255,255,0.2); }
 
 .section-title {
