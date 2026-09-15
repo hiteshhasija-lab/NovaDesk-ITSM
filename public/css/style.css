@@ -253,15 +253,15 @@ a { color: var(--brand); }
   padding: 0 1.5rem;
 }
 @media (min-width: 992px) {
-  .login-content { justify-content: flex-end; padding: 0 0.5rem 0 4rem; }
+  .login-content { justify-content: flex-end; padding: 0 0 0 4rem; }
 }
 .login-card {
   position: relative;
   z-index: 1;
   width: 100%;
   transform: translateY(-12px);
-  flex: 0 0 360px;
-  max-width: 360px;
+  flex: 0 0 400px;
+  max-width: 400px;
   background: rgba(8,14,28,0.78);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -362,7 +362,7 @@ a { color: var(--brand); }
   background: rgba(255,255,255,0.03);
   color: rgba(255,255,255,0.4);
   font-weight: 600;
-  cursor: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyOCIgaGVpZ2h0PSIyOCIgdmlld0JveD0iMCAwIDI4IDI4Ij48Y2lyY2xlIGN4PSIxNCIgY3k9IjE0IiByPSIxMSIgZmlsbD0icmdiYSgxMCwxNCwyNiwwLjkpIiBzdHJva2U9IiM5YWE1YjMiIHN0cm9rZS13aWR0aD0iMi41Ii8+PGxpbmUgeDE9IjYuNSIgeTE9IjIxLjUiIHgyPSIyMS41IiB5Mj0iNi41IiBzdHJva2U9IiM5YWE1YjMiIHN0cm9rZS13aWR0aD0iMi41Ii8+PC9zdmc+") 14 14, not-allowed;
+  cursor: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMiIgaGVpZ2h0PSIyMiIgdmlld0JveD0iMCAwIDIyIDIyIj48Y2lyY2xlIGN4PSIxMSIgY3k9IjExIiByPSI4LjYiIGZpbGw9InJnYmEoMTAsMTQsMjYsMC45KSIgc3Ryb2tlPSIjOWFhNWIzIiBzdHJva2Utd2lkdGg9IjIiLz48bGluZSB4MT0iNS4xIiB5MT0iMTYuOSIgeDI9IjE2LjkiIHkyPSI1LjEiIHN0cm9rZT0iIzlhYTViMyIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+") 11 11, not-allowed;
 }
 
 .login-signup-row {
@@ -373,10 +373,11 @@ a { color: var(--brand); }
 .login-signup-row a:hover { text-decoration: underline; }
 
 .login-trust-row {
-  display: flex; align-items: center; justify-content: center; gap: 0.6rem;
-  margin-top: 1rem; font-size: 0.85rem; color: rgba(255,255,255,0.45);
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  margin-top: 1rem; font-size: 0.78rem; color: rgba(255,255,255,0.45);
+  flex-wrap: nowrap; white-space: nowrap;
 }
-.login-trust-row i { color: #4fd8ff; margin-right: 0.3rem; font-size: 1rem; }
+.login-trust-row i { color: #4fd8ff; margin-right: 0.25rem; font-size: 0.92rem; }
 .login-trust-sep { color: rgba(255,255,255,0.2); }
 
 .section-title {
