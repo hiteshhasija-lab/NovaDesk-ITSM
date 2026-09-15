@@ -1,4 +1,18 @@
 const dayjs = require('dayjs');
+const fs = require('fs');
+const path = require('path');
+
+const CSS_PATH = path.join(__dirname, '..', 'public', 'css', 'style.css');
+let cachedCssVersion = null;
+function cssVersion() {
+  if (cachedCssVersion) return cachedCssVersion;
+  try {
+    cachedCssVersion = Math.round(fs.statSync(CSS_PATH).mtimeMs);
+  } catch (e) {
+    cachedCssVersion = Date.now();
+  }
+  return cachedCssVersion;
+}
 
 function priorityFromImpactUrgency(impact, urgency) {
   const score = Number(impact) + Number(urgency);
@@ -146,6 +160,6 @@ module.exports = {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
-  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials,
+  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion,
   fmtDate, fmtDateShort
 };
