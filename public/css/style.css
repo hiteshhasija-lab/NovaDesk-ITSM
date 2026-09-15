@@ -121,16 +121,9 @@ a { color: var(--brand); }
   box-shadow: var(--shadow);
   border-bottom: 1px solid var(--border-glass);
 }
-.app-navbar .navbar-collapse {
-  flex-wrap: wrap;
-  row-gap: 0.5rem;
-}
-.app-navbar .navbar-nav {
-  flex-wrap: wrap;
-}
 .app-navbar .nav-link {
-  padding-left: 0.65rem;
-  padding-right: 0.65rem;
+  padding-left: 0.6rem;
+  padding-right: 0.6rem;
   white-space: nowrap;
 }
 .app-navbar form[action="/search"] {
