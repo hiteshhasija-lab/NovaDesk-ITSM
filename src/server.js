@@ -27,8 +27,8 @@ const kbRoutes = require('./routes/kb');
 const reportRoutes = require('./routes/reports');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+const PORT = process.env.PORT || 80;
+const HTTPS_PORT = process.env.HTTPS_PORT || 443;
 const TLS_KEY_PATH = process.env.TLS_KEY_PATH || path.join(__dirname, '..', 'certs', 'key.pem');
 const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'certs', 'cert.pem');
 
