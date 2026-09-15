@@ -1,8 +1,11 @@
 <nav class="navbar navbar-expand-xxl navbar-dark app-navbar sticky-top">
   <div class="container-fluid px-3">
-    <div class="navbar-brand fw-bold">
-      <div class="d-flex align-items-center"><img src="/img/novadesk-icon.png" alt="" height="28" class="me-2"><span>NovaDesk</span></div>
-      <div class="navbar-version"><%= h.appVersion() %></div>
+    <div class="navbar-brand fw-bold d-flex align-items-center">
+      <img src="/img/novadesk-icon.png" alt="" height="28" class="me-2">
+      <div class="d-flex flex-column">
+        <span>NovaDesk</span>
+        <span class="navbar-version"><%= h.appVersion() %></span>
+      </div>
     </div>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain">
       <span class="navbar-toggler-icon"></span>
