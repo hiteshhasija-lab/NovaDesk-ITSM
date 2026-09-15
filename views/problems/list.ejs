@@ -50,13 +50,21 @@
     </div>
   </form>
 
+  <%
+    function sortHeader(col, label) {
+      const active = sort.key === col;
+      const nextDir = active && sort.dir === 'asc' ? 'desc' : 'asc';
+      const icon = active ? (sort.dir === 'asc' ? 'bi-caret-up-fill' : 'bi-caret-down-fill') : 'bi-caret-down text-muted opacity-25';
+      return `<a href="${h.withQuery(query, { sort: col, dir: nextDir, page: 1 })}" class="text-decoration-none text-reset">${label} <i class="bi ${icon} small"></i></a>`;
+    }
+  %>
   <div class="card">
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
-            <th>Number</th><th>Short Description</th><th>Priority</th><th>Status</th>
-            <th>Assigned To</th><th>Affected CI</th><th>Linked Incidents</th><th>Created</th>
+            <th><%- sortHeader('number', 'Number') %></th><th>Short Description</th><th><%- sortHeader('priority', 'Priority') %></th><th><%- sortHeader('status', 'Status') %></th>
+            <th>Assigned To</th><th>Affected CI</th><th>Linked Incidents</th><th><%- sortHeader('created_at', 'Created') %></th>
           </tr>
         </thead>
         <tbody id="problemsTableBody">
@@ -80,6 +88,7 @@
       <div id="problemsNoLiveResults" class="text-center text-muted py-4" hidden>No problems match "<span id="problemsNoLiveResultsQuery"></span>".</div>
     </div>
   </div>
+  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>

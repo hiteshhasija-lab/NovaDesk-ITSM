@@ -1,0 +1,24 @@
+<% if (pagination.total > 0) { %>
+<div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+  <div class="small text-muted">Showing <%= pagination.from %>–<%= pagination.to %> of <%= pagination.total %></div>
+  <% if (pagination.totalPages > 1) { %>
+  <ul class="pagination pagination-sm mb-0">
+    <li class="page-item <%= pagination.hasPrev ? '' : 'disabled' %>">
+      <a class="page-link" href="<%= h.withQuery(query, { page: pagination.page - 1 }) %>">Prev</a>
+    </li>
+    <% if (pagination.totalPages <= 7) { %>
+      <% for (let p = 1; p <= pagination.totalPages; p++) { %>
+        <li class="page-item <%= p === pagination.page ? 'active' : '' %>">
+          <a class="page-link" href="<%= h.withQuery(query, { page: p }) %>"><%= p %></a>
+        </li>
+      <% } %>
+    <% } else { %>
+      <li class="page-item disabled"><span class="page-link">Page <%= pagination.page %> of <%= pagination.totalPages %></span></li>
+    <% } %>
+    <li class="page-item <%= pagination.hasNext ? '' : 'disabled' %>">
+      <a class="page-link" href="<%= h.withQuery(query, { page: pagination.page + 1 }) %>">Next</a>
+    </li>
+  </ul>
+  <% } %>
+</div>
+<% } %>

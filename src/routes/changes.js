@@ -5,10 +5,18 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
+const { parseSort, sortRows, paginate } = require('../listquery');
 
 const router = express.Router();
 
 const BOARD_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'implemented', 'closed'];
+
+const CHANGE_SORT_COLUMNS = {
+  number: r => r.number,
+  risk: r => ({ low: 1, medium: 2, high: 3 }[r.risk] || 0),
+  status: r => r.status,
+  planned_start: r => r.planned_start || ''
+};
 
 function canAccessChange(req, change) {
   return req.session.user.role !== 'user' || change.requested_by === req.session.user.id;
@@ -63,7 +71,7 @@ router.get('/', requireAuth, (req, res) => {
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  const changes = db.prepare(`
+  let changes = db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
@@ -73,10 +81,17 @@ router.get('/', requireAuth, (req, res) => {
     ORDER BY c.planned_start ASC, c.created_at DESC
   `).all(...params);
 
+  const sort = parseSort(req, CHANGE_SORT_COLUMNS, 'planned_start', 'asc');
+  changes = sortRows(changes, CHANGE_SORT_COLUMNS, sort.key, sort.dir);
+  const { items, pagination } = paginate(changes, req);
+
   const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
   const staffUsers = isEndUser ? [] : assignableUsers;
 
-  res.render('changes/list', { title: 'Change Requests', changes, filters: { status, risk, change_type, assigned_to, q }, staffUsers, assignableUsers });
+  res.render('changes/list', {
+    title: 'Change Requests', changes: items, filters: { status, risk, change_type, assigned_to, q },
+    staffUsers, assignableUsers, sort, pagination, query: req.query
+  });
 });
 
 router.get('/new', requireAuth, (req, res) => {

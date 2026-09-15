@@ -24,6 +24,13 @@
       </select>
     </div>
     <div class="col-md-2">
+      <select name="sort" class="form-select form-select-sm auto-filter">
+        <option value="recent" <%= filters.sort === 'recent' ? 'selected' : '' %>>Recently Updated</option>
+        <option value="title" <%= filters.sort === 'title' ? 'selected' : '' %>>Title A-Z</option>
+        <option value="views" <%= filters.sort === 'views' ? 'selected' : '' %>>Most Viewed</option>
+      </select>
+    </div>
+    <div class="col-md-2">
       <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Go</button>
     </div>
   </form>
@@ -53,6 +60,7 @@
     <% } %>
   </div>
   <div class="col-12 text-muted text-center py-5" id="kbNoLiveResults" hidden>No articles match "<span id="kbNoLiveResultsQuery"></span>".</div>
+  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>

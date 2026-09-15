@@ -52,12 +52,20 @@
     </div>
   </form>
 
+  <%
+    function sortHeader(col, label) {
+      const active = sort.key === col;
+      const nextDir = active && sort.dir === 'asc' ? 'desc' : 'asc';
+      const icon = active ? (sort.dir === 'asc' ? 'bi-caret-up-fill' : 'bi-caret-down-fill') : 'bi-caret-down text-muted opacity-25';
+      return `<a href="${h.withQuery(query, { sort: col, dir: nextDir, page: 1 })}" class="text-decoration-none text-reset">${label} <i class="bi ${icon} small"></i></a>`;
+    }
+  %>
   <div class="card">
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
-            <th>CI #</th><th>Name</th><th>Type</th><th>Environment</th><th>Status</th>
+            <th><%- sortHeader('ci_number', 'CI #') %></th><th><%- sortHeader('name', 'Name') %></th><th><%- sortHeader('ci_type', 'Type') %></th><th>Environment</th><th><%- sortHeader('status', 'Status') %></th>
             <th>IP Address</th><th>Location</th><th>Owner</th>
           </tr>
         </thead>
@@ -82,6 +90,7 @@
       <div id="cmdbNoLiveResults" class="text-center text-muted py-4" hidden>No configuration items match "<span id="cmdbNoLiveResultsQuery"></span>".</div>
     </div>
   </div>
+  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 <script>
   (function () {

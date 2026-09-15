@@ -117,6 +117,18 @@ function fmtDateShort(d) {
   return dayjs(d.replace(' ', 'T')).format('MMM D, YYYY');
 }
 
+// Merges `overrides` into an existing query object and serializes it back to a query string,
+// for building pagination/sort links that preserve the other active filters.
+function withQuery(query, overrides) {
+  const merged = { ...query, ...overrides };
+  const parts = [];
+  for (const [k, v] of Object.entries(merged)) {
+    if (v === undefined || v === null || v === '') continue;
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 module.exports = {
   priorityFromImpactUrgency,
   PRIORITY_LABELS, PRIORITY_BADGE,
@@ -126,6 +138,6 @@ module.exports = {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
-  ASSIGNMENT_GROUPS, toCsv, escapeHtml,
+  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery,
   fmtDate, fmtDateShort
 };

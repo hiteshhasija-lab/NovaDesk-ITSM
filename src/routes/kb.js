@@ -2,8 +2,15 @@ const express = require('express');
 const { db, nextNumber } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { toCsv } = require('../helpers');
+const { sortRows, paginate } = require('../listquery');
 
 const router = express.Router();
+
+const KB_SORT_COLUMNS = {
+  updated_at: r => r.updated_at,
+  title: r => r.title,
+  view_count: r => r.view_count
+};
 
 router.get('/', requireAuth, (req, res) => {
   const isStaff = ['admin', 'agent'].includes(req.session.user.role);
@@ -14,16 +21,25 @@ router.get('/', requireAuth, (req, res) => {
   if (q) { where.push('(title LIKE ? OR body LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
   if (category) { where.push('category = ?'); params.push(category); }
 
-  const articles = db.prepare(`
+  let articles = db.prepare(`
     SELECT k.*, u.full_name AS author_name FROM kb_articles k
     LEFT JOIN users u ON u.id = k.author_id
     WHERE ${where.join(' AND ')}
     ORDER BY k.updated_at DESC
   `).all(...params);
 
+  const sortOption = req.query.sort === 'title' ? 'title' : req.query.sort === 'views' ? 'views' : 'recent';
+  const sortMap = { recent: ['updated_at', 'desc'], title: ['title', 'asc'], views: ['view_count', 'desc'] };
+  const [sortKey, sortDir] = sortMap[sortOption];
+  articles = sortRows(articles, KB_SORT_COLUMNS, sortKey, sortDir);
+  const { items, pagination } = paginate(articles, req, 12);
+
   const categories = db.prepare('SELECT DISTINCT category FROM kb_articles ORDER BY category').all().map(r => r.category);
 
-  res.render('kb/list', { title: 'Knowledge Base', articles, categories, filters: { q, category }, isStaff });
+  res.render('kb/list', {
+    title: 'Knowledge Base', articles: items, categories, filters: { q, category, sort: sortOption },
+    isStaff, pagination, query: req.query
+  });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {

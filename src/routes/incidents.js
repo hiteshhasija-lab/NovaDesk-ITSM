@@ -4,6 +4,14 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
+const { parseSort, sortRows, paginate } = require('../listquery');
+
+const INCIDENT_SORT_COLUMNS = {
+  number: r => r.number,
+  priority: r => r.priority,
+  status: r => r.status,
+  created_at: r => r.created_at
+};
 
 const BOARD_STATUSES = ['new', 'in_progress', 'on_hold', 'resolved', 'closed'];
 
@@ -62,10 +70,17 @@ router.get('/', requireAuth, (req, res) => {
     incidents = incidents.filter(inc => slaStatus(inc).key === sla);
   }
 
+  const sort = parseSort(req, INCIDENT_SORT_COLUMNS, 'priority', 'asc');
+  incidents = sortRows(incidents, INCIDENT_SORT_COLUMNS, sort.key, sort.dir);
+  const { items, pagination } = paginate(incidents, req);
+
   const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
   const staffUsers = isEndUser ? [] : assignableUsers;
 
-  res.render('incidents/list', { title: 'Incidents', incidents, filters: { status, priority, q, sla, assigned_to }, staffUsers, assignableUsers });
+  res.render('incidents/list', {
+    title: 'Incidents', incidents: items, filters: { status, priority, q, sla, assigned_to },
+    staffUsers, assignableUsers, sort, pagination, query: req.query
+  });
 });
 
 router.get('/new', requireAuth, (req, res) => {

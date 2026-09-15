@@ -3,9 +3,17 @@ const { db, nextNumber, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
+const { parseSort, sortRows, paginate } = require('../listquery');
 
 const router = express.Router();
 const staffOnly = [requireAuth, requireRole('admin', 'agent')];
+
+const PROBLEM_SORT_COLUMNS = {
+  number: r => r.number,
+  priority: r => r.priority,
+  status: r => r.status,
+  created_at: r => r.created_at
+};
 
 function getProblemById(id) {
   return db.prepare('SELECT * FROM problems WHERE id = ?').get(id);
@@ -38,7 +46,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  const problems = db.prepare(`
+  let problems = db.prepare(`
     SELECT p.*, a.full_name AS assigned_name, c.name AS ci_name,
       (SELECT COUNT(*) FROM incidents i WHERE i.problem_id = p.id) AS incident_count
     FROM problems p
@@ -48,9 +56,16 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
     ORDER BY p.priority ASC, p.created_at DESC
   `).all(...params);
 
+  const sort = parseSort(req, PROBLEM_SORT_COLUMNS, 'priority', 'asc');
+  problems = sortRows(problems, PROBLEM_SORT_COLUMNS, sort.key, sort.dir);
+  const { items, pagination } = paginate(problems, req);
+
   const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
 
-  res.render('problems/list', { title: 'Problems', problems, filters: { status, priority, assigned_to, q }, assignableUsers });
+  res.render('problems/list', {
+    title: 'Problems', problems: items, filters: { status, priority, assigned_to, q },
+    assignableUsers, sort, pagination, query: req.query
+  });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {

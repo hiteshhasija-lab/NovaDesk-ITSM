@@ -3,8 +3,16 @@ const { db, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { REQUEST_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
+const { parseSort, sortRows, paginate } = require('../listquery');
 
 const router = express.Router();
+
+const REQUEST_SORT_COLUMNS = {
+  number: r => r.number,
+  item_name: r => r.item_name || '',
+  status: r => r.status,
+  created_at: r => r.created_at
+};
 
 router.get('/', requireAuth, (req, res) => {
   const isEndUser = req.session.user.role === 'user';
@@ -24,7 +32,7 @@ router.get('/', requireAuth, (req, res) => {
   if (q) { where.push('(r.number LIKE ? OR ci.name LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  const requests = db.prepare(`
+  let requests = db.prepare(`
     SELECT r.*, ci.name AS item_name, ci.icon AS item_icon, u.full_name AS requester_name, a.full_name AS assigned_name
     FROM service_requests r
     LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
@@ -34,10 +42,17 @@ router.get('/', requireAuth, (req, res) => {
     ORDER BY r.created_at DESC
   `).all(...params);
 
+  const sort = parseSort(req, REQUEST_SORT_COLUMNS, 'created_at', 'desc');
+  requests = sortRows(requests, REQUEST_SORT_COLUMNS, sort.key, sort.dir);
+  const { items, pagination } = paginate(requests, req);
+
   const requesterUsers = isEndUser ? [] : db.prepare("SELECT id, full_name FROM users WHERE active = 1 ORDER BY full_name").all();
   const assignableUsers = isEndUser ? [] : db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
 
-  res.render('catalog/requests-list', { title: 'My Requests', requests, filters: { status, requested_by, assigned_to, q }, isEndUser, requesterUsers, assignableUsers });
+  res.render('catalog/requests-list', {
+    title: 'My Requests', requests: items, filters: { status, requested_by, assigned_to, q },
+    isEndUser, requesterUsers, assignableUsers, sort, pagination, query: req.query
+  });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {

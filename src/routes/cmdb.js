@@ -2,8 +2,16 @@ const express = require('express');
 const { db, nextNumber } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv } = require('../helpers');
+const { parseSort, sortRows, paginate } = require('../listquery');
 
 const router = express.Router();
+
+const CI_SORT_COLUMNS = {
+  ci_number: r => r.ci_number,
+  name: r => r.name,
+  ci_type: r => r.ci_type,
+  status: r => r.status
+};
 
 function loadFormLookups(excludeId) {
   const users = db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
@@ -23,16 +31,23 @@ router.get('/', requireAuth, (req, res) => {
   if (q) { where.push('(ci.name LIKE ? OR ci.ci_number LIKE ? OR ci.ip_address LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  const items = db.prepare(`
+  let items = db.prepare(`
     SELECT ci.*, u.full_name AS owner_name
     FROM cmdb_ci ci LEFT JOIN users u ON u.id = ci.owner_id
     ${whereSql}
     ORDER BY ci.ci_type, ci.name
   `).all(...params);
 
+  const sort = parseSort(req, CI_SORT_COLUMNS, 'ci_type', 'asc');
+  items = sortRows(items, CI_SORT_COLUMNS, sort.key, sort.dir);
+  const { items: pagedItems, pagination } = paginate(items, req);
+
   const locations = db.prepare("SELECT DISTINCT location FROM cmdb_ci WHERE location IS NOT NULL AND location != '' ORDER BY location").all().map(r => r.location);
 
-  res.render('cmdb/list', { title: 'CMDB - Configuration Items', items, filters: { ci_type, status, environment, location, q }, locations });
+  res.render('cmdb/list', {
+    title: 'CMDB - Configuration Items', items: pagedItems, filters: { ci_type, status, environment, location, q },
+    locations, sort, pagination, query: req.query
+  });
 });
 
 router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {
