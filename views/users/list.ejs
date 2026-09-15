@@ -20,7 +20,14 @@
             <td><span class="badge bg-<%= u.role === 'admin' ? 'danger' : u.role === 'agent' ? 'primary' : 'secondary' %> text-capitalize"><%= u.role %></span></td>
             <td><%= u.department || '—' %></td>
             <td><%- u.active ? '<i class="bi bi-check-circle text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>' %></td>
-            <td><a href="/users/<%= u.id %>/edit" class="btn btn-sm btn-outline-secondary">Edit</a></td>
+            <td class="text-nowrap">
+              <a href="/users/<%= u.id %>/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+              <% if (currentUser && u.id !== currentUser.id) { %>
+              <form method="POST" action="/users/<%= u.id %>/delete" class="d-inline" onsubmit="return confirm('Delete user &quot;<%= u.username %>&quot;? This cannot be undone.');">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+              <% } %>
+            </td>
           </tr>
           <% }) %>
         </tbody>
