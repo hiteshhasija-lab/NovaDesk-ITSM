@@ -232,7 +232,7 @@ a { color: var(--brand); }
   padding: 0 1.5rem;
 }
 @media (min-width: 992px) {
-  .login-content { justify-content: flex-end; padding: 0 1rem 0 4rem; }
+  .login-content { justify-content: flex-end; padding: 0 0.5rem 0 4rem; }
 }
 .login-card {
   position: relative;
@@ -278,7 +278,7 @@ a { color: var(--brand); }
   border-radius: 0.7rem;
   color: #fff;
   padding-left: 2.6rem;
-  height: 3rem;
+  height: 2.75rem;
 }
 .login-field .form-control::placeholder { color: rgba(255,255,255,0.4); }
 .login-field .form-control:focus {
@@ -342,7 +342,7 @@ a { color: var(--brand); }
 
 .login-trust-row {
   display: flex; align-items: center; justify-content: center; gap: 0.6rem;
-  margin-top: 1.5rem; font-size: 0.85rem; color: rgba(255,255,255,0.45);
+  margin-top: 1rem; font-size: 0.85rem; color: rgba(255,255,255,0.45);
 }
 .login-trust-row i { color: #4fd8ff; margin-right: 0.3rem; font-size: 1rem; }
 .login-trust-sep { color: rgba(255,255,255,0.2); }
