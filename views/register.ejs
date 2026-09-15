@@ -1,0 +1,63 @@
+<%- include('partials/head') %>
+<div class="login-wrapper">
+  <div class="login-content">
+    <div class="card login-card">
+    <div class="card-body px-4 px-md-5 py-4">
+      <div class="text-center mb-3">
+        <div class="login-logo-mark mx-auto"><img src="/img/novadesk-icon.png" alt=""></div>
+        <div class="login-welcome">Welcome to</div>
+        <div class="login-title">NovaDesk</div>
+        <div class="login-tagline">Create your account</div>
+      </div>
+
+      <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+      <form method="POST" action="/register">
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-person"></i></span>
+          <input type="text" name="full_name" class="form-control" placeholder="Full name" value="<%= form.full_name || '' %>" required autofocus>
+        </div>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-at"></i></span>
+          <input type="text" name="username" class="form-control" placeholder="Username" value="<%= form.username || '' %>" required>
+        </div>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-envelope"></i></span>
+          <input type="email" name="email" class="form-control" placeholder="Email (optional)" value="<%= form.email || '' %>">
+        </div>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-lock-fill"></i></span>
+          <input type="password" name="password" id="registerPassword" class="form-control" placeholder="Password (min 8 characters)" required minlength="8">
+          <button type="button" class="login-field-toggle" id="toggleRegisterPassword" aria-label="Show password"><i class="bi bi-eye"></i></button>
+        </div>
+        <div class="login-field mb-3">
+          <span class="login-field-icon"><i class="bi bi-lock-fill"></i></span>
+          <input type="password" name="confirm_password" class="form-control" placeholder="Confirm password" required minlength="8">
+        </div>
+        <button type="submit" class="btn login-btn-primary w-100 py-2">Create Account <i class="bi bi-arrow-right ms-1"></i></button>
+      </form>
+
+      <div class="login-signup-row">Already have an account? <a href="/login">Sign in</a></div>
+
+      <div class="login-trust-row">
+        <span><i class="bi bi-shield-check"></i> Secure</span>
+        <span class="login-trust-sep">|</span>
+        <span>Encrypted</span>
+        <span class="login-trust-sep">|</span>
+        <span>Enterprise-Ready</span>
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+<script>
+  document.getElementById('toggleRegisterPassword').addEventListener('click', function () {
+    var input = document.getElementById('registerPassword');
+    var icon = this.querySelector('i');
+    var showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    icon.className = showing ? 'bi bi-eye' : 'bi bi-eye-slash';
+    this.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+  });
+</script>
+<%- include('partials/foot') %>

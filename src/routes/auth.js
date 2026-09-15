@@ -22,6 +22,39 @@ router.post('/login', async (req, res) => {
   res.redirect(dest);
 });
 
+router.get('/register', (req, res) => {
+  if (req.session.user) return res.redirect('/');
+  res.render('register', { error: null, title: 'Create Account', form: {} });
+});
+
+router.post('/register', async (req, res) => {
+  const b = req.body;
+  const form = { full_name: b.full_name, username: b.username, email: b.email, department: b.department };
+
+  if (!b.full_name || !b.username || !b.password) {
+    return res.render('register', { error: 'Full name, username, and password are required.', title: 'Create Account', form });
+  }
+  if (b.password.length < 8) {
+    return res.render('register', { error: 'Password must be at least 8 characters.', title: 'Create Account', form });
+  }
+  if (b.password !== b.confirm_password) {
+    return res.render('register', { error: 'Password and confirmation do not match.', title: 'Create Account', form });
+  }
+
+  try {
+    await db.prepare(`
+      INSERT INTO users (username, password_hash, full_name, email, role, department)
+      VALUES (?, ?, ?, ?, 'user', ?)
+    `).run(b.username, bcrypt.hashSync(b.password, 10), b.full_name, b.email || null, b.department || null);
+  } catch (e) {
+    return res.render('register', { error: 'That username is already taken.', title: 'Create Account', form });
+  }
+
+  const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
+  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role };
+  res.redirect('/');
+});
+
 router.post('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
