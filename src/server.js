@@ -1,5 +1,7 @@
 const { initDb } = require('./db');
 const path = require('path');
+const fs = require('fs');
+const https = require('https');
 const express = require('express');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
@@ -26,6 +28,9 @@ const reportRoutes = require('./routes/reports');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
+const TLS_KEY_PATH = process.env.TLS_KEY_PATH || path.join(__dirname, '..', 'certs', 'key.pem');
+const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'certs', 'cert.pem');
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
@@ -81,6 +86,18 @@ initDb()
       console.log(`ITSM app running at http://localhost:${PORT}`);
       console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
     });
+
+    if (fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH)) {
+      const tlsOptions = {
+        key: fs.readFileSync(TLS_KEY_PATH),
+        cert: fs.readFileSync(TLS_CERT_PATH)
+      };
+      https.createServer(tlsOptions, app).listen(HTTPS_PORT, () => {
+        console.log(`ITSM app also running securely at https://localhost:${HTTPS_PORT}`);
+      });
+    } else {
+      console.log(`No TLS certificate found at ${TLS_CERT_PATH} — HTTPS not started.`);
+    }
   })
   .catch((err) => {
     console.error('Failed to initialize database:', err);
