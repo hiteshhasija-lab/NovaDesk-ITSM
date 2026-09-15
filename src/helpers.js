@@ -1,6 +1,7 @@
 const dayjs = require('dayjs');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const CSS_PATH = path.join(__dirname, '..', 'public', 'css', 'style.css');
 let cachedCssVersion = null;
@@ -12,6 +13,21 @@ function cssVersion() {
     cachedCssVersion = Date.now();
   }
   return cachedCssVersion;
+}
+
+let cachedAppVersion = null;
+function appVersion() {
+  if (cachedAppVersion) return cachedAppVersion;
+  let pkgVersion = '0.0.0';
+  try {
+    pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+  } catch (e) { /* fall back to default above */ }
+  let sha = '';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch (e) { /* not a git checkout — version number alone is fine */ }
+  cachedAppVersion = sha ? `v${pkgVersion} · ${sha}` : `v${pkgVersion}`;
+  return cachedAppVersion;
 }
 
 function priorityFromImpactUrgency(impact, urgency) {
@@ -160,6 +176,6 @@ module.exports = {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
-  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion,
+  ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion, appVersion,
   fmtDate, fmtDateShort
 };
