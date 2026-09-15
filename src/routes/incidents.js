@@ -1,10 +1,10 @@
-const express = require('express');
-const { db, nextNumber, logActivity } = require('../db');
+const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
+const createAsyncRouter = require('../asyncRouter');
 
 const INCIDENT_SORT_COLUMNS = {
   number: r => r.number,
@@ -15,7 +15,7 @@ const INCIDENT_SORT_COLUMNS = {
 
 const BOARD_STATUSES = ['new', 'in_progress', 'on_hold', 'resolved', 'closed'];
 
-const router = express.Router();
+const router = createAsyncRouter();
 
 function canAccessIncident(req, incident) {
   return req.session.user.role !== 'user' || incident.caller_id === req.session.user.id;
@@ -27,14 +27,14 @@ function getIncidentById(id) {
   return db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);
 }
 
-function loadFormLookups() {
-  const users = db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
-  const cis = db.prepare("SELECT id, ci_number, name FROM cmdb_ci ORDER BY name").all();
-  const problems = db.prepare("SELECT id, number, short_description FROM problems WHERE status != 'closed' ORDER BY created_at DESC").all();
+async function loadFormLookups() {
+  const users = await db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
+  const cis = await db.prepare("SELECT id, ci_number, name FROM cmdb_ci ORDER BY name").all();
+  const problems = await db.prepare("SELECT id, number, short_description FROM problems WHERE status != 'closed' ORDER BY created_at DESC").all();
   return { users, cis, problems };
 }
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const { status, priority, q, sla, assigned_to } = req.query;
   const isEndUser = req.session.user.role === 'user';
   let where = [];
@@ -50,13 +50,13 @@ router.get('/', requireAuth, (req, res) => {
   if (assigned_to === 'unassigned') { where.push('i.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('i.assigned_to = ?'); params.push(assigned_to); }
   if (q) {
-    where.push('(i.number LIKE ? OR i.short_description LIKE ? OR c.name LIKE ? OR c.ci_number LIKE ?)');
+    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  let incidents = db.prepare(`
+  let incidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name
     FROM incidents i
     LEFT JOIN users u ON u.id = i.caller_id
@@ -74,7 +74,7 @@ router.get('/', requireAuth, (req, res) => {
   incidents = sortRows(incidents, INCIDENT_SORT_COLUMNS, sort.key, sort.dir);
   const { items, pagination } = paginate(incidents, req);
 
-  const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
+  const assignableUsers = await db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
   const staffUsers = isEndUser ? [] : assignableUsers;
 
   res.render('incidents/list', {
@@ -83,13 +83,13 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
-router.get('/new', requireAuth, (req, res) => {
-  const { users, cis } = loadFormLookups();
+router.get('/new', requireAuth, async (req, res) => {
+  const { users, cis } = await loadFormLookups();
   res.render('incidents/form', { title: 'New Incident', incident: null, users, cis });
 });
 
-router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {
-  const incidents = db.prepare(`
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const incidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name
     FROM incidents i
     LEFT JOIN users u ON u.id = i.caller_id
@@ -116,8 +116,8 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res)
   res.send(csv);
 });
 
-router.get('/board', requireAuth, requireRole('admin', 'agent'), (req, res) => {
-  const incidents = db.prepare(`
+router.get('/board', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const incidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name
     FROM incidents i
     LEFT JOIN users u ON u.id = i.caller_id
@@ -136,52 +136,56 @@ router.get('/board', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   res.render('incidents/board', { title: 'Incident Board', columns });
 });
 
-router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { status } = req.body;
   if (!BOARD_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
-  const existing = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
+  const existing = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   let resolved_at = existing.resolved_at;
   let closed_at = existing.closed_at;
   if (status === 'resolved') {
-    if (existing.status !== 'resolved') resolved_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'resolved') resolved_at = nowStr();
   } else if (status !== 'closed') {
     resolved_at = null;
   }
   if (status === 'closed') {
-    if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'closed') closed_at = nowStr();
   } else {
     closed_at = null;
   }
 
-  db.prepare(`UPDATE incidents SET status = ?, resolved_at = ?, closed_at = ?, updated_at = datetime('now') WHERE id = ?`)
-    .run(status, resolved_at, closed_at, req.params.id);
+  await db.prepare(`UPDATE incidents SET status = ?, resolved_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
+    .run(status, resolved_at, closed_at, nowStr(), req.params.id);
 
   if (status !== existing.status) {
-    logActivity('incident', existing.id, req.session.user.id,
+    await logActivity('incident', existing.id, req.session.user.id,
       `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]} (board)`);
   }
 
   res.json({ ok: true });
 });
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const b = req.body;
   const impact = Number(b.impact) || 3;
   const urgency = Number(b.urgency) || 3;
   const priority = priorityFromImpactUrgency(impact, urgency);
-  const number = nextNumber('incident', 'INC');
+  const number = await nextNumber('incident', 'INC');
   const isEndUser = req.session.user.role === 'user';
 
   const slaHours = SLA_HOURS[priority] || SLA_HOURS[4];
+  const createdAt = nowStr();
+  const slaDueAt = new Date(new Date(createdAt.replace(' ', 'T') + 'Z').getTime() + slaHours * 3600000)
+    .toISOString().slice(0, 19).replace('T', ' ');
 
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO incidents (number, short_description, description, category, subcategory, impact, urgency, priority,
-      status, caller_id, assigned_to, assignment_group, affected_ci_id, sla_due_at)
+      status, caller_id, assigned_to, assignment_group, affected_ci_id, created_at, sla_due_at)
     VALUES (@number, @short_description, @description, @category, @subcategory, @impact, @urgency, @priority,
-      'new', @caller_id, @assigned_to, @assignment_group, @affected_ci_id, datetime('now', '+${slaHours} hours'))
+      'new', @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @created_at, @sla_due_at)
+    RETURNING id
   `).run({
     number,
     short_description: b.short_description,
@@ -192,19 +196,21 @@ router.post('/', requireAuth, (req, res) => {
     caller_id: isEndUser ? req.session.user.id : (b.caller_id || req.session.user.id),
     assigned_to: isEndUser ? null : (b.assigned_to || null),
     assignment_group: b.assignment_group || null,
-    affected_ci_id: b.affected_ci_id || null
+    affected_ci_id: b.affected_ci_id || null,
+    created_at: createdAt,
+    sla_due_at: slaDueAt
   });
 
-  logActivity('incident', info.lastInsertRowid, req.session.user.id, 'Incident created');
-  notifyOnCreate(info.lastInsertRowid);
+  await logActivity('incident', info.lastInsertRowid, req.session.user.id, 'Incident created');
+  await notifyOnCreate(info.lastInsertRowid);
 
   res.redirect(`/incidents/${info.lastInsertRowid}`);
 });
 
-function notifyOnCreate(incidentId) {
-  const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
+async function notifyOnCreate(incidentId) {
+  const incident = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
   const desc = escapeHtml(incident.short_description);
-  const caller = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.caller_id);
+  const caller = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.caller_id);
   if (caller && caller.email) {
     sendNotification({
       to: caller.email,
@@ -219,7 +225,7 @@ function notifyOnCreate(incidentId) {
     }).catch(() => {});
   }
   if (incident.assigned_to) {
-    const assignee = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.assigned_to);
+    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.assigned_to);
     if (assignee && assignee.email) {
       sendNotification({
         to: assignee.email,
@@ -235,8 +241,8 @@ function notifyOnCreate(incidentId) {
   }
 }
 
-router.get('/:id', requireAuth, (req, res) => {
-  const incident = db.prepare(`
+router.get('/:id', requireAuth, async (req, res) => {
+  const incident = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name, c.id AS ci_id, c.ci_number,
       p.number AS problem_number, p.status AS problem_status
     FROM incidents i
@@ -254,14 +260,14 @@ router.get('/:id', requireAuth, (req, res) => {
   }
 
   const isEndUser = req.session.user.role === 'user';
-  const comments = db.prepare(`
+  const comments = await db.prepare(`
     SELECT ic.*, u.full_name AS author_name
     FROM incident_comments ic LEFT JOIN users u ON u.id = ic.user_id
     WHERE ic.incident_id = ? ${isEndUser ? 'AND ic.is_work_note = 0' : ''}
     ORDER BY ic.created_at ASC
   `).all(req.params.id);
 
-  const activity = db.prepare(`
+  const activity = await db.prepare(`
     SELECT al.*, u.full_name AS actor_name
     FROM activity_log al LEFT JOIN users u ON u.id = al.actor_id
     WHERE al.entity_type = 'incident' AND al.entity_id = ?
@@ -276,23 +282,23 @@ router.get('/:id', requireAuth, (req, res) => {
   const words = incident.short_description.split(/\s+/).filter(w => w.length > 4).slice(0, 5);
   let relatedArticles = [];
   if (words.length) {
-    const conditions = words.map(() => '(title LIKE ? OR body LIKE ?)').join(' OR ');
+    const conditions = words.map(() => '(title ILIKE ? OR body ILIKE ?)').join(' OR ');
     const params = words.flatMap(w => [`%${w}%`, `%${w}%`]);
-    relatedArticles = db.prepare(`
+    relatedArticles = await db.prepare(`
       SELECT id, number, title FROM kb_articles WHERE status = 'published' AND (${conditions}) LIMIT 3
     `).all(...params);
   }
 
-  const { users, cis, problems } = loadFormLookups();
-  const attachments = getAttachments('incident', incident.id);
-  const watchers = getWatchers('incident', incident.id);
-  const watching = isWatching('incident', incident.id, req.session.user.id);
+  const { users, cis, problems } = await loadFormLookups();
+  const attachments = await getAttachments('incident', incident.id);
+  const watchers = await getWatchers('incident', incident.id);
+  const watching = await isWatching('incident', incident.id, req.session.user.id);
   res.render('incidents/show', { title: incident.number, incident, timeline, users, cis, problems, relatedArticles, attachments, watchers, watching });
 });
 
-router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const b = req.body;
-  const existing = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
+  const existing = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Incident not found.' });
 
   const impact = Number(b.impact) || existing.impact;
@@ -303,21 +309,21 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   let resolved_at = existing.resolved_at;
   let closed_at = existing.closed_at;
   if (status === 'resolved') {
-    if (existing.status !== 'resolved') resolved_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'resolved') resolved_at = nowStr();
   } else if (status !== 'closed') {
     resolved_at = null;
   }
   if (status === 'closed') {
-    if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'closed') closed_at = nowStr();
   } else {
     closed_at = null;
   }
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE incidents SET short_description=@short_description, description=@description, category=@category,
       subcategory=@subcategory, impact=@impact, urgency=@urgency, priority=@priority, status=@status,
       assigned_to=@assigned_to, assignment_group=@assignment_group, affected_ci_id=@affected_ci_id,
-      resolution_notes=@resolution_notes, problem_id=@problem_id, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=datetime('now')
+      resolution_notes=@resolution_notes, problem_id=@problem_id, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=@updated_at
     WHERE id=@id
   `).run({
     id: req.params.id,
@@ -331,37 +337,38 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
     affected_ci_id: b.affected_ci_id || null,
     resolution_notes: b.resolution_notes || null,
     problem_id: b.problem_id || null,
-    resolved_at, closed_at
+    resolved_at, closed_at,
+    updated_at: nowStr()
   });
 
   if ((b.problem_id || null) !== existing.problem_id && b.problem_id) {
-    logActivity('incident', existing.id, req.session.user.id, `Linked to problem`);
+    await logActivity('incident', existing.id, req.session.user.id, `Linked to problem`);
   }
 
   const actorId = req.session.user.id;
   if (status !== existing.status) {
-    logActivity('incident', existing.id, actorId,
+    await logActivity('incident', existing.id, actorId,
       `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]}`);
   }
   if (priority !== existing.priority) {
-    logActivity('incident', existing.id, actorId,
+    await logActivity('incident', existing.id, actorId,
       `Priority changed from P${existing.priority} to P${priority}`);
   }
   const newAssignedTo = b.assigned_to ? Number(b.assigned_to) : null;
   if (newAssignedTo !== existing.assigned_to) {
-    const newName = newAssignedTo ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) || {}).full_name : null;
-    const oldName = existing.assigned_to ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(existing.assigned_to) || {}).full_name : null;
-    logActivity('incident', existing.id, actorId,
-      `Reassigned from ${oldName || 'Unassigned'} to ${newName || 'Unassigned'}`);
+    const newNameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
+    const oldNameRow = existing.assigned_to ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(existing.assigned_to) : null;
+    await logActivity('incident', existing.id, actorId,
+      `Reassigned from ${(oldNameRow || {}).full_name || 'Unassigned'} to ${(newNameRow || {}).full_name || 'Unassigned'}`);
   }
   const newGroup = b.assignment_group || null;
   if (newGroup !== existing.assignment_group) {
-    logActivity('incident', existing.id, actorId,
+    await logActivity('incident', existing.id, actorId,
       `Assignment group changed from ${existing.assignment_group || '—'} to ${newGroup || '—'}`);
   }
 
   if (newAssignedTo && newAssignedTo !== existing.assigned_to) {
-    const assignee = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
+    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
     if (assignee && assignee.email) {
       sendNotification({
         to: assignee.email,
@@ -377,7 +384,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   }
 
   if (status !== existing.status) {
-    notifyWatchers('incident', existing.id, {
+    await notifyWatchers('incident', existing.id, {
       subject: `[${existing.number}] Status changed: ${INCIDENT_STATUS_LABELS[status]}`,
       html: `<p>Incident <strong>${existing.number}</strong> — <strong>${escapeHtml(b.short_description)}</strong></p>
         <p>Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]}.</p>`,
@@ -388,21 +395,21 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   res.redirect(`/incidents/${req.params.id}`);
 });
 
-router.post('/:id/comments', requireAuth, (req, res) => {
+router.post('/:id/comments', requireAuth, async (req, res) => {
   const isEndUser = req.session.user.role === 'user';
-  const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
+  const incident = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
   if (!incident) return res.status(404).render('error', { title: 'Not Found', message: 'Incident not found.' });
   if (isEndUser && incident.caller_id !== req.session.user.id) {
     return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this incident.' });
   }
   const isWorkNote = !isEndUser && req.body.is_work_note === 'on';
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO incident_comments (incident_id, user_id, comment, is_work_note)
     VALUES (?, ?, ?, ?)
   `).run(req.params.id, req.session.user.id, req.body.comment, isWorkNote ? 1 : 0);
 
   if (!isWorkNote) {
-    notifyWatchers('incident', incident.id, {
+    await notifyWatchers('incident', incident.id, {
       subject: `[${incident.number}] New comment`,
       html: `<p>Incident <strong>${incident.number}</strong> — <strong>${escapeHtml(incident.short_description)}</strong></p>
         <p>${escapeHtml(req.session.user.full_name)} commented:</p>
@@ -414,15 +421,15 @@ router.post('/:id/comments', requireAuth, (req, res) => {
   res.redirect(`/incidents/${req.params.id}`);
 });
 
-router.post('/:id/delete', requireAuth, requireRole('admin'), (req, res) => {
-  db.prepare(`DELETE FROM activity_log WHERE entity_type = 'incident' AND entity_id = ?`).run(req.params.id);
-  db.prepare(`DELETE FROM notifications WHERE related_type = 'incident' AND related_id = ?`).run(req.params.id);
-  purgeCollabData('incident', req.params.id);
-  db.prepare('DELETE FROM incidents WHERE id = ?').run(req.params.id);
+router.post('/:id/delete', requireAuth, requireRole('admin'), async (req, res) => {
+  await db.prepare(`DELETE FROM activity_log WHERE entity_type = 'incident' AND entity_id = ?`).run(req.params.id);
+  await db.prepare(`DELETE FROM notifications WHERE related_type = 'incident' AND related_id = ?`).run(req.params.id);
+  await purgeCollabData('incident', req.params.id);
+  await db.prepare('DELETE FROM incidents WHERE id = ?').run(req.params.id);
   res.redirect('/incidents');
 });
 
-router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { ids, status, assigned_to } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No incidents selected' });
   if (!status && assigned_to === undefined) return res.status(400).json({ error: 'No changes specified' });
@@ -431,34 +438,34 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, re
   let updated = 0;
 
   for (const id of ids) {
-    const existing = db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);
+    const existing = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);
     if (!existing) continue;
 
     const newStatus = status || existing.status;
     let resolved_at = existing.resolved_at;
     let closed_at = existing.closed_at;
     if (newStatus === 'resolved') {
-      if (existing.status !== 'resolved') resolved_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      if (existing.status !== 'resolved') resolved_at = nowStr();
     } else if (newStatus !== 'closed') {
       resolved_at = null;
     }
     if (newStatus === 'closed') {
-      if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      if (existing.status !== 'closed') closed_at = nowStr();
     } else {
       closed_at = null;
     }
 
     const newAssignedTo = assigned_to !== undefined ? (assigned_to || null) : existing.assigned_to;
 
-    db.prepare(`UPDATE incidents SET status = ?, assigned_to = ?, resolved_at = ?, closed_at = ?, updated_at = datetime('now') WHERE id = ?`)
-      .run(newStatus, newAssignedTo, resolved_at, closed_at, id);
+    await db.prepare(`UPDATE incidents SET status = ?, assigned_to = ?, resolved_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
+      .run(newStatus, newAssignedTo, resolved_at, closed_at, nowStr(), id);
 
     if (status && status !== existing.status) {
-      logActivity('incident', id, actorId, `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]} (bulk action)`);
+      await logActivity('incident', id, actorId, `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]} (bulk action)`);
     }
     if (assigned_to !== undefined && Number(newAssignedTo) !== existing.assigned_to) {
-      const name = newAssignedTo ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) || {}).full_name : 'Unassigned';
-      logActivity('incident', id, actorId, `Reassigned to ${name} (bulk action)`);
+      const nameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
+      await logActivity('incident', id, actorId, `Reassigned to ${(nameRow || {}).full_name || 'Unassigned'} (bulk action)`);
     }
     updated++;
   }

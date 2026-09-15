@@ -1,4 +1,4 @@
-require('./db'); // ensures DB is initialized & seeded before anything else
+const { initDb } = require('./db');
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
@@ -75,7 +75,14 @@ app.use((err, req, res, next) => {
   res.status(500).render('error', { title: 'Server Error', message: 'Something went wrong.' });
 });
 
-app.listen(PORT, () => {
-  console.log(`ITSM app running at http://localhost:${PORT}`);
-  console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`ITSM app running at http://localhost:${PORT}`);
+      console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
+  });

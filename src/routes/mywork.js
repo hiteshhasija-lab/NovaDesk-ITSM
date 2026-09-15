@@ -1,13 +1,13 @@
-const express = require('express');
 const { db } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const createAsyncRouter = require('../asyncRouter');
 
-const router = express.Router();
+const router = createAsyncRouter();
 
-router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const uid = req.session.user.id;
 
-  const myIncidents = db.prepare(`
+  const myIncidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, c.name AS ci_name
     FROM incidents i
     LEFT JOIN users u ON u.id = i.caller_id
@@ -16,7 +16,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
     ORDER BY i.priority ASC, i.created_at DESC
   `).all(uid);
 
-  const myChanges = db.prepare(`
+  const myChanges = await db.prepare(`
     SELECT c.*, ci.name AS ci_name
     FROM changes c
     LEFT JOIN cmdb_ci ci ON ci.id = c.affected_ci_id
@@ -24,7 +24,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
     ORDER BY c.planned_start ASC, c.created_at DESC
   `).all(uid);
 
-  const pendingApprovals = db.prepare(`
+  const pendingApprovals = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by

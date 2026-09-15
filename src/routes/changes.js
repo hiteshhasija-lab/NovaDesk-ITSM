@@ -1,13 +1,13 @@
-const express = require('express');
 const dayjs = require('dayjs');
-const { db, nextNumber, logActivity } = require('../db');
+const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
+const createAsyncRouter = require('../asyncRouter');
 
-const router = express.Router();
+const router = createAsyncRouter();
 
 const BOARD_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'implemented', 'closed'];
 
@@ -45,13 +45,13 @@ function deriveApprovalStatus(newStatus, existing, actorId) {
   return { approval_status, approved_by };
 }
 
-function loadFormLookups() {
-  const users = db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
-  const cis = db.prepare("SELECT id, ci_number, name FROM cmdb_ci ORDER BY name").all();
+async function loadFormLookups() {
+  const users = await db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
+  const cis = await db.prepare("SELECT id, ci_number, name FROM cmdb_ci ORDER BY name").all();
   return { users, cis };
 }
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const { status, risk, change_type, assigned_to, q } = req.query;
   const isEndUser = req.session.user.role === 'user';
   let where = [];
@@ -65,13 +65,13 @@ router.get('/', requireAuth, (req, res) => {
   if (assigned_to === 'unassigned') { where.push('c.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('c.assigned_to = ?'); params.push(assigned_to); }
   if (q) {
-    where.push('(c.number LIKE ? OR c.short_description LIKE ? OR ci.name LIKE ? OR ci.ci_number LIKE ?)');
+    where.push('(c.number ILIKE ? OR c.short_description ILIKE ? OR ci.name ILIKE ? OR ci.ci_number ILIKE ?)');
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-  let changes = db.prepare(`
+  let changes = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
@@ -85,7 +85,7 @@ router.get('/', requireAuth, (req, res) => {
   changes = sortRows(changes, CHANGE_SORT_COLUMNS, sort.key, sort.dir);
   const { items, pagination } = paginate(changes, req);
 
-  const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
+  const assignableUsers = await db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
   const staffUsers = isEndUser ? [] : assignableUsers;
 
   res.render('changes/list', {
@@ -94,13 +94,13 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
-router.get('/new', requireAuth, (req, res) => {
-  const { users, cis } = loadFormLookups();
+router.get('/new', requireAuth, async (req, res) => {
+  const { users, cis } = await loadFormLookups();
   res.render('changes/form', { title: 'New Change Request', change: null, users, cis });
 });
 
-router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {
-  const changes = db.prepare(`
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const changes = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
@@ -127,8 +127,8 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res)
   res.send(csv);
 });
 
-router.get('/board', requireAuth, requireRole('admin', 'agent'), (req, res) => {
-  const changes = db.prepare(`
+router.get('/board', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const changes = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
@@ -147,12 +147,12 @@ router.get('/board', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   res.render('changes/board', { title: 'Change Board', columns });
 });
 
-router.get('/calendar', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.get('/calendar', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const monthParam = req.query.month;
   const monthStart = (monthParam && /^\d{4}-\d{2}$/.test(monthParam) ? dayjs(monthParam + '-01') : dayjs().startOf('month')).startOf('month');
   const monthEnd = monthStart.endOf('month');
 
-  const allScheduled = db.prepare(`
+  const allScheduled = await db.prepare(`
     SELECT c.*, ci.name AS ci_name
     FROM changes c
     LEFT JOIN cmdb_ci ci ON ci.id = c.affected_ci_id
@@ -206,43 +206,44 @@ router.get('/calendar', requireAuth, requireRole('admin', 'agent'), (req, res) =
   });
 });
 
-router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { status } = req.body;
   if (!BOARD_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
-  const existing = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   let closed_at = existing.closed_at;
   if (status === 'closed') {
-    if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'closed') closed_at = nowStr();
   } else {
     closed_at = null;
   }
 
   const { approval_status, approved_by } = deriveApprovalStatus(status, existing, req.session.user.id);
 
-  db.prepare(`
-    UPDATE changes SET status = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = datetime('now')
+  await db.prepare(`
+    UPDATE changes SET status = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
     WHERE id = ?
-  `).run(status, closed_at, approval_status, approved_by, req.params.id);
+  `).run(status, closed_at, approval_status, approved_by, nowStr(), req.params.id);
 
   if (status !== existing.status) {
-    logActivity('change', existing.id, req.session.user.id,
+    await logActivity('change', existing.id, req.session.user.id,
       `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[status]} (board)`);
   }
 
   res.json({ ok: true });
 });
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const b = req.body;
-  const number = nextNumber('change', 'CHG');
-  const info = db.prepare(`
+  const number = await nextNumber('change', 'CHG');
+  const info = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status, requested_by,
       assigned_to, affected_ci_id, planned_start, planned_end, implementation_plan, backout_plan)
     VALUES (@number, @short_description, @description, @change_type, @risk, 'draft', @requested_by,
       @assigned_to, @affected_ci_id, @planned_start, @planned_end, @implementation_plan, @backout_plan)
+    RETURNING id
   `).run({
     number,
     short_description: b.short_description,
@@ -258,16 +259,16 @@ router.post('/', requireAuth, (req, res) => {
     backout_plan: b.backout_plan || null
   });
 
-  logActivity('change', info.lastInsertRowid, req.session.user.id, 'Change request created');
-  notifyOnCreate(info.lastInsertRowid);
+  await logActivity('change', info.lastInsertRowid, req.session.user.id, 'Change request created');
+  await notifyOnCreate(info.lastInsertRowid);
 
   res.redirect(`/changes/${info.lastInsertRowid}`);
 });
 
-function notifyOnCreate(changeId) {
-  const change = db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
+async function notifyOnCreate(changeId) {
+  const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
   const desc = escapeHtml(change.short_description);
-  const requester = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.requested_by);
+  const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.requested_by);
   if (requester && requester.email) {
     sendNotification({
       to: requester.email,
@@ -282,7 +283,7 @@ function notifyOnCreate(changeId) {
     }).catch(() => {});
   }
   if (change.assigned_to) {
-    const assignee = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.assigned_to);
+    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.assigned_to);
     if (assignee && assignee.email) {
       sendNotification({
         to: assignee.email,
@@ -297,8 +298,8 @@ function notifyOnCreate(changeId) {
   }
 }
 
-router.get('/:id', requireAuth, (req, res) => {
-  const change = db.prepare(`
+router.get('/:id', requireAuth, async (req, res) => {
+  const change = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name, ci.ci_number,
       ap.full_name AS approver_name
     FROM changes c
@@ -314,12 +315,12 @@ router.get('/:id', requireAuth, (req, res) => {
     return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot view this change request.' });
   }
 
-  const comments = db.prepare(`
+  const comments = await db.prepare(`
     SELECT cc.*, u.full_name AS author_name FROM change_comments cc
     LEFT JOIN users u ON u.id = cc.user_id WHERE cc.change_id = ? ORDER BY cc.created_at ASC
   `).all(req.params.id);
 
-  const activity = db.prepare(`
+  const activity = await db.prepare(`
     SELECT al.*, u.full_name AS actor_name
     FROM activity_log al LEFT JOIN users u ON u.id = al.actor_id
     WHERE al.entity_type = 'change' AND al.entity_id = ?
@@ -331,33 +332,33 @@ router.get('/:id', requireAuth, (req, res) => {
     ...activity.map(a => ({ type: 'activity', created_at: a.created_at, author_name: a.actor_name, text: a.message }))
   ].sort((x, y) => x.created_at.localeCompare(y.created_at));
 
-  const { users, cis } = loadFormLookups();
-  const attachments = getAttachments('change', change.id);
-  const watchers = getWatchers('change', change.id);
-  const watching = isWatching('change', change.id, req.session.user.id);
+  const { users, cis } = await loadFormLookups();
+  const attachments = await getAttachments('change', change.id);
+  const watchers = await getWatchers('change', change.id);
+  const watching = await isWatching('change', change.id, req.session.user.id);
   res.render('changes/show', { title: change.number, change, timeline, users, cis, attachments, watchers, watching });
 });
 
-router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const b = req.body;
-  const existing = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
 
   let closed_at = existing.closed_at;
   if (b.status === 'closed') {
-    if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    if (existing.status !== 'closed') closed_at = nowStr();
   } else {
     closed_at = null;
   }
 
   const { approval_status, approved_by } = deriveApprovalStatus(b.status, existing, req.session.user.id);
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE changes SET short_description=@short_description, description=@description, change_type=@change_type,
       risk=@risk, status=@status, assigned_to=@assigned_to, affected_ci_id=@affected_ci_id,
       planned_start=@planned_start, planned_end=@planned_end, implementation_plan=@implementation_plan,
       backout_plan=@backout_plan, approval_status=@approval_status, approved_by=@approved_by,
-      updated_at=datetime('now'), closed_at=@closed_at
+      updated_at=@updated_at, closed_at=@closed_at
     WHERE id=@id
   `).run({
     id: req.params.id,
@@ -374,24 +375,25 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
     backout_plan: b.backout_plan || null,
     approval_status,
     approved_by,
-    closed_at
+    closed_at,
+    updated_at: nowStr()
   });
 
   const actorId = req.session.user.id;
   if (b.status !== existing.status) {
-    logActivity('change', existing.id, actorId,
+    await logActivity('change', existing.id, actorId,
       `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[b.status]}`);
   }
   const newAssignedTo = b.assigned_to ? Number(b.assigned_to) : null;
   if (newAssignedTo !== existing.assigned_to) {
-    const newName = newAssignedTo ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) || {}).full_name : null;
-    const oldName = existing.assigned_to ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(existing.assigned_to) || {}).full_name : null;
-    logActivity('change', existing.id, actorId,
-      `Reassigned from ${oldName || 'Unassigned'} to ${newName || 'Unassigned'}`);
+    const newNameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
+    const oldNameRow = existing.assigned_to ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(existing.assigned_to) : null;
+    await logActivity('change', existing.id, actorId,
+      `Reassigned from ${(oldNameRow || {}).full_name || 'Unassigned'} to ${(newNameRow || {}).full_name || 'Unassigned'}`);
   }
 
   if (newAssignedTo && newAssignedTo !== existing.assigned_to) {
-    const assignee = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
+    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
     if (assignee && assignee.email) {
       sendNotification({
         to: assignee.email,
@@ -406,7 +408,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   }
 
   if (b.status !== existing.status) {
-    notifyWatchers('change', existing.id, {
+    await notifyWatchers('change', existing.id, {
       subject: `[${existing.number}] Status changed: ${CHANGE_STATUS_LABELS[b.status]}`,
       html: `<p>Change request <strong>${existing.number}</strong> — <strong>${escapeHtml(b.short_description)}</strong></p>
         <p>Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[b.status]}.</p>`,
@@ -417,18 +419,18 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   res.redirect(`/changes/${req.params.id}`);
 });
 
-router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const decision = req.body.decision === 'reject' ? 'rejected' : 'approved';
   const newStatus = decision === 'approved' ? 'scheduled' : 'rejected';
-  const existing = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
 
-  db.prepare(`
-    UPDATE changes SET approval_status=?, approved_by=?, status=?, updated_at=datetime('now') WHERE id=?
-  `).run(decision, req.session.user.id, newStatus, req.params.id);
+  await db.prepare(`
+    UPDATE changes SET approval_status=?, approved_by=?, status=?, updated_at=? WHERE id=?
+  `).run(decision, req.session.user.id, newStatus, nowStr(), req.params.id);
 
   if (existing) {
-    logActivity('change', existing.id, req.session.user.id, `Change ${decision} by CAB`);
-    const requester = db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(existing.requested_by);
+    await logActivity('change', existing.id, req.session.user.id, `Change ${decision} by CAB`);
+    const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(existing.requested_by);
     if (requester && requester.email) {
       sendNotification({
         to: requester.email,
@@ -445,8 +447,8 @@ router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), (req, re
   res.redirect(`/changes/${req.params.id}`);
 });
 
-router.post('/:id/cancel', requireAuth, (req, res) => {
-  const existing = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+router.post('/:id/cancel', requireAuth, async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
 
   const isOwner = existing.requested_by === req.session.user.id;
@@ -458,21 +460,21 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
     return res.status(400).render('error', { title: 'Cannot Cancel', message: 'This change has already moved past the request stage and can no longer be self-cancelled. Ask an agent to update its status.' });
   }
 
-  db.prepare(`UPDATE changes SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?`).run(req.params.id);
-  logActivity('change', existing.id, req.session.user.id, 'Change cancelled by requester');
+  await db.prepare(`UPDATE changes SET status = 'cancelled', updated_at = ? WHERE id = ?`).run(nowStr(), req.params.id);
+  await logActivity('change', existing.id, req.session.user.id, 'Change cancelled by requester');
   res.redirect(`/changes/${req.params.id}`);
 });
 
-router.post('/:id/comments', requireAuth, (req, res) => {
-  const change = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+router.post('/:id/comments', requireAuth, async (req, res) => {
+  const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
   if (!change) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
   if (req.session.user.role === 'user' && change.requested_by !== req.session.user.id) {
     return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this change request.' });
   }
-  db.prepare(`INSERT INTO change_comments (change_id, user_id, comment) VALUES (?, ?, ?)`)
+  await db.prepare(`INSERT INTO change_comments (change_id, user_id, comment) VALUES (?, ?, ?)`)
     .run(req.params.id, req.session.user.id, req.body.comment);
 
-  notifyWatchers('change', change.id, {
+  await notifyWatchers('change', change.id, {
     subject: `[${change.number}] New comment`,
     html: `<p>Change request <strong>${change.number}</strong> — <strong>${escapeHtml(change.short_description)}</strong></p>
       <p>${escapeHtml(req.session.user.full_name)} commented:</p>
@@ -483,15 +485,15 @@ router.post('/:id/comments', requireAuth, (req, res) => {
   res.redirect(`/changes/${req.params.id}`);
 });
 
-router.post('/:id/delete', requireAuth, requireRole('admin'), (req, res) => {
-  db.prepare(`DELETE FROM activity_log WHERE entity_type = 'change' AND entity_id = ?`).run(req.params.id);
-  db.prepare(`DELETE FROM notifications WHERE related_type = 'change' AND related_id = ?`).run(req.params.id);
-  purgeCollabData('change', req.params.id);
-  db.prepare('DELETE FROM changes WHERE id = ?').run(req.params.id);
+router.post('/:id/delete', requireAuth, requireRole('admin'), async (req, res) => {
+  await db.prepare(`DELETE FROM activity_log WHERE entity_type = 'change' AND entity_id = ?`).run(req.params.id);
+  await db.prepare(`DELETE FROM notifications WHERE related_type = 'change' AND related_id = ?`).run(req.params.id);
+  await purgeCollabData('change', req.params.id);
+  await db.prepare('DELETE FROM changes WHERE id = ?').run(req.params.id);
   res.redirect('/changes');
 });
 
-router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { ids, status, assigned_to } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No change requests selected' });
   if (!status && assigned_to === undefined) return res.status(400).json({ error: 'No changes specified' });
@@ -500,13 +502,13 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, re
   let updated = 0;
 
   for (const id of ids) {
-    const existing = db.prepare('SELECT * FROM changes WHERE id = ?').get(id);
+    const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(id);
     if (!existing) continue;
 
     const newStatus = status || existing.status;
     let closed_at = existing.closed_at;
     if (newStatus === 'closed') {
-      if (existing.status !== 'closed') closed_at = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      if (existing.status !== 'closed') closed_at = nowStr();
     } else {
       closed_at = null;
     }
@@ -514,17 +516,17 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, re
     const newAssignedTo = assigned_to !== undefined ? (assigned_to || null) : existing.assigned_to;
     const { approval_status, approved_by } = deriveApprovalStatus(newStatus, existing, actorId);
 
-    db.prepare(`
-      UPDATE changes SET status = ?, assigned_to = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = datetime('now')
+    await db.prepare(`
+      UPDATE changes SET status = ?, assigned_to = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
       WHERE id = ?
-    `).run(newStatus, newAssignedTo, closed_at, approval_status, approved_by, id);
+    `).run(newStatus, newAssignedTo, closed_at, approval_status, approved_by, nowStr(), id);
 
     if (status && status !== existing.status) {
-      logActivity('change', id, actorId, `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[status]} (bulk action)`);
+      await logActivity('change', id, actorId, `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[status]} (bulk action)`);
     }
     if (assigned_to !== undefined && Number(newAssignedTo) !== existing.assigned_to) {
-      const name = newAssignedTo ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) || {}).full_name : 'Unassigned';
-      logActivity('change', id, actorId, `Reassigned to ${name} (bulk action)`);
+      const nameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
+      await logActivity('change', id, actorId, `Reassigned to ${(nameRow || {}).full_name || 'Unassigned'} (bulk action)`);
     }
     updated++;
   }

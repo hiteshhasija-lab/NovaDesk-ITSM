@@ -42,7 +42,7 @@ async function sendNotification({ to, toName, subject, html, relatedType, relate
     console.error('Notifications: failed to send:', err.message);
   }
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO notifications (recipient_email, recipient_name, subject, body, related_type, related_id, preview_url, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(to, toName || null, subject, html, relatedType || null, relatedId || null, previewUrl, status);

@@ -1,12 +1,12 @@
 const { db } = require('../db');
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   if (!req.session.user) {
     req.session.returnTo = req.originalUrl;
     return res.redirect('/login');
   }
 
-  const fresh = db.prepare('SELECT id, username, full_name, role, active FROM users WHERE id = ?').get(req.session.user.id);
+  const fresh = await db.prepare('SELECT id, username, full_name, role, active FROM users WHERE id = ?').get(req.session.user.id);
   if (!fresh || !fresh.active) {
     return req.session.destroy(() => res.redirect('/login'));
   }

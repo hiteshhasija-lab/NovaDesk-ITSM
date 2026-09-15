@@ -1,29 +1,29 @@
-const express = require('express');
-const { db } = require('../db');
+const { db, offsetDateStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const createAsyncRouter = require('../asyncRouter');
 
-const router = express.Router();
+const router = createAsyncRouter();
 
 const RANGE_DAYS = { '7': 7, '30': 30, '90': 90 };
 
-router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const days = RANGE_DAYS[req.query.range] || 30;
-  const cutoff = db.prepare(`SELECT date('now', ?) as d`).get(`-${days} days`).d;
+  const cutoff = offsetDateStr(-days);
 
-  const mttr = db.prepare(`
-    SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 24) as avg_hours, COUNT(*) as c
+  const mttr = await db.prepare(`
+    SELECT AVG((EXTRACT(EPOCH FROM (resolved_at::timestamp - created_at::timestamp))) / 3600) as avg_hours, COUNT(*) as c
     FROM incidents
     WHERE resolved_at IS NOT NULL AND resolved_at >= ?
   `).get(cutoff);
 
-  const mttrByPriority = db.prepare(`
-    SELECT priority, AVG((julianday(resolved_at) - julianday(created_at)) * 24) as avg_hours, COUNT(*) as c
+  const mttrByPriority = await db.prepare(`
+    SELECT priority, AVG((EXTRACT(EPOCH FROM (resolved_at::timestamp - created_at::timestamp))) / 3600) as avg_hours, COUNT(*) as c
     FROM incidents
     WHERE resolved_at IS NOT NULL AND resolved_at >= ?
     GROUP BY priority ORDER BY priority ASC
   `).all(cutoff);
 
-  const slaRow = db.prepare(`
+  const slaRow = await db.prepare(`
     SELECT
       SUM(CASE WHEN resolved_at <= sla_due_at THEN 1 ELSE 0 END) as met,
       COUNT(*) as total
@@ -32,7 +32,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   `).get(cutoff);
   const slaCompliance = slaRow.total > 0 ? Math.round((slaRow.met / slaRow.total) * 100) : null;
 
-  const changeOutcomes = db.prepare(`
+  const changeOutcomes = await db.prepare(`
     SELECT status, COUNT(*) as c FROM changes
     WHERE created_at >= ? AND status IN ('implemented','closed','rejected','cancelled')
     GROUP BY status
@@ -41,28 +41,28 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   const changeTotal = changeOutcomes.reduce((s, r) => s + r.c, 0);
   const changeSuccessRate = changeTotal > 0 ? Math.round((changeSuccess / changeTotal) * 100) : null;
 
-  const ticketsCreated = db.prepare(`
+  const ticketsCreated = (await db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM incidents WHERE created_at >= ?) +
       (SELECT COUNT(*) FROM changes WHERE created_at >= ?) +
       (SELECT COUNT(*) FROM problems WHERE created_at >= ?) as total
-  `).get(cutoff, cutoff, cutoff).total;
+  `).get(cutoff, cutoff, cutoff)).total;
 
-  const volumeRows = db.prepare(`
-    SELECT date(created_at) as day, COUNT(*) as c FROM incidents WHERE created_at >= ? GROUP BY day
+  const volumeRows = await db.prepare(`
+    SELECT SUBSTRING(created_at, 1, 10) as day, COUNT(*) as c FROM incidents WHERE created_at >= ? GROUP BY day
   `).all(cutoff);
   const volumeMap = Object.fromEntries(volumeRows.map(r => [r.day, r.c]));
   const volume = [];
   for (let i = days - 1; i >= 0; i--) {
-    const d = db.prepare(`SELECT date('now', ?) as d`).get(`-${i} days`).d;
+    const d = offsetDateStr(-i);
     volume.push({ day: d, c: volumeMap[d] || 0 });
   }
 
-  const priorityBreakdown = db.prepare(`
+  const priorityBreakdown = await db.prepare(`
     SELECT priority, COUNT(*) as c FROM incidents WHERE created_at >= ? GROUP BY priority ORDER BY priority ASC
   `).all(cutoff);
 
-  const agentWorkload = db.prepare(`
+  const agentWorkloadRows = await db.prepare(`
     SELECT u.id, u.full_name,
       (SELECT COUNT(*) FROM incidents i WHERE i.assigned_to = u.id AND i.status NOT IN ('resolved','closed','cancelled')) as open_incidents,
       (SELECT COUNT(*) FROM changes c WHERE c.assigned_to = u.id AND c.status IN ('submitted','approved','scheduled')) as open_changes,
@@ -70,7 +70,8 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
     FROM users u
     WHERE u.role IN ('admin','agent') AND u.active = 1
     ORDER BY u.full_name
-  `).all().map(r => ({ ...r, total: r.open_incidents + r.open_changes + r.open_problems }));
+  `).all();
+  const agentWorkload = agentWorkloadRows.map(r => ({ ...r, total: r.open_incidents + r.open_changes + r.open_problems }));
 
   res.render('reports', {
     title: 'Reports',

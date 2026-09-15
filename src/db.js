@@ -1,18 +1,78 @@
-const path = require('path');
-const fs = require('fs');
-const { DatabaseSync } = require('node:sqlite');
 const bcrypt = require('bcryptjs');
 
-const dataDir = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+// Postgres returns COUNT()/SUM() as bigint and AVG() as numeric, both of which
+// node-postgres parses as STRINGS by default (bigint can exceed Number.MAX_SAFE_INTEGER).
+// SQLite always returned plain JS numbers for these, and the app relies on that
+// (e.g. summing counts, .toFixed() on averages) — parse them as numbers here instead.
+const { types: pgTypes } = require('pg');
+pgTypes.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10))); // int8/bigint
+pgTypes.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val))); // numeric
 
-const db = new DatabaseSync(path.join(dataDir, 'itsm.db'));
-db.exec('PRAGMA journal_mode = WAL');
-db.exec('PRAGMA foreign_keys = ON');
+const knexInstance = require('knex')({
+  client: 'pg',
+  connection: {
+    host: process.env.PGHOST || 'RHEL10',
+    port: process.env.PGPORT || 5432,
+    user: process.env.PGUSER || 'novadesk',
+    password: process.env.PGPASSWORD || 'novadesk_dev_pw',
+    database: process.env.PGDATABASE || 'novadesk'
+  },
+  pool: { min: 0, max: 10 }
+});
 
-db.exec(`
+// Every timestamp column is TEXT (not native TIMESTAMP), storing naive UTC strings
+// formatted 'YYYY-MM-DD HH:MM:SS' — this avoids the pg driver silently turning
+// timestamp columns into JS Date objects, which the rest of the app doesn't expect.
+function nowStr() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+function offsetStr(days = 0, hours = 0) {
+  const ms = Date.now() + days * 86400000 + hours * 3600000;
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+function offsetDateStr(days = 0) {
+  return offsetStr(days).slice(0, 10);
+}
+function addHoursStr(baseStr, hours) {
+  const ms = new Date(baseStr.replace(' ', 'T') + 'Z').getTime() + hours * 3600000;
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+// Thin compatibility layer so call sites keep the familiar
+// db.prepare(sql).get/all/run(...) shape from the previous synchronous
+// node:sqlite driver — every call site just needs `await` added.
+// @name bindings (the old node:sqlite named-param style) are translated to
+// knex's :name style; a single non-array object argument is treated as named
+// bindings, everything else as positional ? bindings.
+function prepare(sql) {
+  const pgSql = sql.replace(/@(\w+)/g, ':$1');
+  const bindingsFrom = (args) => {
+    if (args.length === 1 && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+      return args[0];
+    }
+    return args;
+  };
+  return {
+    get: async (...args) => (await knexInstance.raw(pgSql, bindingsFrom(args))).rows[0],
+    all: async (...args) => (await knexInstance.raw(pgSql, bindingsFrom(args))).rows,
+    run: async (...args) => {
+      const result = await knexInstance.raw(pgSql, bindingsFrom(args));
+      return {
+        lastInsertRowid: result.rows[0] ? result.rows[0].id : undefined,
+        changes: result.rowCount
+      };
+    }
+  };
+}
+
+const db = { prepare, raw: (sql, params) => knexInstance.raw(sql, params) };
+
+const TS_DEFAULT = "DEFAULT (to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))";
+
+async function initSchema() {
+  await knexInstance.raw(`
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   full_name TEXT NOT NULL,
@@ -20,11 +80,11 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'user', -- admin, agent, user
   department TEXT,
   active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS cmdb_ci (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   ci_number TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   ci_type TEXT NOT NULL, -- server, network_device, application, database, workstation, storage
@@ -46,20 +106,20 @@ CREATE TABLE IF NOT EXISTS cmdb_ci (
   install_date TEXT,
   notes TEXT,
   created_by INTEGER REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS ci_relationships (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   parent_ci_id INTEGER NOT NULL REFERENCES cmdb_ci(id) ON DELETE CASCADE,
   child_ci_id INTEGER NOT NULL REFERENCES cmdb_ci(id) ON DELETE CASCADE,
   relationship_type TEXT NOT NULL DEFAULT 'depends_on', -- depends_on, hosted_on, connects_to, runs_on
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS problems (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   number TEXT UNIQUE NOT NULL,
   short_description TEXT NOT NULL,
   description TEXT,
@@ -70,14 +130,14 @@ CREATE TABLE IF NOT EXISTS problems (
   affected_ci_id INTEGER REFERENCES cmdb_ci(id),
   raised_by INTEGER REFERENCES users(id),
   assigned_to INTEGER REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT},
   resolved_at TEXT,
   closed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS incidents (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   number TEXT UNIQUE NOT NULL,
   short_description TEXT NOT NULL,
   description TEXT,
@@ -93,24 +153,24 @@ CREATE TABLE IF NOT EXISTS incidents (
   affected_ci_id INTEGER REFERENCES cmdb_ci(id),
   resolution_notes TEXT,
   problem_id INTEGER REFERENCES problems(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT},
   resolved_at TEXT,
   closed_at TEXT,
   sla_due_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS incident_comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id),
   comment TEXT NOT NULL,
   is_work_note INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS changes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   number TEXT UNIQUE NOT NULL,
   short_description TEXT NOT NULL,
   description TEXT,
@@ -126,53 +186,53 @@ CREATE TABLE IF NOT EXISTS changes (
   backout_plan TEXT,
   approval_status TEXT NOT NULL DEFAULT 'pending', -- pending, approved, rejected
   approved_by INTEGER REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT},
   closed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS change_comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id),
   comment TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS problem_comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id),
   comment TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS catalog_items (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
   category TEXT NOT NULL DEFAULT 'general', -- hardware, software, access, other, general
   icon TEXT NOT NULL DEFAULT 'bi-box-seam',
   fulfillment_group TEXT,
   active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS service_requests (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   number TEXT UNIQUE NOT NULL,
   catalog_item_id INTEGER REFERENCES catalog_items(id),
   requested_by INTEGER REFERENCES users(id),
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'submitted', -- submitted, in_progress, fulfilled, rejected, cancelled
   assigned_to INTEGER REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT},
   fulfilled_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS kb_articles (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   number TEXT UNIQUE NOT NULL,
   title TEXT NOT NULL,
   category TEXT NOT NULL DEFAULT 'general',
@@ -180,8 +240,8 @@ CREATE TABLE IF NOT EXISTS kb_articles (
   status TEXT NOT NULL DEFAULT 'published', -- draft, published
   author_id INTEGER REFERENCES users(id),
   view_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS counters (
@@ -190,7 +250,7 @@ CREATE TABLE IF NOT EXISTS counters (
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   recipient_email TEXT NOT NULL,
   recipient_name TEXT,
   subject TEXT NOT NULL,
@@ -199,20 +259,20 @@ CREATE TABLE IF NOT EXISTS notifications (
   related_id INTEGER,
   preview_url TEXT,
   status TEXT NOT NULL DEFAULT 'failed', -- sent, failed
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS activity_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL, -- incident, change
   entity_id INTEGER NOT NULL,
   actor_id INTEGER REFERENCES users(id),
   message TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS attachments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL, -- incident, change, problem
   entity_id INTEGER NOT NULL,
   filename TEXT NOT NULL,
@@ -220,53 +280,54 @@ CREATE TABLE IF NOT EXISTS attachments (
   mime_type TEXT,
   size INTEGER,
   uploaded_by INTEGER REFERENCES users(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
 CREATE TABLE IF NOT EXISTS watchers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   entity_type TEXT NOT NULL, -- incident, change, problem
   entity_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL ${TS_DEFAULT},
   UNIQUE(entity_type, entity_id, user_id)
 );
-`);
+  `);
+}
 
-function nextNumber(counterName, prefix) {
-  const row = db.prepare('SELECT value FROM counters WHERE name = ?').get(counterName);
+async function nextNumber(counterName, prefix) {
+  const row = await db.prepare('SELECT value FROM counters WHERE name = ?').get(counterName);
   let next;
   if (!row) {
     next = 1;
-    db.prepare('INSERT INTO counters (name, value) VALUES (?, ?)').run(counterName, next);
+    await db.prepare('INSERT INTO counters (name, value) VALUES (?, ?)').run(counterName, next);
   } else {
     next = row.value + 1;
-    db.prepare('UPDATE counters SET value = ? WHERE name = ?').run(next, counterName);
+    await db.prepare('UPDATE counters SET value = ? WHERE name = ?').run(next, counterName);
   }
   return `${prefix}${String(next).padStart(7, '0')}`;
 }
 
-function logActivity(entityType, entityId, actorId, message) {
-  db.prepare(`
+async function logActivity(entityType, entityId, actorId, message) {
+  await db.prepare(`
     INSERT INTO activity_log (entity_type, entity_id, actor_id, message) VALUES (?, ?, ?, ?)
   `).run(entityType, entityId, actorId || null, message);
 }
 
-function seedIfEmpty() {
-  const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
-  if (userCount > 0) return;
+async function seedIfEmpty() {
+  const userCount = (await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c;
+  if (Number(userCount) > 0) return;
 
   const insertUser = db.prepare(`
     INSERT INTO users (username, password_hash, full_name, email, role, department)
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?) RETURNING id
   `);
   const mkHash = (pw) => bcrypt.hashSync(pw, 10);
 
-  const admin = insertUser.run('admin', mkHash('admin123'), 'Alex Admin', 'admin@corp.local', 'admin', 'IT Operations');
-  const agent1 = insertUser.run('jdoe', mkHash('agent123'), 'Jane Doe', 'jane.doe@corp.local', 'agent', 'Infrastructure Support');
-  const agent2 = insertUser.run('bsmith', mkHash('agent123'), 'Bob Smith', 'bob.smith@corp.local', 'agent', 'Network Operations');
-  const user1 = insertUser.run('mchen', mkHash('user123'), 'Maria Chen', 'maria.chen@corp.local', 'user', 'Finance');
-  const user2 = insertUser.run('rpatel', mkHash('user123'), 'Raj Patel', 'raj.patel@corp.local', 'user', 'Sales');
+  const admin = await insertUser.run('admin', mkHash('admin123'), 'Alex Admin', 'admin@corp.local', 'admin', 'IT Operations');
+  const agent1 = await insertUser.run('jdoe', mkHash('agent123'), 'Jane Doe', 'jane.doe@corp.local', 'agent', 'Infrastructure Support');
+  const agent2 = await insertUser.run('bsmith', mkHash('agent123'), 'Bob Smith', 'bob.smith@corp.local', 'agent', 'Network Operations');
+  const user1 = await insertUser.run('mchen', mkHash('user123'), 'Maria Chen', 'maria.chen@corp.local', 'user', 'Finance');
+  const user2 = await insertUser.run('rpatel', mkHash('user123'), 'Raj Patel', 'raj.patel@corp.local', 'user', 'Sales');
 
   const adminId = admin.lastInsertRowid;
   const agent1Id = agent1.lastInsertRowid;
@@ -279,6 +340,7 @@ function seedIfEmpty() {
       serial_number, location, owner_id, support_group, cpu, ram, disk, purchase_date, warranty_expiry, install_date, notes, created_by)
     VALUES (@ci_number, @name, @ci_type, @environment, @status, @ip_address, @os, @manufacturer, @model,
       @serial_number, @location, @owner_id, @support_group, @cpu, @ram, @disk, @purchase_date, @warranty_expiry, @install_date, @notes, @created_by)
+    RETURNING id
   `);
 
   const ciSeed = [
@@ -298,22 +360,22 @@ function seedIfEmpty() {
 
   const ciIds = {};
   for (const ci of ciSeed) {
-    const ci_number = nextNumber('ci', 'CI');
-    const info = insertCi.run({ ci_number, created_by: adminId, ...ci });
+    const ci_number = await nextNumber('ci', 'CI');
+    const info = await insertCi.run({ ci_number, created_by: adminId, ...ci });
     ciIds[ci.name] = info.lastInsertRowid;
   }
 
   const insertRel = db.prepare(`
     INSERT INTO ci_relationships (parent_ci_id, child_ci_id, relationship_type) VALUES (?, ?, ?)
   `);
-  insertRel.run(ciIds['ERP-APP'], ciIds['PRD-WEB-01'], 'runs_on');
-  insertRel.run(ciIds['ERP-APP'], ciIds['PRD-WEB-02'], 'runs_on');
-  insertRel.run(ciIds['ERP-APP'], ciIds['PRD-DB-01'], 'depends_on');
-  insertRel.run(ciIds['PRD-DB-02-REPLICA'], ciIds['PRD-DB-01'], 'depends_on');
-  insertRel.run(ciIds['PRD-WEB-01'], ciIds['CORE-SW-01'], 'connects_to');
-  insertRel.run(ciIds['PRD-WEB-02'], ciIds['CORE-SW-01'], 'connects_to');
-  insertRel.run(ciIds['CORE-SW-01'], ciIds['EDGE-FW-01'], 'connects_to');
-  insertRel.run(ciIds['BKUP-NAS-01'], ciIds['PRD-DB-01'], 'connects_to');
+  await insertRel.run(ciIds['ERP-APP'], ciIds['PRD-WEB-01'], 'runs_on');
+  await insertRel.run(ciIds['ERP-APP'], ciIds['PRD-WEB-02'], 'runs_on');
+  await insertRel.run(ciIds['ERP-APP'], ciIds['PRD-DB-01'], 'depends_on');
+  await insertRel.run(ciIds['PRD-DB-02-REPLICA'], ciIds['PRD-DB-01'], 'depends_on');
+  await insertRel.run(ciIds['PRD-WEB-01'], ciIds['CORE-SW-01'], 'connects_to');
+  await insertRel.run(ciIds['PRD-WEB-02'], ciIds['CORE-SW-01'], 'connects_to');
+  await insertRel.run(ciIds['CORE-SW-01'], ciIds['EDGE-FW-01'], 'connects_to');
+  await insertRel.run(ciIds['BKUP-NAS-01'], ciIds['PRD-DB-01'], 'connects_to');
 
   function priorityFrom(impact, urgency) {
     const score = impact + urgency;
@@ -328,29 +390,30 @@ function seedIfEmpty() {
       status, caller_id, assigned_to, assignment_group, affected_ci_id, resolution_notes, resolved_at, closed_at, created_at, sla_due_at)
     VALUES (@number, @short_description, @description, @category, @subcategory, @impact, @urgency, @priority,
       @status, @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @resolution_notes, @resolved_at, @closed_at, @created_at, @sla_due_at)
+    RETURNING id
   `);
 
   const SLA_HOURS = { 1: 4, 2: 8, 3: 24, 4: 72 };
 
   const incidentSeed = [
-    { short_description: 'Production web servers responding slowly', description: 'Users report the ERP app is taking 10-15s to load pages during peak hours.', category: 'software', subcategory: 'performance', impact: 1, urgency: 1, status: 'in_progress', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['PRD-WEB-01'], created_at: "datetime('now','-2 days')" },
-    { short_description: 'Cannot connect to VPN from home', description: 'User unable to establish VPN tunnel since this morning, gets timeout error.', category: 'network', subcategory: 'vpn', impact: 3, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Network Operations', affected_ci_id: ciIds['EDGE-FW-01'], created_at: "datetime('now','-1 days')" },
-    { short_description: 'Database replication lag on PRD-DB-02', description: 'Monitoring alert fired for replication lag exceeding 5 minutes on the DR replica.', category: 'software', subcategory: 'database', impact: 2, urgency: 1, status: 'resolved', caller_id: agent2Id, assigned_to: agent2Id, assignment_group: 'Database Team', affected_ci_id: ciIds['PRD-DB-02-REPLICA'], resolution_notes: 'Restarted replication stream after clearing a network blip; lag recovered to <1s.', resolved_at: "datetime('now','-3 hours')", created_at: "datetime('now','-1 days')" },
-    { short_description: "Workstation won't boot", description: "Maria Chen's workstation shows a blue screen on startup.", category: 'hardware', subcategory: 'workstation', impact: 3, urgency: 3, status: 'closed', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Desktop Support', affected_ci_id: ciIds['WKS-FIN-014'], resolution_notes: 'Reseated RAM module and ran disk check; issue resolved.', resolved_at: "datetime('now','-5 days')", closed_at: "datetime('now','-4 days')", created_at: "datetime('now','-6 days')" },
-    { short_description: 'Email delivery delayed to external domains', description: 'Outbound email to some external domains is delayed by 30+ minutes.', category: 'software', subcategory: 'email', impact: 2, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Applications Team', affected_ci_id: ciIds['EMAIL-SVC'], created_at: "datetime('now','-4 hours')" },
-    { short_description: 'Backup job failed on BKUP-NAS-01', description: "Last night's backup job for PRD-DB-01 failed with a storage quota error.", category: 'hardware', subcategory: 'storage', impact: 2, urgency: 2, status: 'in_progress', caller_id: agent1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['BKUP-NAS-01'], created_at: "datetime('now','-10 hours')" }
+    { short_description: 'Production web servers responding slowly', description: 'Users report the ERP app is taking 10-15s to load pages during peak hours.', category: 'software', subcategory: 'performance', impact: 1, urgency: 1, status: 'in_progress', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['PRD-WEB-01'], created_at: offsetStr(-2) },
+    { short_description: 'Cannot connect to VPN from home', description: 'User unable to establish VPN tunnel since this morning, gets timeout error.', category: 'network', subcategory: 'vpn', impact: 3, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Network Operations', affected_ci_id: ciIds['EDGE-FW-01'], created_at: offsetStr(-1) },
+    { short_description: 'Database replication lag on PRD-DB-02', description: 'Monitoring alert fired for replication lag exceeding 5 minutes on the DR replica.', category: 'software', subcategory: 'database', impact: 2, urgency: 1, status: 'resolved', caller_id: agent2Id, assigned_to: agent2Id, assignment_group: 'Database Team', affected_ci_id: ciIds['PRD-DB-02-REPLICA'], resolution_notes: 'Restarted replication stream after clearing a network blip; lag recovered to <1s.', resolved_at: offsetStr(0, -3), created_at: offsetStr(-1) },
+    { short_description: "Workstation won't boot", description: "Maria Chen's workstation shows a blue screen on startup.", category: 'hardware', subcategory: 'workstation', impact: 3, urgency: 3, status: 'closed', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Desktop Support', affected_ci_id: ciIds['WKS-FIN-014'], resolution_notes: 'Reseated RAM module and ran disk check; issue resolved.', resolved_at: offsetStr(-5), closed_at: offsetStr(-4), created_at: offsetStr(-6) },
+    { short_description: 'Email delivery delayed to external domains', description: 'Outbound email to some external domains is delayed by 30+ minutes.', category: 'software', subcategory: 'email', impact: 2, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Applications Team', affected_ci_id: ciIds['EMAIL-SVC'], created_at: offsetStr(0, -4) },
+    { short_description: 'Backup job failed on BKUP-NAS-01', description: "Last night's backup job for PRD-DB-01 failed with a storage quota error.", category: 'hardware', subcategory: 'storage', impact: 2, urgency: 2, status: 'in_progress', caller_id: agent1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['BKUP-NAS-01'], created_at: offsetStr(0, -10) }
   ];
 
   const incidentIds = {};
   for (const inc of incidentSeed) {
     const priority = priorityFrom(inc.impact, inc.urgency);
-    const number = nextNumber('incident', 'INC');
-    const created_at = inc.created_at ? db.prepare(`SELECT ${inc.created_at} AS d`).get().d : db.prepare("SELECT datetime('now') AS d").get().d;
-    const resolved_at = inc.resolved_at ? db.prepare(`SELECT ${inc.resolved_at} AS d`).get().d : null;
-    const closed_at = inc.closed_at ? db.prepare(`SELECT ${inc.closed_at} AS d`).get().d : null;
+    const number = await nextNumber('incident', 'INC');
+    const created_at = inc.created_at || nowStr();
+    const resolved_at = inc.resolved_at || null;
+    const closed_at = inc.closed_at || null;
     const slaHours = SLA_HOURS[priority] || SLA_HOURS[4];
-    const sla_due_at = db.prepare(`SELECT datetime(?, '+${slaHours} hours') AS d`).get(created_at).d;
-    const incInfo = insertIncident.run({
+    const sla_due_at = addHoursStr(created_at, slaHours);
+    const incInfo = await insertIncident.run({
       number,
       short_description: inc.short_description,
       description: inc.description || null,
@@ -378,6 +441,7 @@ function seedIfEmpty() {
       affected_ci_id, raised_by, assigned_to, created_at)
     VALUES (@number, @short_description, @description, @status, @priority, @root_cause, @workaround,
       @affected_ci_id, @raised_by, @assigned_to, @created_at)
+    RETURNING id
   `);
 
   const problemSeed = [
@@ -387,7 +451,7 @@ function seedIfEmpty() {
       status: 'investigating', priority: 2, root_cause: null,
       workaround: 'Restart the nginx service on the affected node during peak hours to temporarily relieve memory pressure.',
       affected_ci_id: ciIds['PRD-WEB-01'], raised_by: agent1Id, assigned_to: agent1Id,
-      created_at: "datetime('now','-2 days')", linkedIncident: 'Production web servers responding slowly'
+      created_at: offsetStr(-2), linkedIncident: 'Production web servers responding slowly'
     },
     {
       short_description: 'Intermittent replication lag on DR replica',
@@ -396,14 +460,13 @@ function seedIfEmpty() {
       root_cause: 'Network jitter on the inter-DC link causes the replication stream to stall under sustained write load.',
       workaround: 'Manually restart the replication stream when lag exceeds 5 minutes. Permanent fix requires a QoS policy change on the WAN link.',
       affected_ci_id: ciIds['PRD-DB-02-REPLICA'], raised_by: agent2Id, assigned_to: agent2Id,
-      created_at: "datetime('now','-1 days')", linkedIncident: 'Database replication lag on PRD-DB-02'
+      created_at: offsetStr(-1), linkedIncident: 'Database replication lag on PRD-DB-02'
     }
   ];
 
   for (const p of problemSeed) {
-    const number = nextNumber('problem', 'PRB');
-    const created_at = db.prepare(`SELECT ${p.created_at} AS d`).get().d;
-    const info = insertProblem.run({
+    const number = await nextNumber('problem', 'PRB');
+    const info = await insertProblem.run({
       number,
       short_description: p.short_description,
       description: p.description,
@@ -414,10 +477,10 @@ function seedIfEmpty() {
       affected_ci_id: p.affected_ci_id || null,
       raised_by: p.raised_by,
       assigned_to: p.assigned_to,
-      created_at
+      created_at: p.created_at
     });
     if (p.linkedIncident && incidentIds[p.linkedIncident]) {
-      db.prepare('UPDATE incidents SET problem_id = ? WHERE id = ?').run(info.lastInsertRowid, incidentIds[p.linkedIncident]);
+      await db.prepare('UPDATE incidents SET problem_id = ? WHERE id = ?').run(info.lastInsertRowid, incidentIds[p.linkedIncident]);
     }
   }
 
@@ -426,20 +489,20 @@ function seedIfEmpty() {
       affected_ci_id, planned_start, planned_end, implementation_plan, backout_plan, approval_status, approved_by, created_at)
     VALUES (@number, @short_description, @description, @change_type, @risk, @status, @requested_by, @assigned_to,
       @affected_ci_id, @planned_start, @planned_end, @implementation_plan, @backout_plan, @approval_status, @approved_by, @created_at)
+    RETURNING id
   `);
 
   const changeSeed = [
-    { short_description: 'Apply security patches to PRD-WEB cluster', description: 'Monthly OS security patching for PRD-WEB-01 and PRD-WEB-02, rolling restart.', change_type: 'standard', risk: 'low', status: 'scheduled', requested_by: agent1Id, assigned_to: agent1Id, affected_ci_id: ciIds['PRD-WEB-01'], planned_start: "datetime('now','+2 days','+22 hours')", planned_end: "datetime('now','+3 days','+1 hours')", implementation_plan: 'Patch PRD-WEB-02 first, verify health checks, then patch PRD-WEB-01.', backout_plan: 'Revert via snapshot if health checks fail post-patch.', approval_status: 'approved', approved_by: adminId },
-    { short_description: 'Upgrade core switch firmware', description: 'Upgrade CORE-SW-01 to IOS-XE 17.12 to address a known vulnerability.', change_type: 'normal', risk: 'high', status: 'submitted', requested_by: agent2Id, assigned_to: agent2Id, affected_ci_id: ciIds['CORE-SW-01'], planned_start: "datetime('now','+5 days','+23 hours')", planned_end: "datetime('now','+6 days','+2 hours')", implementation_plan: 'Upgrade during maintenance window; failover traffic to secondary path during reboot.', backout_plan: 'Roll back firmware image from backup partition.', approval_status: 'pending', approved_by: null },
-    { short_description: 'Expand PRD-DB-01 storage volume', description: 'Add 2TB to the primary database storage volume ahead of Q4 growth.', change_type: 'normal', risk: 'medium', status: 'implemented', requested_by: agent2Id, assigned_to: agent2Id, affected_ci_id: ciIds['PRD-DB-01'], planned_start: "datetime('now','-3 days')", planned_end: "datetime('now','-3 days','+2 hours')", implementation_plan: 'Online volume expansion using LVM, no downtime expected.', backout_plan: 'Shrink not supported; restore from backup if corruption occurs.', approval_status: 'approved', approved_by: adminId, closed_at: "datetime('now','-2 days')" },
-    { short_description: 'Emergency firewall rule change for active exploit', description: 'Block outbound traffic to known malicious IP ranges following threat intel alert.', change_type: 'emergency', risk: 'high', status: 'implemented', requested_by: adminId, assigned_to: agent2Id, affected_ci_id: ciIds['EDGE-FW-01'], planned_start: "datetime('now','-1 days')", planned_end: "datetime('now','-1 days','+1 hours')", implementation_plan: 'Apply emergency ACL via CLI, verified with security team.', backout_plan: 'Remove ACL entries if legitimate traffic is blocked.', approval_status: 'approved', approved_by: adminId, closed_at: "datetime('now','-20 hours')" },
-    { short_description: 'Deploy ERP application v4.3', description: 'Roll out ERP application update with reporting module fixes.', change_type: 'normal', risk: 'medium', status: 'draft', requested_by: adminId, assigned_to: agent1Id, affected_ci_id: ciIds['ERP-APP'], planned_start: "datetime('now','+10 days')", planned_end: "datetime('now','+10 days','+3 hours')", implementation_plan: 'Blue-green deploy to PRD-WEB-02 first, then PRD-WEB-01.', backout_plan: 'Revert to v4.2 container image.', approval_status: 'pending', approved_by: null }
+    { short_description: 'Apply security patches to PRD-WEB cluster', description: 'Monthly OS security patching for PRD-WEB-01 and PRD-WEB-02, rolling restart.', change_type: 'standard', risk: 'low', status: 'scheduled', requested_by: agent1Id, assigned_to: agent1Id, affected_ci_id: ciIds['PRD-WEB-01'], planned_start: offsetStr(2, 22), planned_end: offsetStr(3, 1), implementation_plan: 'Patch PRD-WEB-02 first, verify health checks, then patch PRD-WEB-01.', backout_plan: 'Revert via snapshot if health checks fail post-patch.', approval_status: 'approved', approved_by: adminId },
+    { short_description: 'Upgrade core switch firmware', description: 'Upgrade CORE-SW-01 to IOS-XE 17.12 to address a known vulnerability.', change_type: 'normal', risk: 'high', status: 'submitted', requested_by: agent2Id, assigned_to: agent2Id, affected_ci_id: ciIds['CORE-SW-01'], planned_start: offsetStr(5, 23), planned_end: offsetStr(6, 2), implementation_plan: 'Upgrade during maintenance window; failover traffic to secondary path during reboot.', backout_plan: 'Roll back firmware image from backup partition.', approval_status: 'pending', approved_by: null },
+    { short_description: 'Expand PRD-DB-01 storage volume', description: 'Add 2TB to the primary database storage volume ahead of Q4 growth.', change_type: 'normal', risk: 'medium', status: 'implemented', requested_by: agent2Id, assigned_to: agent2Id, affected_ci_id: ciIds['PRD-DB-01'], planned_start: offsetStr(-3), planned_end: offsetStr(-3, 2), implementation_plan: 'Online volume expansion using LVM, no downtime expected.', backout_plan: 'Shrink not supported; restore from backup if corruption occurs.', approval_status: 'approved', approved_by: adminId, closed_at: offsetStr(-2) },
+    { short_description: 'Emergency firewall rule change for active exploit', description: 'Block outbound traffic to known malicious IP ranges following threat intel alert.', change_type: 'emergency', risk: 'high', status: 'implemented', requested_by: adminId, assigned_to: agent2Id, affected_ci_id: ciIds['EDGE-FW-01'], planned_start: offsetStr(-1), planned_end: offsetStr(-1, 1), implementation_plan: 'Apply emergency ACL via CLI, verified with security team.', backout_plan: 'Remove ACL entries if legitimate traffic is blocked.', approval_status: 'approved', approved_by: adminId, closed_at: offsetStr(0, -20) },
+    { short_description: 'Deploy ERP application v4.3', description: 'Roll out ERP application update with reporting module fixes.', change_type: 'normal', risk: 'medium', status: 'draft', requested_by: adminId, assigned_to: agent1Id, affected_ci_id: ciIds['ERP-APP'], planned_start: offsetStr(10), planned_end: offsetStr(10, 3), implementation_plan: 'Blue-green deploy to PRD-WEB-02 first, then PRD-WEB-01.', backout_plan: 'Revert to v4.2 container image.', approval_status: 'pending', approved_by: null }
   ];
 
   for (const ch of changeSeed) {
-    const number = nextNumber('change', 'CHG');
-    const resolveDate = (expr) => expr ? db.prepare(`SELECT ${expr} AS d`).get().d : null;
-    insertChange.run({
+    const number = await nextNumber('change', 'CHG');
+    const info = await insertChange.run({
       number,
       short_description: ch.short_description,
       description: ch.description || null,
@@ -449,22 +512,23 @@ function seedIfEmpty() {
       requested_by: ch.requested_by,
       assigned_to: ch.assigned_to,
       affected_ci_id: ch.affected_ci_id || null,
-      planned_start: resolveDate(ch.planned_start),
-      planned_end: resolveDate(ch.planned_end),
+      planned_start: ch.planned_start || null,
+      planned_end: ch.planned_end || null,
       implementation_plan: ch.implementation_plan || null,
       backout_plan: ch.backout_plan || null,
       approval_status: ch.approval_status,
       approved_by: ch.approved_by || null,
-      created_at: db.prepare("SELECT datetime('now') AS d").get().d
+      created_at: nowStr()
     });
     if (ch.closed_at) {
-      db.prepare('UPDATE changes SET closed_at = ? WHERE number = ?').run(resolveDate(ch.closed_at), number);
+      await db.prepare('UPDATE changes SET closed_at = ? WHERE id = ?').run(ch.closed_at, info.lastInsertRowid);
     }
   }
 
   const insertCatalogItem = db.prepare(`
     INSERT INTO catalog_items (name, description, category, icon, fulfillment_group)
     VALUES (@name, @description, @category, @icon, @fulfillment_group)
+    RETURNING id
   `);
   const catalogSeed = [
     { name: 'New Laptop', description: 'Request a new company laptop for a new starter or a hardware refresh.', category: 'hardware', icon: 'bi-laptop', fulfillment_group: 'Desktop Support' },
@@ -476,36 +540,38 @@ function seedIfEmpty() {
   ];
   const catalogIds = {};
   for (const item of catalogSeed) {
-    const info = insertCatalogItem.run(item);
+    const info = await insertCatalogItem.run(item);
     catalogIds[item.name] = info.lastInsertRowid;
   }
 
   const insertRequest = db.prepare(`
     INSERT INTO service_requests (number, catalog_item_id, requested_by, notes, status, assigned_to, created_at, fulfilled_at)
     VALUES (@number, @catalog_item_id, @requested_by, @notes, @status, @assigned_to, @created_at, @fulfilled_at)
+    RETURNING id
   `);
   const requestSeed = [
-    { catalog_item_id: catalogIds['New Laptop'], requested_by: user2Id, notes: 'My current laptop battery no longer holds a charge.', status: 'in_progress', assigned_to: agent1Id, created_at: "datetime('now','-2 days')", fulfilled_at: null },
-    { catalog_item_id: catalogIds['VPN Access'], requested_by: user1Id, notes: 'Need to work from home two days a week.', status: 'fulfilled', assigned_to: agent2Id, created_at: "datetime('now','-6 days')", fulfilled_at: "datetime('now','-5 days')" },
-    { catalog_item_id: catalogIds['Software License'], requested_by: user2Id, notes: 'Need a Visio license for network diagrams.', status: 'submitted', assigned_to: null, created_at: "datetime('now','-3 hours')", fulfilled_at: null }
+    { catalog_item_id: catalogIds['New Laptop'], requested_by: user2Id, notes: 'My current laptop battery no longer holds a charge.', status: 'in_progress', assigned_to: agent1Id, created_at: offsetStr(-2), fulfilled_at: null },
+    { catalog_item_id: catalogIds['VPN Access'], requested_by: user1Id, notes: 'Need to work from home two days a week.', status: 'fulfilled', assigned_to: agent2Id, created_at: offsetStr(-6), fulfilled_at: offsetStr(-5) },
+    { catalog_item_id: catalogIds['Software License'], requested_by: user2Id, notes: 'Need a Visio license for network diagrams.', status: 'submitted', assigned_to: null, created_at: offsetStr(0, -3), fulfilled_at: null }
   ];
   for (const r of requestSeed) {
-    const number = nextNumber('request', 'REQ');
-    insertRequest.run({
+    const number = await nextNumber('request', 'REQ');
+    await insertRequest.run({
       number,
       catalog_item_id: r.catalog_item_id,
       requested_by: r.requested_by,
       notes: r.notes,
       status: r.status,
       assigned_to: r.assigned_to,
-      created_at: db.prepare(`SELECT ${r.created_at} AS d`).get().d,
-      fulfilled_at: r.fulfilled_at ? db.prepare(`SELECT ${r.fulfilled_at} AS d`).get().d : null
+      created_at: r.created_at,
+      fulfilled_at: r.fulfilled_at || null
     });
   }
 
   const insertKb = db.prepare(`
     INSERT INTO kb_articles (number, title, category, body, status, author_id)
     VALUES (@number, @title, @category, @body, 'published', @author_id)
+    RETURNING id
   `);
   const kbSeed = [
     {
@@ -534,11 +600,14 @@ function seedIfEmpty() {
     }
   ];
   for (const kb of kbSeed) {
-    const number = nextNumber('kb', 'KB');
-    insertKb.run({ number, title: kb.title, category: kb.category, body: kb.body, author_id: kb.author_id });
+    const number = await nextNumber('kb', 'KB');
+    await insertKb.run({ number, title: kb.title, category: kb.category, body: kb.body, author_id: kb.author_id });
   }
 }
 
-seedIfEmpty();
+async function initDb() {
+  await initSchema();
+  await seedIfEmpty();
+}
 
-module.exports = { db, nextNumber, logActivity };
+module.exports = { db, nextNumber, logActivity, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };

@@ -1,11 +1,11 @@
-const express = require('express');
 const { db } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const createAsyncRouter = require('../asyncRouter');
 
-const router = express.Router();
+const router = createAsyncRouter();
 
-router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
-  const notifications = db.prepare(`
+router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const notifications = await db.prepare(`
     SELECT * FROM notifications ORDER BY created_at DESC LIMIT 100
   `).all();
 
