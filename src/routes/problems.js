@@ -1,9 +1,21 @@
 const express = require('express');
 const { db, nextNumber, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { PROBLEM_STATUS_LABELS } = require('../helpers');
+const { PROBLEM_STATUS_LABELS, escapeHtml } = require('../helpers');
+const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 
 const router = express.Router();
+const staffOnly = [requireAuth, requireRole('admin', 'agent')];
+
+function getProblemById(id) {
+  return db.prepare('SELECT * FROM problems WHERE id = ?').get(id);
+}
+function canAccessProblem() {
+  return true; // this whole module is already gated to admin/agent
+}
+function canManageProblem() {
+  return true;
+}
 
 function loadFormLookups() {
   const users = db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
@@ -99,7 +111,10 @@ router.get('/:id', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   ].sort((x, y) => x.created_at.localeCompare(y.created_at));
 
   const { users, cis } = loadFormLookups();
-  res.render('problems/show', { title: problem.number, problem, linkedIncidents, timeline, users, cis });
+  const attachments = getAttachments('problem', problem.id);
+  const watchers = getWatchers('problem', problem.id);
+  const watching = isWatching('problem', problem.id, req.session.user.id);
+  res.render('problems/show', { title: problem.number, problem, linkedIncidents, timeline, users, cis, attachments, watchers, watching });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
@@ -142,14 +157,32 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
   if (status !== existing.status) {
     logActivity('problem', existing.id, req.session.user.id,
       `Status changed from ${PROBLEM_STATUS_LABELS[existing.status]} to ${PROBLEM_STATUS_LABELS[status]}`);
+    notifyWatchers('problem', existing.id, {
+      subject: `[${existing.number}] Status changed: ${PROBLEM_STATUS_LABELS[status]}`,
+      html: `<p>Problem <strong>${existing.number}</strong> — <strong>${escapeHtml(b.short_description)}</strong></p>
+        <p>Status changed from ${PROBLEM_STATUS_LABELS[existing.status]} to ${PROBLEM_STATUS_LABELS[status]}.</p>`,
+      excludeUserId: req.session.user.id
+    });
   }
 
   res.redirect(`/problems/${req.params.id}`);
 });
 
 router.post('/:id/comments', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+  const problem = db.prepare('SELECT * FROM problems WHERE id = ?').get(req.params.id);
+  if (!problem) return res.status(404).render('error', { title: 'Not Found', message: 'Problem not found.' });
+
   db.prepare(`INSERT INTO problem_comments (problem_id, user_id, comment) VALUES (?, ?, ?)`)
     .run(req.params.id, req.session.user.id, req.body.comment);
+
+  notifyWatchers('problem', problem.id, {
+    subject: `[${problem.number}] New comment`,
+    html: `<p>Problem <strong>${problem.number}</strong> — <strong>${escapeHtml(problem.short_description)}</strong></p>
+      <p>${escapeHtml(req.session.user.full_name)} commented:</p>
+      <p>${escapeHtml(req.body.comment)}</p>`,
+    excludeUserId: req.session.user.id
+  });
+
   res.redirect(`/problems/${req.params.id}`);
 });
 
@@ -157,8 +190,23 @@ router.post('/:id/delete', requireAuth, requireRole('admin'), (req, res) => {
   db.prepare('UPDATE incidents SET problem_id = NULL WHERE problem_id = ?').run(req.params.id);
   db.prepare(`DELETE FROM activity_log WHERE entity_type = 'problem' AND entity_id = ?`).run(req.params.id);
   db.prepare(`DELETE FROM notifications WHERE related_type = 'problem' AND related_id = ?`).run(req.params.id);
+  purgeCollabData('problem', req.params.id);
   db.prepare('DELETE FROM problems WHERE id = ?').run(req.params.id);
   res.redirect('/problems');
+});
+
+attachRoutes(router, 'problem', {
+  table: 'problems',
+  getEntity: getProblemById,
+  canAccess: canAccessProblem,
+  canManage: canManageProblem,
+  middleware: staffOnly
+});
+watchRoutes(router, 'problem', {
+  table: 'problems',
+  getEntity: getProblemById,
+  canAccess: canAccessProblem,
+  middleware: staffOnly
 });
 
 module.exports = router;

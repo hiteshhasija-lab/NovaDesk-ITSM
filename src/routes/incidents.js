@@ -3,10 +3,21 @@ const { db, nextNumber, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus } = require('../helpers');
 const { sendNotification } = require('../mailer');
+const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 
 const BOARD_STATUSES = ['new', 'in_progress', 'on_hold', 'resolved', 'closed'];
 
 const router = express.Router();
+
+function canAccessIncident(req, incident) {
+  return req.session.user.role !== 'user' || incident.caller_id === req.session.user.id;
+}
+function canManageIncident(req) {
+  return ['admin', 'agent'].includes(req.session.user.role);
+}
+function getIncidentById(id) {
+  return db.prepare('SELECT * FROM incidents WHERE id = ?').get(id);
+}
 
 function loadFormLookups() {
   const users = db.prepare("SELECT id, full_name, role FROM users WHERE active = 1 ORDER BY full_name").all();
@@ -258,7 +269,10 @@ router.get('/:id', requireAuth, (req, res) => {
   }
 
   const { users, cis, problems } = loadFormLookups();
-  res.render('incidents/show', { title: incident.number, incident, timeline, users, cis, problems, relatedArticles });
+  const attachments = getAttachments('incident', incident.id);
+  const watchers = getWatchers('incident', incident.id);
+  const watching = isWatching('incident', incident.id, req.session.user.id);
+  res.render('incidents/show', { title: incident.number, incident, timeline, users, cis, problems, relatedArticles, attachments, watchers, watching });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
@@ -347,28 +361,48 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
     }
   }
 
+  if (status !== existing.status) {
+    notifyWatchers('incident', existing.id, {
+      subject: `[${existing.number}] Status changed: ${INCIDENT_STATUS_LABELS[status]}`,
+      html: `<p>Incident <strong>${existing.number}</strong> — <strong>${escapeHtml(b.short_description)}</strong></p>
+        <p>Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]}.</p>`,
+      excludeUserId: actorId
+    });
+  }
+
   res.redirect(`/incidents/${req.params.id}`);
 });
 
 router.post('/:id/comments', requireAuth, (req, res) => {
   const isEndUser = req.session.user.role === 'user';
-  if (isEndUser) {
-    const incident = db.prepare('SELECT caller_id FROM incidents WHERE id = ?').get(req.params.id);
-    if (!incident || incident.caller_id !== req.session.user.id) {
-      return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this incident.' });
-    }
+  const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
+  if (!incident) return res.status(404).render('error', { title: 'Not Found', message: 'Incident not found.' });
+  if (isEndUser && incident.caller_id !== req.session.user.id) {
+    return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this incident.' });
   }
   const isWorkNote = !isEndUser && req.body.is_work_note === 'on';
   db.prepare(`
     INSERT INTO incident_comments (incident_id, user_id, comment, is_work_note)
     VALUES (?, ?, ?, ?)
   `).run(req.params.id, req.session.user.id, req.body.comment, isWorkNote ? 1 : 0);
+
+  if (!isWorkNote) {
+    notifyWatchers('incident', incident.id, {
+      subject: `[${incident.number}] New comment`,
+      html: `<p>Incident <strong>${incident.number}</strong> — <strong>${escapeHtml(incident.short_description)}</strong></p>
+        <p>${escapeHtml(req.session.user.full_name)} commented:</p>
+        <p>${escapeHtml(req.body.comment)}</p>`,
+      excludeUserId: req.session.user.id
+    });
+  }
+
   res.redirect(`/incidents/${req.params.id}`);
 });
 
 router.post('/:id/delete', requireAuth, requireRole('admin'), (req, res) => {
   db.prepare(`DELETE FROM activity_log WHERE entity_type = 'incident' AND entity_id = ?`).run(req.params.id);
   db.prepare(`DELETE FROM notifications WHERE related_type = 'incident' AND related_id = ?`).run(req.params.id);
+  purgeCollabData('incident', req.params.id);
   db.prepare('DELETE FROM incidents WHERE id = ?').run(req.params.id);
   res.redirect('/incidents');
 });
@@ -415,6 +449,20 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, re
   }
 
   res.json({ ok: true, updated });
+});
+
+attachRoutes(router, 'incident', {
+  table: 'incidents',
+  getEntity: getIncidentById,
+  canAccess: canAccessIncident,
+  canManage: canManageIncident,
+  middleware: [requireAuth]
+});
+watchRoutes(router, 'incident', {
+  table: 'incidents',
+  getEntity: getIncidentById,
+  canAccess: canAccessIncident,
+  middleware: [requireAuth]
 });
 
 module.exports = router;

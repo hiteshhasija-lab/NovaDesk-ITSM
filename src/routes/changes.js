@@ -4,10 +4,21 @@ const { db, nextNumber, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
+const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 
 const router = express.Router();
 
 const BOARD_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'implemented', 'closed'];
+
+function canAccessChange(req, change) {
+  return req.session.user.role !== 'user' || change.requested_by === req.session.user.id;
+}
+function canManageChange(req) {
+  return ['admin', 'agent'].includes(req.session.user.role);
+}
+function getChangeById(id) {
+  return db.prepare('SELECT * FROM changes WHERE id = ?').get(id);
+}
 
 function deriveApprovalStatus(newStatus, existing, actorId) {
   let approval_status = existing.approval_status;
@@ -306,7 +317,10 @@ router.get('/:id', requireAuth, (req, res) => {
   ].sort((x, y) => x.created_at.localeCompare(y.created_at));
 
   const { users, cis } = loadFormLookups();
-  res.render('changes/show', { title: change.number, change, timeline, users, cis });
+  const attachments = getAttachments('change', change.id);
+  const watchers = getWatchers('change', change.id);
+  const watching = isWatching('change', change.id, req.session.user.id);
+  res.render('changes/show', { title: change.number, change, timeline, users, cis, attachments, watchers, watching });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res) => {
@@ -376,6 +390,15 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), (req, res
     }
   }
 
+  if (b.status !== existing.status) {
+    notifyWatchers('change', existing.id, {
+      subject: `[${existing.number}] Status changed: ${CHANGE_STATUS_LABELS[b.status]}`,
+      html: `<p>Change request <strong>${existing.number}</strong> — <strong>${escapeHtml(b.short_description)}</strong></p>
+        <p>Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[b.status]}.</p>`,
+      excludeUserId: actorId
+    });
+  }
+
   res.redirect(`/changes/${req.params.id}`);
 });
 
@@ -426,20 +449,29 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
 });
 
 router.post('/:id/comments', requireAuth, (req, res) => {
-  if (req.session.user.role === 'user') {
-    const change = db.prepare('SELECT requested_by FROM changes WHERE id = ?').get(req.params.id);
-    if (!change || change.requested_by !== req.session.user.id) {
-      return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this change request.' });
-    }
+  const change = db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  if (!change) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
+  if (req.session.user.role === 'user' && change.requested_by !== req.session.user.id) {
+    return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot comment on this change request.' });
   }
   db.prepare(`INSERT INTO change_comments (change_id, user_id, comment) VALUES (?, ?, ?)`)
     .run(req.params.id, req.session.user.id, req.body.comment);
+
+  notifyWatchers('change', change.id, {
+    subject: `[${change.number}] New comment`,
+    html: `<p>Change request <strong>${change.number}</strong> — <strong>${escapeHtml(change.short_description)}</strong></p>
+      <p>${escapeHtml(req.session.user.full_name)} commented:</p>
+      <p>${escapeHtml(req.body.comment)}</p>`,
+    excludeUserId: req.session.user.id
+  });
+
   res.redirect(`/changes/${req.params.id}`);
 });
 
 router.post('/:id/delete', requireAuth, requireRole('admin'), (req, res) => {
   db.prepare(`DELETE FROM activity_log WHERE entity_type = 'change' AND entity_id = ?`).run(req.params.id);
   db.prepare(`DELETE FROM notifications WHERE related_type = 'change' AND related_id = ?`).run(req.params.id);
+  purgeCollabData('change', req.params.id);
   db.prepare('DELETE FROM changes WHERE id = ?').run(req.params.id);
   res.redirect('/changes');
 });
@@ -483,6 +515,20 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), (req, re
   }
 
   res.json({ ok: true, updated });
+});
+
+attachRoutes(router, 'change', {
+  table: 'changes',
+  getEntity: getChangeById,
+  canAccess: canAccessChange,
+  canManage: canManageChange,
+  middleware: [requireAuth]
+});
+watchRoutes(router, 'change', {
+  table: 'changes',
+  getEntity: getChangeById,
+  canAccess: canAccessChange,
+  middleware: [requireAuth]
 });
 
 module.exports = router;

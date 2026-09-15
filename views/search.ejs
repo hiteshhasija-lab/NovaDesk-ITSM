@@ -3,9 +3,9 @@
 <div class="container-fluid px-4 py-4">
   <h4 class="mb-1"><i class="bi bi-search me-1"></i>Search Results</h4>
   <% if (q) { %>
-    <p class="text-muted">Showing matches for "<strong><%= q %></strong>" across incidents, changes, and CMDB.</p>
+    <p class="text-muted">Showing matches for "<strong><%= q %></strong>" across incidents, changes, CMDB, <% if (isStaff) { %>problems, <% } %>requests, and the knowledge base.</p>
   <% } else { %>
-    <p class="text-muted">Type something into the search box above to look across incidents, changes, and the CMDB.</p>
+    <p class="text-muted">Type something into the search box above to look across incidents, changes, CMDB, <% if (isStaff) { %>problems, <% } %>requests, and the knowledge base.</p>
   <% } %>
 
   <% if (q) { %>
@@ -74,6 +74,80 @@
               </div>
               <div class="fw-semibold small mt-1"><%= ci.ci_number %> — <%= ci.name %></div>
               <div class="small text-muted"><%= ci.ip_address || h.CI_TYPE_LABELS[ci.ci_type] %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <% if (isStaff) { %>
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-search text-secondary me-1"></i>Problems</span>
+          <span class="badge bg-secondary"><%= problems.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (problems.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching problems.</div>
+          <% } %>
+          <% problems.forEach(p => { %>
+            <a href="/problems/<%= p.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.PRIORITY_BADGE[p.priority] %> me-2">P<%= p.priority %></span>
+                <span class="badge bg-<%= h.PROBLEM_STATUS_BADGE[p.status] %>"><%= h.PROBLEM_STATUS_LABELS[p.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= p.number %></div>
+              <div class="small"><%= p.short_description %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+    <% } %>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-bag-check text-info me-1"></i>Service Requests</span>
+          <span class="badge bg-secondary"><%= requests.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (requests.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching requests.</div>
+          <% } %>
+          <% requests.forEach(r => { %>
+            <a href="/requests/<%= r.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <span class="badge bg-<%= h.REQUEST_STATUS_BADGE[r.status] %>"><%= h.REQUEST_STATUS_LABELS[r.status] %></span>
+              </div>
+              <div class="fw-semibold small mt-1"><%= r.number %></div>
+              <div class="small"><i class="bi <%= r.item_icon %> me-1"></i><%= r.item_name %></div>
+            </a>
+          <% }) %>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card h-100 tile-card">
+        <div class="card-header fw-semibold d-flex justify-content-between">
+          <span><i class="bi bi-journal-text text-primary me-1"></i>Knowledge Base</span>
+          <span class="badge bg-secondary"><%= articles.length %></span>
+        </div>
+        <div class="list-group list-group-flush">
+          <% if (articles.length === 0) { %>
+            <div class="list-group-item text-muted small">No matching articles.</div>
+          <% } %>
+          <% articles.forEach(a => { %>
+            <a href="/kb/<%= a.id %>" class="list-group-item list-group-item-action">
+              <div class="d-flex justify-content-between align-items-start">
+                <% if (a.status === 'draft') { %><span class="badge bg-secondary">Draft</span><% } %>
+              </div>
+              <div class="fw-semibold small mt-1"><%= a.number %> — <%= a.title %></div>
+              <div class="small text-muted text-capitalize"><%= a.category %></div>
             </a>
           <% }) %>
         </div>
