@@ -9,7 +9,12 @@
         <a href="/requests" class="small ms-1">clear</a>
       <% } %>
     </h4>
-    <a href="/catalog" class="btn btn-sm btn-outline-secondary"><i class="bi bi-shop"></i> Browse Catalog</a>
+    <div class="d-flex gap-2">
+      <% if (!isEndUser) { %>
+      <a href="/requests/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <% } %>
+      <a href="/catalog" class="btn btn-sm btn-outline-secondary"><i class="bi bi-shop"></i> Browse Catalog</a>
+    </div>
   </div>
 
   <form class="row g-2 mb-3" id="requestsFilterForm" method="GET">

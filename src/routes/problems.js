@@ -1,7 +1,7 @@
 const express = require('express');
 const { db, nextNumber, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { PROBLEM_STATUS_LABELS, escapeHtml } = require('../helpers');
+const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 
 const router = express.Router();
@@ -51,6 +51,36 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   const assignableUsers = db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
 
   res.render('problems/list', { title: 'Problems', problems, filters: { status, priority, assigned_to, q }, assignableUsers });
+});
+
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+  const problems = db.prepare(`
+    SELECT p.*, a.full_name AS assigned_name, c.name AS ci_name,
+      (SELECT COUNT(*) FROM incidents i WHERE i.problem_id = p.id) AS incident_count
+    FROM problems p
+    LEFT JOIN users a ON a.id = p.assigned_to
+    LEFT JOIN cmdb_ci c ON c.id = p.affected_ci_id
+    ORDER BY p.priority ASC, p.created_at DESC
+  `).all();
+
+  const csv = toCsv(problems, [
+    { label: 'Number', value: r => r.number },
+    { label: 'Short Description', value: r => r.short_description },
+    { label: 'Priority', value: r => `P${r.priority} - ${PRIORITY_LABELS[r.priority]}` },
+    { label: 'Status', value: r => PROBLEM_STATUS_LABELS[r.status] },
+    { label: 'Assigned To', value: r => r.assigned_name || '' },
+    { label: 'Affected CI', value: r => r.ci_name || '' },
+    { label: 'Linked Incidents', value: r => r.incident_count },
+    { label: 'Root Cause', value: r => r.root_cause || '' },
+    { label: 'Workaround', value: r => r.workaround || '' },
+    { label: 'Created', value: r => r.created_at },
+    { label: 'Resolved', value: r => r.resolved_at || '' },
+    { label: 'Closed', value: r => r.closed_at || '' }
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="problems.csv"');
+  res.send(csv);
 });
 
 router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {

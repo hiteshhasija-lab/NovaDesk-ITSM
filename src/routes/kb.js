@@ -1,6 +1,7 @@
 const express = require('express');
 const { db, nextNumber } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { toCsv } = require('../helpers');
 
 const router = express.Router();
 
@@ -23,6 +24,30 @@ router.get('/', requireAuth, (req, res) => {
   const categories = db.prepare('SELECT DISTINCT category FROM kb_articles ORDER BY category').all().map(r => r.category);
 
   res.render('kb/list', { title: 'Knowledge Base', articles, categories, filters: { q, category }, isStaff });
+});
+
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+  const articles = db.prepare(`
+    SELECT k.*, u.full_name AS author_name FROM kb_articles k
+    LEFT JOIN users u ON u.id = k.author_id
+    ORDER BY k.updated_at DESC
+  `).all();
+
+  const csv = toCsv(articles, [
+    { label: 'Number', value: r => r.number },
+    { label: 'Title', value: r => r.title },
+    { label: 'Category', value: r => r.category },
+    { label: 'Status', value: r => r.status },
+    { label: 'Author', value: r => r.author_name || '' },
+    { label: 'Views', value: r => r.view_count },
+    { label: 'Body', value: r => r.body },
+    { label: 'Created', value: r => r.created_at },
+    { label: 'Updated', value: r => r.updated_at }
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="kb-articles.csv"');
+  res.send(csv);
 });
 
 router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {

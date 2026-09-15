@@ -1,7 +1,7 @@
 const express = require('express');
 const { db, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { REQUEST_STATUS_LABELS, escapeHtml } = require('../helpers');
+const { REQUEST_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 
 const router = express.Router();
@@ -38,6 +38,32 @@ router.get('/', requireAuth, (req, res) => {
   const assignableUsers = isEndUser ? [] : db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
 
   res.render('catalog/requests-list', { title: 'My Requests', requests, filters: { status, requested_by, assigned_to, q }, isEndUser, requesterUsers, assignableUsers });
+});
+
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+  const requests = db.prepare(`
+    SELECT r.*, ci.name AS item_name, u.full_name AS requester_name, a.full_name AS assigned_name
+    FROM service_requests r
+    LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
+    LEFT JOIN users u ON u.id = r.requested_by
+    LEFT JOIN users a ON a.id = r.assigned_to
+    ORDER BY r.created_at DESC
+  `).all();
+
+  const csv = toCsv(requests, [
+    { label: 'Number', value: r => r.number },
+    { label: 'Item', value: r => r.item_name || '' },
+    { label: 'Status', value: r => REQUEST_STATUS_LABELS[r.status] },
+    { label: 'Requested By', value: r => r.requester_name || '' },
+    { label: 'Assigned To', value: r => r.assigned_name || '' },
+    { label: 'Notes', value: r => r.notes || '' },
+    { label: 'Created', value: r => r.created_at },
+    { label: 'Fulfilled', value: r => r.fulfilled_at || '' }
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="service-requests.csv"');
+  res.send(csv);
 });
 
 router.get('/:id', requireAuth, (req, res) => {
