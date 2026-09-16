@@ -247,7 +247,7 @@ a { color: var(--brand); }
   justify-content: center;
   position: relative;
   overflow: hidden;
-  background: #0a0e1a url('/img/login-bg.jpg') center 35% / cover no-repeat;
+  background: #0a0e1a url('/img/login-bg.jpg') center 65% / cover no-repeat;
   padding: 2rem 1rem;
 }
 
