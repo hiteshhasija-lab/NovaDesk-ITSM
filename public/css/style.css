@@ -272,7 +272,7 @@ a { color: var(--brand); }
   transform: translateY(-12px);
   flex: 0 0 350px;
   max-width: 350px;
-  min-height: 485px;
+  min-height: 510px;
   background: rgba(8,14,28,0.78);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
