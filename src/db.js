@@ -80,8 +80,12 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'user', -- admin, agent, user
   department TEXT,
   active INTEGER NOT NULL DEFAULT 1,
+  email_notifications INTEGER NOT NULL DEFAULT 1,
+  theme_preference TEXT NOT NULL DEFAULT 'dark', -- dark, light
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_notifications INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference TEXT NOT NULL DEFAULT 'dark';
 
 CREATE TABLE IF NOT EXISTS cmdb_ci (
   id SERIAL PRIMARY KEY,

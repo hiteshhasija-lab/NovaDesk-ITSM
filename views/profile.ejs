@@ -54,5 +54,31 @@
       </form>
     </div>
   </div>
+
+  <div class="card mt-4" style="max-width:600px;" id="preferences">
+    <div class="card-body">
+      <h6 class="section-title">Preferences</h6>
+      <form method="POST" action="/profile/preferences">
+        <div class="mb-4">
+          <label class="form-label d-block">Theme</label>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="theme_preference" id="themeDark" value="dark" <%= profileUser.theme_preference !== 'light' ? 'checked' : '' %>>
+            <label class="form-check-label" for="themeDark">Dark</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="theme_preference" id="themeLight" value="light" <%= profileUser.theme_preference === 'light' ? 'checked' : '' %>>
+            <label class="form-check-label" for="themeLight">Light</label>
+          </div>
+        </div>
+        <div class="mb-4">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="email_notifications" id="emailNotifications" value="1" <%= profileUser.email_notifications ? 'checked' : '' %>>
+            <label class="form-check-label" for="emailNotifications">Email me about updates to my incidents, changes, and requests</label>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Preferences</button>
+      </form>
+    </div>
+  </div>
 </div>
 <%- include('partials/foot') %>

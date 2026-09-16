@@ -15,7 +15,7 @@ router.post('/login', async (req, res) => {
   if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
     return res.render('login', { error: 'Invalid username or password.', title: 'Log In' });
   }
-  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role };
+  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, theme_preference: user.theme_preference };
   if (req.body.remember) req.session.cookie.maxAge = 1000 * 60 * 60 * 24 * 30;
   const dest = req.session.returnTo || '/';
   delete req.session.returnTo;
@@ -51,7 +51,7 @@ router.post('/register', async (req, res) => {
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
-  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role };
+  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, theme_preference: user.theme_preference };
   res.redirect('/');
 });
 

@@ -35,4 +35,22 @@ router.post('/', requireAuth, async (req, res) => {
   res.render('profile', { title: 'My Profile', profileUser: updated, error: null, success: 'Profile updated.' });
 });
 
+router.post('/preferences', requireAuth, async (req, res) => {
+  const theme = req.body.theme_preference === 'light' ? 'light' : 'dark';
+  const emailNotifications = req.body.email_notifications ? 1 : 0;
+  await db.prepare('UPDATE users SET theme_preference = ?, email_notifications = ? WHERE id = ?')
+    .run(theme, emailNotifications, req.session.user.id);
+  req.session.user.theme_preference = theme;
+
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
+  res.render('profile', { title: 'My Profile', profileUser: updated, error: null, success: 'Preferences updated.' });
+});
+
+router.post('/theme', requireAuth, async (req, res) => {
+  const theme = req.body.theme === 'light' ? 'light' : 'dark';
+  await db.prepare('UPDATE users SET theme_preference = ? WHERE id = ?').run(theme, req.session.user.id);
+  req.session.user.theme_preference = theme;
+  res.json({ ok: true });
+});
+
 module.exports = router;

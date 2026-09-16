@@ -210,8 +210,8 @@ router.post('/', requireAuth, async (req, res) => {
 async function notifyOnCreate(incidentId) {
   const incident = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(incidentId);
   const desc = escapeHtml(incident.short_description);
-  const caller = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.caller_id);
-  if (caller && caller.email) {
+  const caller = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(incident.caller_id);
+  if (caller && caller.email && caller.email_notifications) {
     sendNotification({
       to: caller.email,
       toName: caller.full_name,
@@ -225,8 +225,8 @@ async function notifyOnCreate(incidentId) {
     }).catch(() => {});
   }
   if (incident.assigned_to) {
-    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(incident.assigned_to);
-    if (assignee && assignee.email) {
+    const assignee = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(incident.assigned_to);
+    if (assignee && assignee.email && assignee.email_notifications) {
       sendNotification({
         to: assignee.email,
         toName: assignee.full_name,
@@ -368,8 +368,8 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   if (newAssignedTo && newAssignedTo !== existing.assigned_to) {
-    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
-    if (assignee && assignee.email) {
+    const assignee = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(newAssignedTo);
+    if (assignee && assignee.email && assignee.email_notifications) {
       sendNotification({
         to: assignee.email,
         toName: assignee.full_name,

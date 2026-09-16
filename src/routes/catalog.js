@@ -49,8 +49,8 @@ router.post('/:id/request', requireAuth, async (req, res) => {
 
   await logActivity('request', info.lastInsertRowid, req.session.user.id, 'Request submitted');
 
-  const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(req.session.user.id);
-  if (requester && requester.email) {
+  const requester = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(req.session.user.id);
+  if (requester && requester.email && requester.email_notifications) {
     sendNotification({
       to: requester.email,
       toName: requester.full_name,

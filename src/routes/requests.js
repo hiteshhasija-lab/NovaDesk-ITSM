@@ -130,9 +130,9 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   if (['fulfilled', 'rejected'].includes(status) && status !== existing.status) {
-    const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(existing.requested_by);
+    const requester = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(existing.requested_by);
     const item = await db.prepare('SELECT name FROM catalog_items WHERE id = ?').get(existing.catalog_item_id);
-    if (requester && requester.email) {
+    if (requester && requester.email && requester.email_notifications) {
       sendNotification({
         to: requester.email,
         toName: requester.full_name,

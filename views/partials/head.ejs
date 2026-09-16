@@ -9,8 +9,9 @@
   <link href="/css/style.css?v=<%= h.cssVersion() %>" rel="stylesheet">
   <script>
     (function () {
+      var serverTheme = <%- (typeof currentUser !== 'undefined' && currentUser && currentUser.theme_preference) ? JSON.stringify(currentUser.theme_preference) : 'null' %>;
       var saved = localStorage.getItem('novadesk-theme');
-      var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      var theme = serverTheme || saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
       document.documentElement.setAttribute('data-bs-theme', theme);
     })();
   </script>

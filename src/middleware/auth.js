@@ -6,13 +6,14 @@ async function requireAuth(req, res, next) {
     return res.redirect('/login');
   }
 
-  const fresh = await db.prepare('SELECT id, username, full_name, role, active FROM users WHERE id = ?').get(req.session.user.id);
+  const fresh = await db.prepare('SELECT id, username, full_name, role, active, theme_preference FROM users WHERE id = ?').get(req.session.user.id);
   if (!fresh || !fresh.active) {
     return req.session.destroy(() => res.redirect('/login'));
   }
   req.session.user.role = fresh.role;
   req.session.user.full_name = fresh.full_name;
   req.session.user.username = fresh.username;
+  req.session.user.theme_preference = fresh.theme_preference;
 
   next();
 }

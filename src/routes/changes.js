@@ -268,8 +268,8 @@ router.post('/', requireAuth, async (req, res) => {
 async function notifyOnCreate(changeId) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
   const desc = escapeHtml(change.short_description);
-  const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.requested_by);
-  if (requester && requester.email) {
+  const requester = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(change.requested_by);
+  if (requester && requester.email && requester.email_notifications) {
     sendNotification({
       to: requester.email,
       toName: requester.full_name,
@@ -283,8 +283,8 @@ async function notifyOnCreate(changeId) {
     }).catch(() => {});
   }
   if (change.assigned_to) {
-    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(change.assigned_to);
-    if (assignee && assignee.email) {
+    const assignee = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(change.assigned_to);
+    if (assignee && assignee.email && assignee.email_notifications) {
       sendNotification({
         to: assignee.email,
         toName: assignee.full_name,
@@ -393,8 +393,8 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   if (newAssignedTo && newAssignedTo !== existing.assigned_to) {
-    const assignee = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(newAssignedTo);
-    if (assignee && assignee.email) {
+    const assignee = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(newAssignedTo);
+    if (assignee && assignee.email && assignee.email_notifications) {
       sendNotification({
         to: assignee.email,
         toName: assignee.full_name,
@@ -430,8 +430,8 @@ router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (r
 
   if (existing) {
     await logActivity('change', existing.id, req.session.user.id, `Change ${decision} by CAB`);
-    const requester = await db.prepare('SELECT full_name, email FROM users WHERE id = ?').get(existing.requested_by);
-    if (requester && requester.email) {
+    const requester = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(existing.requested_by);
+    if (requester && requester.email && requester.email_notifications) {
       sendNotification({
         to: requester.email,
         toName: requester.full_name,

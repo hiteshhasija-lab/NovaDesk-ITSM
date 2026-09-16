@@ -68,7 +68,7 @@
           </a>
           <ul class="dropdown-menu dropdown-menu-end user-menu">
             <li><a class="dropdown-item" href="/profile"><i class="bi bi-person me-2"></i>My Profile</a></li>
-            <li><a class="dropdown-item" href="/profile#password"><i class="bi bi-gear me-2"></i>Settings</a></li>
+            <li><a class="dropdown-item" href="/profile#preferences"><i class="bi bi-gear me-2"></i>Settings</a></li>
             <% if (currentUser.role === 'admin') { %>
             <li><a class="dropdown-item" href="/users"><i class="bi bi-people me-2"></i>Users</a></li>
             <% } %>
@@ -93,5 +93,10 @@
     localStorage.setItem('novadesk-theme', next);
     // Let any charts on the page (which cache colors from CSS variables at creation time) know to re-theme themselves.
     document.dispatchEvent(new CustomEvent('novadesk:themechange', { detail: { theme: next } }));
+    fetch('/profile/theme', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: next })
+    }).catch(function () {});
   });
 </script>
