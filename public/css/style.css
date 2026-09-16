@@ -262,7 +262,8 @@ a { color: var(--brand); }
   padding: 0 1.5rem;
 }
 @media (min-width: 992px) {
-  .login-content { justify-content: flex-end; padding: 0 4rem 0 4rem; }
+  .login-wrapper { padding: 2rem 0; }
+  .login-content { justify-content: flex-end; padding: 0 0.5in 0 4rem; max-width: none; }
 }
 .login-card {
   position: relative;
