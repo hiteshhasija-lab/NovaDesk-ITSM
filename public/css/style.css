@@ -270,8 +270,8 @@ a { color: var(--brand); }
   z-index: 1;
   width: 100%;
   transform: translateY(-12px);
-  flex: 0 0 370px;
-  max-width: 370px;
+  flex: 0 0 350px;
+  max-width: 350px;
   background: rgba(8,14,28,0.78);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
