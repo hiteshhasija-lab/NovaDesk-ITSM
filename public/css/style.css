@@ -376,7 +376,7 @@ a { color: var(--brand); }
 }
 
 .login-signup-row {
-  text-align: center; margin-top: 1rem;
+  text-align: center; margin-top: 0.75rem;
   font-size: 0.85rem; color: rgba(255,255,255,0.55);
 }
 .login-signup-row a { color: #4fd8ff; font-weight: 600; text-decoration: none; }
@@ -384,7 +384,7 @@ a { color: var(--brand); }
 
 .login-trust-row {
   display: flex; align-items: center; justify-content: center; gap: 0.3rem;
-  margin-top: 1rem; font-size: 0.75rem; color: rgba(255,255,255,0.45);
+  margin-top: 0.75rem; font-size: 0.75rem; color: rgba(255,255,255,0.45);
   flex-wrap: nowrap; white-space: nowrap;
 }
 .login-trust-row i { color: #4fd8ff; margin-right: 0.18rem; font-size: 0.86rem; }
