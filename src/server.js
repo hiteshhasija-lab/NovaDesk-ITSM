@@ -1,4 +1,4 @@
-const { initDb } = require('./db');
+const { initDb, db } = require('./db');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -35,6 +35,15 @@ const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'c
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
+
+app.get('/health', async (req, res) => {
+  try {
+    await db.raw('SELECT 1');
+    res.json({ status: 'healthy', database: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'unhealthy', database: 'disconnected', error: err.message });
+  }
+});
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
