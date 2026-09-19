@@ -29,6 +29,7 @@ const reportRoutes = require('./routes/reports');
 const app = express();
 const PORT = process.env.PORT || 80;
 const HTTPS_PORT = process.env.HTTPS_PORT || 443;
+const HOST = process.env.HOST || '0.0.0.0';
 const TLS_KEY_PATH = process.env.TLS_KEY_PATH || path.join(__dirname, '..', 'certs', 'key.pem');
 const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'certs', 'cert.pem');
 
@@ -82,8 +83,8 @@ app.use((err, req, res, next) => {
 
 initDb()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`ITSM app running at http://localhost:${PORT}`);
+    app.listen(PORT, HOST, () => {
+      console.log(`ITSM app running at http://${HOST}:${PORT}`);
       console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
     });
 
@@ -92,8 +93,8 @@ initDb()
         key: fs.readFileSync(TLS_KEY_PATH),
         cert: fs.readFileSync(TLS_CERT_PATH)
       };
-      https.createServer(tlsOptions, app).listen(HTTPS_PORT, () => {
-        console.log(`ITSM app also running securely at https://localhost:${HTTPS_PORT}`);
+      https.createServer(tlsOptions, app).listen(HTTPS_PORT, HOST, () => {
+        console.log(`ITSM app also running securely at https://${HOST}:${HTTPS_PORT}`);
       });
     } else {
       console.log(`No TLS certificate found at ${TLS_CERT_PATH} — HTTPS not started.`);
