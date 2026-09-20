@@ -1,0 +1,11 @@
+ARG BASE_IMAGE
+ARG RELEASE_VERSION=0.0.0
+FROM ${BASE_IMAGE}
+ARG RELEASE_VERSION
+
+COPY src/ ./src/
+COPY views/ ./views/
+COPY public/ ./public/
+
+ENV NOVADESK_RELEASE_VERSION=${RELEASE_VERSION}
+LABEL org.opencontainers.image.version=${RELEASE_VERSION}
