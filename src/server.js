@@ -25,6 +25,7 @@ const catalogRoutes = require('./routes/catalog');
 const requestRoutes = require('./routes/requests');
 const kbRoutes = require('./routes/kb');
 const reportRoutes = require('./routes/reports');
+const integrationRoutes = require('./routes/integrations');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -65,6 +66,7 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use('/', integrationRoutes);
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
 app.use('/incidents', incidentRoutes);

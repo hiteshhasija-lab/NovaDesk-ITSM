@@ -195,11 +195,34 @@ CREATE TABLE IF NOT EXISTS changes (
   closed_at TEXT
 );
 
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_channel_id INTEGER;
+
 CREATE TABLE IF NOT EXISTS change_comments (
   id SERIAL PRIMARY KEY,
   change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
   user_id INTEGER REFERENCES users(id),
   comment TEXT NOT NULL,
+  created_at TEXT NOT NULL ${TS_DEFAULT}
+);
+
+CREATE TABLE IF NOT EXISTS change_tasks (
+  id SERIAL PRIMARY KEY,
+  change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  task_number TEXT UNIQUE NOT NULL,
+  description TEXT NOT NULL,
+  sequence INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending, running, done
+  completed_at TEXT,
+  created_at TEXT NOT NULL ${TS_DEFAULT}
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_actions (
+  id SERIAL PRIMARY KEY,
+  change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  action_type TEXT NOT NULL, -- destroy_vm
+  run_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending, executed, cancelled
+  executed_at TEXT,
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
