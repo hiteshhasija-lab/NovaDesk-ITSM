@@ -94,22 +94,38 @@ app.use((err, req, res, next) => {
 
 initDb()
   .then(() => {
-    app.listen(PORT, HOST, () => {
+    const servers = [];
+
+    servers.push(app.listen(PORT, HOST, () => {
       console.log(`ITSM app running at http://${HOST}:${PORT}`);
       console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
-    });
+    }));
 
     if (fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH)) {
       const tlsOptions = {
         key: fs.readFileSync(TLS_KEY_PATH),
         cert: fs.readFileSync(TLS_CERT_PATH)
       };
-      https.createServer(tlsOptions, app).listen(HTTPS_PORT, HOST, () => {
+      servers.push(https.createServer(tlsOptions, app).listen(HTTPS_PORT, HOST, () => {
         console.log(`ITSM app also running securely at https://${HOST}:${HTTPS_PORT}`);
-      });
+      }));
     } else {
       console.log(`No TLS certificate found at ${TLS_CERT_PATH} — HTTPS not started.`);
     }
+
+    // Running as PID 1 in a container: an unhandled SIGTERM is silently ignored rather
+    // than terminating the process (the kernel's default signal disposition doesn't apply
+    // to PID 1 without an explicit handler), which otherwise forces every container stop
+    // to wait out the full timeout and fall back to SIGKILL.
+    const shutdown = () => {
+      console.log('Shutting down...');
+      Promise.all(servers.map(s => new Promise(resolve => s.close(resolve))))
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+      setTimeout(() => process.exit(1), 5000).unref();
+    };
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
   })
   .catch((err) => {
     console.error('Failed to initialize database:', err);
