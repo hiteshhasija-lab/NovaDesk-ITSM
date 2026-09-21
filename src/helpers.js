@@ -15,12 +15,16 @@ function cssVersion() {
   return cachedCssVersion;
 }
 
-const APP_VERSION = require('./version');
+const LOCAL_DEV_VERSION = require('./version');
 
 let cachedAppVersion = null;
 function appVersion() {
   if (cachedAppVersion) return cachedAppVersion;
-  const pkgVersion = APP_VERSION;
+  // The NOVAAPP01 release pipeline's overlay build sets this per release (see
+  // Containerfile.overlay) — it's the source of truth in any deployed
+  // container. Fall back to the local-dev constant when it's unset (e.g.
+  // running `node src/server.js` directly, outside a released container).
+  const pkgVersion = process.env.NOVADESK_RELEASE_VERSION || LOCAL_DEV_VERSION;
   let sha = '';
   try {
     sha = execSync('git rev-parse --short HEAD', { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
