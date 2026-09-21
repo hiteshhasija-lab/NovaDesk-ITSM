@@ -15,13 +15,12 @@ function cssVersion() {
   return cachedCssVersion;
 }
 
+const APP_VERSION = require('./version');
+
 let cachedAppVersion = null;
 function appVersion() {
   if (cachedAppVersion) return cachedAppVersion;
-  let pkgVersion = '0.0.0';
-  try {
-    pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
-  } catch (e) { /* fall back to default above */ }
+  const pkgVersion = APP_VERSION;
   let sha = '';
   try {
     sha = execSync('git rev-parse --short HEAD', { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
