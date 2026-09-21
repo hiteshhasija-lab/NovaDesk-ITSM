@@ -139,11 +139,11 @@
           <% relationships.forEach(r => { %>
             <div class="list-group-item d-flex justify-content-between align-items-center">
               <div class="small">
-                <% if (r.parent_ci_id === ci.id) { %>
+                <% if (r.child_ci_id === ci.id) { %>
                   <strong><%= ci.name %></strong> <span class="text-muted"><%= r.relationship_type.replace('_',' ') %></span>
-                  <a href="/cmdb/<%= r.child_ci_id %>"><%= r.child_number %> — <%= r.child_name %></a>
-                <% } else { %>
                   <a href="/cmdb/<%= r.parent_ci_id %>"><%= r.parent_number %> — <%= r.parent_name %></a>
+                <% } else { %>
+                  <a href="/cmdb/<%= r.child_ci_id %>"><%= r.child_number %> — <%= r.child_name %></a>
                   <span class="text-muted"><%= r.relationship_type.replace('_',' ') %></span> <strong><%= ci.name %></strong>
                 <% } %>
               </div>

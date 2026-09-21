@@ -9,7 +9,7 @@ const createAsyncRouter = require('../asyncRouter');
 
 const router = createAsyncRouter();
 
-const BOARD_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'implemented', 'closed'];
+const BOARD_STATUSES = ['draft', 'submitted', 'approved', 'scheduled', 'in_progress', 'implemented', 'closed'];
 
 const CHANGE_SORT_COLUMNS = {
   number: r => r.number,
@@ -31,7 +31,7 @@ function getChangeById(id) {
 function deriveApprovalStatus(newStatus, existing, actorId) {
   let approval_status = existing.approval_status;
   let approved_by = existing.approved_by;
-  if (['approved', 'scheduled', 'implemented', 'closed'].includes(newStatus)) {
+  if (['approved', 'scheduled', 'in_progress', 'implemented', 'closed'].includes(newStatus)) {
     if (existing.approval_status !== 'approved') {
       approval_status = 'approved';
       approved_by = actorId;
@@ -58,7 +58,7 @@ router.get('/', requireAuth, async (req, res) => {
   let params = [];
 
   if (isEndUser) { where.push('c.requested_by = ?'); params.push(req.session.user.id); }
-  if (status === 'open') { where.push("c.status IN ('submitted','approved','scheduled')"); }
+  if (status === 'open') { where.push("c.status IN ('submitted','approved','scheduled','in_progress')"); }
   else if (status) { where.push('c.status = ?'); params.push(status); }
   if (risk) { where.push('c.risk = ?'); params.push(risk); }
   if (change_type) { where.push('c.change_type = ?'); params.push(change_type); }
@@ -134,7 +134,7 @@ router.get('/board', requireAuth, requireRole('admin', 'agent'), async (req, res
     LEFT JOIN users u ON u.id = c.requested_by
     LEFT JOIN users a ON a.id = c.assigned_to
     LEFT JOIN cmdb_ci ci ON ci.id = c.affected_ci_id
-    WHERE c.status IN ('draft','submitted','approved','scheduled','implemented','closed')
+    WHERE c.status IN ('draft','submitted','approved','scheduled','in_progress','implemented','closed')
     ORDER BY c.planned_start ASC, c.created_at DESC
   `).all();
 
@@ -332,11 +332,28 @@ router.get('/:id', requireAuth, async (req, res) => {
     ...activity.map(a => ({ type: 'activity', created_at: a.created_at, author_name: a.actor_name, text: a.message }))
   ].sort((x, y) => x.created_at.localeCompare(y.created_at));
 
+  const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(req.params.id);
   const { users, cis } = await loadFormLookups();
   const attachments = await getAttachments('change', change.id);
   const watchers = await getWatchers('change', change.id);
   const watching = await isWatching('change', change.id, req.session.user.id);
-  res.render('changes/show', { title: change.number, change, timeline, users, cis, attachments, watchers, watching });
+  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching });
+});
+
+router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const change = await getChangeById(req.params.id);
+  if (!change) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
+
+  const task = await db.prepare('SELECT * FROM change_tasks WHERE id = ? AND change_id = ?').get(req.params.taskId, req.params.id);
+  if (!task) return res.status(404).render('error', { title: 'Not Found', message: 'Change task not found.' });
+
+  const nowDone = task.status !== 'done';
+  await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
+    .run(nowDone ? 'done' : 'pending', nowDone ? nowStr() : null, task.id);
+  await logActivity('change', change.id, req.session.user.id,
+    `${task.task_number} (${task.description}) marked ${nowDone ? 'done' : 'pending'}`);
+
+  res.redirect(`/changes/${change.id}`);
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {

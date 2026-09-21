@@ -55,11 +55,11 @@ const INCIDENT_STATUS_BADGE = {
 
 const CHANGE_STATUS_LABELS = {
   draft: 'Draft', submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected',
-  scheduled: 'Scheduled', implemented: 'Implemented', closed: 'Closed', cancelled: 'Cancelled'
+  scheduled: 'Scheduled', in_progress: 'In Progress', implemented: 'Implemented', closed: 'Closed', cancelled: 'Cancelled'
 };
 const CHANGE_STATUS_BADGE = {
   draft: 'secondary', submitted: 'info', approved: 'primary', rejected: 'danger',
-  scheduled: 'warning', implemented: 'success', closed: 'dark', cancelled: 'secondary'
+  scheduled: 'warning', in_progress: 'info', implemented: 'success', closed: 'dark', cancelled: 'secondary'
 };
 
 const PROBLEM_STATUS_LABELS = {

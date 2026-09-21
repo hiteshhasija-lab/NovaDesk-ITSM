@@ -47,8 +47,8 @@
     <div class="col-md-2">
       <select name="status" class="form-select form-select-sm auto-filter">
         <option value="">All statuses</option>
-        <option value="open" <%= filters.status === 'open' ? 'selected' : '' %>>Active (Submitted/Approved/Scheduled)</option>
-        <% ['draft','submitted','approved','rejected','scheduled','implemented','closed','cancelled'].forEach(s => { %>
+        <option value="open" <%= filters.status === 'open' ? 'selected' : '' %>>Active (Submitted/Approved/Scheduled/In Progress)</option>
+        <% ['draft','submitted','approved','rejected','scheduled','in_progress','implemented','closed','cancelled'].forEach(s => { %>
           <option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= h.CHANGE_STATUS_LABELS[s] %></option>
         <% }) %>
       </select>
@@ -73,7 +73,7 @@
       <span class="fw-semibold small"><span id="bulkCount">0</span> selected</span>
       <select id="bulkStatus" class="form-select form-select-sm" style="max-width:180px;">
         <option value="">Set status...</option>
-        <% ['draft','submitted','approved','rejected','scheduled','implemented','closed','cancelled'].forEach(s => { %>
+        <% ['draft','submitted','approved','rejected','scheduled','in_progress','implemented','closed','cancelled'].forEach(s => { %>
           <option value="<%= s %>"><%= h.CHANGE_STATUS_LABELS[s] %></option>
         <% }) %>
       </select>

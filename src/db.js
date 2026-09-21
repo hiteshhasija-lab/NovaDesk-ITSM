@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS changes (
   description TEXT,
   change_type TEXT NOT NULL DEFAULT 'normal', -- standard, normal, emergency
   risk TEXT NOT NULL DEFAULT 'medium', -- low, medium, high
-  status TEXT NOT NULL DEFAULT 'draft', -- draft, submitted, approved, rejected, scheduled, implemented, closed, cancelled
+  status TEXT NOT NULL DEFAULT 'draft', -- draft, submitted, approved, rejected, scheduled, in_progress, implemented, closed, cancelled
   requested_by INTEGER REFERENCES users(id),
   assigned_to INTEGER REFERENCES users(id),
   affected_ci_id INTEGER REFERENCES cmdb_ci(id),
