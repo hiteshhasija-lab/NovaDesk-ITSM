@@ -66,7 +66,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use('/', integrationRoutes);
+app.use('/api/integrations', integrationRoutes);
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
 app.use('/incidents', incidentRoutes);

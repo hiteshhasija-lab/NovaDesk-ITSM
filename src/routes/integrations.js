@@ -42,7 +42,7 @@ async function resolveEsxiHost(ciId) {
 
 // POST /api/integrations/novaconnect/decommission-requests
 // body: { hostname, novaconnect_channel_id, requested_by_username }
-router.post('/api/integrations/novaconnect/decommission-requests', async (req, res) => {
+router.post('/novaconnect/decommission-requests', async (req, res) => {
   const { hostname, novaconnect_channel_id, requested_by_username } = req.body;
   if (!hostname) return res.status(400).json({ error: 'hostname is required.' });
   if (!novaconnect_channel_id) return res.status(400).json({ error: 'novaconnect_channel_id is required.' });
@@ -102,7 +102,7 @@ async function loadDecomContext(changeId) {
 
 // POST /api/integrations/novaconnect/decommission-requests/:id/approve
 // body: { approved_by_username }
-router.post('/api/integrations/novaconnect/decommission-requests/:id/approve', async (req, res) => {
+router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) => {
   const { change, ci, tasks, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
@@ -122,7 +122,7 @@ router.post('/api/integrations/novaconnect/decommission-requests/:id/approve', a
 });
 
 // POST /api/integrations/novaconnect/decommission-requests/:id/reject
-router.post('/api/integrations/novaconnect/decommission-requests/:id/reject', async (req, res) => {
+router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) => {
   const { change, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
