@@ -2,6 +2,20 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# govc (govmomi CLI) for ESXi automation — adopted after hand-rolled REST calls to /api/session
+# and the legacy /rest/com/vmware/cis/session both behaved inconsistently against the two real
+# lab hosts (connection resets on ESXi 7, JSON-RPC-shaped errors on ESXi 8) despite correct,
+# unlocked credentials confirmed via the hosts' own UI. govc is the well-trodden path VMware
+# itself ships for exactly this. Downloaded as a static binary, not npm/apt-packaged.
+ARG GOVC_VERSION=v0.56.0
+ARG TARGETARCH=arm64
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -fsSL -o /tmp/govc.tar.gz "https://github.com/vmware/govmomi/releases/download/${GOVC_VERSION}/govc_Linux_${TARGETARCH}.tar.gz" && \
+    tar -xzf /tmp/govc.tar.gz -C /usr/local/bin govc && \
+    chmod +x /usr/local/bin/govc && \
+    rm /tmp/govc.tar.gz && \
+    apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 

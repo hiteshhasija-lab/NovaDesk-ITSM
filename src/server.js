@@ -26,6 +26,7 @@ const requestRoutes = require('./routes/requests');
 const kbRoutes = require('./routes/kb');
 const reportRoutes = require('./routes/reports');
 const integrationRoutes = require('./routes/integrations');
+const { startScheduler } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -112,6 +113,8 @@ initDb()
     } else {
       console.log(`No TLS certificate found at ${TLS_CERT_PATH} — HTTPS not started.`);
     }
+
+    startScheduler();
 
     // Running as PID 1 in a container: an unhandled SIGTERM is silently ignored rather
     // than terminating the process (the kernel's default signal disposition doesn't apply

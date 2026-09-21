@@ -1,8 +1,21 @@
 const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
+const esxi = require('../esxi');
+const { pushDecomUpdate } = require('../novaconnect');
 
 const router = createAsyncRouter();
+
+// How long a VM sits powered-off before the destroy-confirmation prompt fires — the window
+// meant to catch a mistake before the irreversible step. Configurable since "how long" is a
+// judgment call, not something to hardcode.
+const SOAK_PERIOD_HOURS = Number(process.env.DECOM_SOAK_PERIOD_HOURS) || 24;
+
+async function markTaskDone(changeId, description) {
+  await db.prepare(`
+    UPDATE change_tasks SET status = 'done', completed_at = ? WHERE change_id = ? AND description = ?
+  `).run(nowStr(), changeId, description);
+}
 
 const DECOM_TASKS = [
   'Verify backup completed',
@@ -118,7 +131,70 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   `).run(approver.id, nowStr(), change.id);
   await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
 
+  const esxiHost = await resolveEsxiHost(ci.id);
+  if (esxiHost) {
+    try {
+      const sessionId = await esxi.login(esxiHost.ip_address);
+      const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+      if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}.`);
+      await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
+      await markTaskDone(change.id, 'Power off — soak period');
+      await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${SOAK_PERIOD_HOURS}h soak period`);
+
+      await db.prepare(`
+        INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
+      `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
+    } catch (e) {
+      await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
+      await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
+    }
+  }
+
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id), ci, tasks });
+});
+
+// POST /novaconnect/decommission-requests/:id/confirm-destroy
+// The second, separate checkpoint — only after this does the actual (irreversible) ESXi
+// destroy call happen. Deliberately requires the same admin-only check as approve, passed
+// through the same way (approved_by_username, not re-derived), never auto-fired by the soak
+// timer itself.
+router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req, res) => {
+  const { change, ci, error, message } = await loadDecomContext(req.params.id);
+  if (error) return res.status(error).json({ error: message });
+
+  const confirmer = req.body.confirmed_by_username
+    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.confirmed_by_username)
+    : null;
+  if (!confirmer || confirmer.role !== 'admin') {
+    return res.status(403).json({ error: 'Only a NovaDesk admin can confirm a VM destroy.' });
+  }
+
+  const esxiHost = await resolveEsxiHost(ci.id);
+  if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
+
+  const sessionId = await esxi.login(esxiHost.ip_address);
+  const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+  if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+  await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
+  await markTaskDone(change.id, 'Destroy VM & release storage');
+  await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
+
+  await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
+  await markTaskDone(change.id, 'Retire CI in CMDB');
+  await markTaskDone(change.id, 'Update tracker & reclaim licenses');
+
+  const closed = await db.prepare(`
+    UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
+  `).get(nowStr(), nowStr(), change.id);
+  await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
+
+  await pushDecomUpdate(
+    change.novaconnect_channel_id,
+    `✅ ${change.number} complete — ${ci.name} destroyed and CI retired.`,
+    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'destroyed' }
+  );
+
+  res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });
 });
 
 // POST /api/integrations/novaconnect/decommission-requests/:id/reject
