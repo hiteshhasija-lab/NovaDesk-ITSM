@@ -27,6 +27,12 @@ const DECOM_TASKS = [
   'Update tracker & reclaim licenses'
 ];
 
+// The first 3 tasks have no real system behind them in this app (no backup/monitoring/DNS
+// integration exists) — they're never silently marked done. Instead, an admin is asked in the
+// decom channel to explicitly skip them, so the Change's task history reflects a human decision
+// rather than a fabricated "automated" result.
+const MANUAL_TASKS = DECOM_TASKS.slice(0, 3);
+
 function requireSyncAuth(req, res, next) {
   const expected = process.env.SYNC_API_KEY;
   const provided = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -140,10 +146,17 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
       await markTaskDone(change.id, 'Power off — soak period');
       await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${SOAK_PERIOD_HOURS}h soak period`);
+      await pushDecomUpdate(change.novaconnect_channel_id, `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${SOAK_PERIOD_HOURS}h soak period before the destroy confirmation.`);
 
       await db.prepare(`
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
       `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
+
+      await pushDecomUpdate(
+        change.novaconnect_channel_id,
+        `The remaining pre-decommission checks (${MANUAL_TASKS.join(', ')}) aren't automated in NovaDesk. Confirm these were handled manually, or skip them if not applicable.`,
+        { cardType: 'decom_skip_manual_tasks', changeId: change.id, changeNumber: change.number, tasks: MANUAL_TASKS, status: 'pending' }
+      );
     } catch (e) {
       await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
       await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
@@ -151,6 +164,29 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   }
 
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id), ci, tasks });
+});
+
+// POST /novaconnect/decommission-requests/:id/skip-manual-tasks
+// The 3 non-automated pre-checks — explicit human decision, not silently assumed done.
+router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (req, res) => {
+  const { change, error, message } = await loadDecomContext(req.params.id);
+  if (error) return res.status(error).json({ error: message });
+
+  const actor = req.body.skipped_by_username
+    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.skipped_by_username)
+    : null;
+  if (!actor || actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Only a NovaDesk admin can skip these tasks.' });
+  }
+
+  for (const description of MANUAL_TASKS) {
+    await db.prepare(`
+      UPDATE change_tasks SET status = 'skipped', completed_at = ? WHERE change_id = ? AND description = ? AND status = 'pending'
+    `).run(nowStr(), change.id, description);
+  }
+  await logActivity('change', change.id, actor.id, `Manual pre-checks skipped by ${req.body.skipped_by_username} (not automated in NovaDesk): ${MANUAL_TASKS.join(', ')}`);
+
+  res.json({ ok: true });
 });
 
 // POST /novaconnect/decommission-requests/:id/confirm-destroy
@@ -178,9 +214,12 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
   await markTaskDone(change.id, 'Destroy VM & release storage');
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
+  await pushDecomUpdate(change.novaconnect_channel_id, `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
   await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
   await markTaskDone(change.id, 'Retire CI in CMDB');
+  await pushDecomUpdate(change.novaconnect_channel_id, `✅ ${ci.ci_number} retired in the CMDB.`);
+
   await markTaskDone(change.id, 'Update tracker & reclaim licenses');
 
   const closed = await db.prepare(`
@@ -190,7 +229,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
 
   await pushDecomUpdate(
     change.novaconnect_channel_id,
-    `✅ ${change.number} complete — ${ci.name} destroyed and CI retired.`,
+    `✅ ${change.number} closed — tracker updated. Decommission of ${ci.name} complete.`,
     { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'destroyed' }
   );
 
