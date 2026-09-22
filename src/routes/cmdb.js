@@ -10,7 +10,8 @@ const CI_SORT_COLUMNS = {
   ci_number: r => r.ci_number,
   name: r => r.name,
   ci_type: r => r.ci_type,
-  status: r => r.status
+  status: r => r.status,
+  created_at: r => r.created_at
 };
 
 async function loadFormLookups(excludeId) {
@@ -72,6 +73,7 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     { label: 'IP Address', value: r => r.ip_address || '' },
     { label: 'OS', value: r => r.os || '' },
     { label: 'Location', value: r => r.location || '' },
+    { label: 'Date (Added)', value: r => r.created_at || '' },
     { label: 'Owner', value: r => r.owner_name || '' },
     { label: 'Serial Number', value: r => r.serial_number || '' },
     { label: 'Warranty Expiry', value: r => r.warranty_expiry || '' }
