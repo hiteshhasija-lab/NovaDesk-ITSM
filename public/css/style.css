@@ -197,18 +197,22 @@ a { color: var(--brand); }
 .list-group-item-action:hover { background: rgba(var(--brand-rgb), 0.08); }
 
 /* App-wide compact density standard (2026-09-22): ~19% shorter vertical padding than
-   Bootstrap's defaults, established on the Change Tasks list and extended everywhere.
-   Vertical only — horizontal padding and font sizes are untouched. Re-declaring Bootstrap's
-   own spacing variables (not one-off selector overrides) so every component that reads them
-   — list-group items, card headers/footers, card bodies — picks it up automatically. */
+   Bootstrap's defaults, established on the Change Tasks list and extended everywhere,
+   PLUS ~19% smaller font size app-wide (added same day). Re-declaring Bootstrap's own
+   spacing variables (not one-off selector overrides) so every component that reads them
+   — list-group items, card headers/footers, card bodies — picks it up automatically.
+   Padding values are in px, not rem: the font-size shrink below works by re-basing the
+   root rem unit, which would otherwise shrink these padding values a second time on top
+   of the reduction they already represent — px keeps them fixed regardless of root size. */
 :root {
-  --bs-list-group-item-padding-y: 0.405rem; /* was 0.5rem */
-  --bs-card-cap-padding-y: 0.405rem;        /* was 0.5rem */
-  --bs-card-spacer-y: 0.81rem;              /* was 1rem */
+  font-size: 81%; /* re-bases rem app-wide; was the browser default (typically 16px) */
+  --bs-list-group-item-padding-y: 6.5px; /* was 0.5rem (8px) */
+  --bs-card-cap-padding-y: 6.5px;        /* was 0.5rem (8px) */
+  --bs-card-spacer-y: 13px;              /* was 1rem (16px) */
 }
 
 .table { color: var(--text); }
-.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); padding-top: 0.405rem; padding-bottom: 0.405rem; }
+.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); padding-top: 6.5px; padding-bottom: 6.5px; }
 .table-light, .table-light > th { background: var(--surface-glass-dense); color: var(--text); }
 .table-hover > tbody > tr:hover > * { background: rgba(var(--brand-rgb), 0.08); }
 .table-hover tbody tr { cursor: pointer; }
