@@ -206,13 +206,13 @@ a { color: var(--brand); }
    of the reduction they already represent — px keeps them fixed regardless of root size. */
 :root {
   font-size: 89.1%; /* re-bases rem app-wide; was the browser default (typically 16px); 81% + 10% */
-  --bs-list-group-item-padding-y: 6.175px; /* was 0.5rem (8px); 6.5px - 5% */
-  --bs-card-cap-padding-y: 6.175px;        /* was 0.5rem (8px); 6.5px - 5% */
-  --bs-card-spacer-y: 12.35px;             /* was 1rem (16px); 13px - 5% */
+  --bs-list-group-item-padding-y: 5.866px; /* was 0.5rem (8px); 6.175px - 5% */
+  --bs-card-cap-padding-y: 5.866px;        /* was 0.5rem (8px); 6.175px - 5% */
+  --bs-card-spacer-y: 11.733px;            /* was 1rem (16px); 12.35px - 5% */
 }
 
 .table { color: var(--text); }
-.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); padding-top: 6.175px; padding-bottom: 6.175px; }
+.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); padding-top: 5.866px; padding-bottom: 5.866px; }
 .table-light, .table-light > th { background: var(--surface-glass-dense); color: var(--text); }
 .table-hover > tbody > tr:hover > * { background: rgba(var(--brand-rgb), 0.08); }
 .table-hover tbody tr { cursor: pointer; }
