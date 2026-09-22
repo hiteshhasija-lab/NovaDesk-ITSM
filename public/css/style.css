@@ -195,6 +195,8 @@ a { color: var(--brand); }
 .card-header, .card-footer { background: transparent; border-color: var(--border-glass); }
 .list-group-item { background: transparent; border-color: var(--border-glass); color: var(--text); }
 .list-group-item-action:hover { background: rgba(var(--brand-rgb), 0.08); }
+/* 10% shorter than Bootstrap's default 0.5rem vertical padding (0.5rem -> 0.45rem). */
+.change-task-row { padding-top: 0.45rem; padding-bottom: 0.45rem; }
 
 .table { color: var(--text); }
 .table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); }
