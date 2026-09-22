@@ -69,14 +69,32 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const problems = await db.prepare(`
+  const { status, priority, assigned_to, q } = req.query;
+  let where = [];
+  let params = [];
+  if (status === 'open') { where.push("p.status NOT IN ('resolved','closed')"); }
+  else if (status) { where.push('p.status = ?'); params.push(status); }
+  if (priority) { where.push('p.priority = ?'); params.push(priority); }
+  if (assigned_to === 'unassigned') { where.push('p.assigned_to IS NULL'); }
+  else if (assigned_to) { where.push('p.assigned_to = ?'); params.push(assigned_to); }
+  if (q) {
+    where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  let problems = await db.prepare(`
     SELECT p.*, a.full_name AS assigned_name, c.name AS ci_name,
       (SELECT COUNT(*) FROM incidents i WHERE i.problem_id = p.id) AS incident_count
     FROM problems p
     LEFT JOIN users a ON a.id = p.assigned_to
     LEFT JOIN cmdb_ci c ON c.id = p.affected_ci_id
+    ${whereSql}
     ORDER BY p.priority ASC, p.created_at DESC
-  `).all();
+  `).all(...params);
+
+  const sort = parseSort(req, PROBLEM_SORT_COLUMNS, 'priority', 'asc');
+  problems = sortRows(problems, PROBLEM_SORT_COLUMNS, sort.key, sort.dir);
 
   const csv = toCsv(problems, [
     { label: 'Number', value: r => r.number },

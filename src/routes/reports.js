@@ -89,4 +89,49 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
   });
 });
 
+router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {
+  res.render('reports/form', { title: 'New Report' });
+});
+
+router.post('/generate', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const { source, range, format } = req.body;
+  if (format === 'csv') {
+    const rangeParam = range && range !== 'all' ? `?range=${range}` : '';
+    if (source === 'incidents') return res.redirect('/incidents/export.csv' + rangeParam);
+    if (source === 'changes') return res.redirect('/changes/export.csv' + rangeParam);
+    if (source === 'problems') return res.redirect('/problems/export.csv' + rangeParam);
+    if (source === 'cmdb') return res.redirect('/cmdb/export.csv' + rangeParam);
+    if (source === 'requests') return res.redirect('/requests/export.csv' + rangeParam);
+    return res.redirect('/reports/export.csv' + rangeParam);
+  }
+  const rangeParam = range && range !== 'all' ? `?range=${range}` : '';
+  res.redirect('/reports' + rangeParam);
+});
+
+router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const days = RANGE_DAYS[req.query.range] || 30;
+  const agentWorkloadRows = await db.prepare(`
+    SELECT u.id, u.full_name,
+      (SELECT COUNT(*) FROM incidents i WHERE i.assigned_to = u.id AND i.status NOT IN ('resolved','closed','cancelled')) as open_incidents,
+      (SELECT COUNT(*) FROM changes c WHERE c.assigned_to = u.id AND c.status IN ('submitted','approved','scheduled')) as open_changes,
+      (SELECT COUNT(*) FROM problems p WHERE p.assigned_to = u.id AND p.status NOT IN ('resolved','closed')) as open_problems
+    FROM users u
+    WHERE u.role IN ('admin','agent') AND u.active = 1
+    ORDER BY u.full_name
+  `).all();
+
+  const toCsv = require('../helpers').toCsv;
+  const csv = toCsv(agentWorkloadRows, [
+    { label: 'Agent Name', value: r => r.full_name },
+    { label: 'Open Incidents', value: r => r.open_incidents },
+    { label: 'Open Changes', value: r => r.open_changes },
+    { label: 'Open Problems', value: r => r.open_problems },
+    { label: 'Total Open Workload', value: r => (r.open_incidents + r.open_changes + r.open_problems) }
+  ]);
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="reports-summary-${days}d.csv"`);
+  res.send(csv);
+});
+
 module.exports = router;

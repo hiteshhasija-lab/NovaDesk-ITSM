@@ -56,14 +56,35 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const requests = await db.prepare(`
+  const isEndUser = req.session.user.role === 'user';
+  const uid = req.session.user.id;
+  const { status, requested_by, assigned_to, q } = req.query;
+
+  let where = [];
+  let params = [];
+  if (isEndUser) { where.push('r.requested_by = ?'); params.push(uid); }
+  if (status === 'open') { where.push("r.status IN ('submitted','in_progress')"); }
+  else if (status) { where.push('r.status = ?'); params.push(status); }
+  if (!isEndUser && requested_by) { where.push('r.requested_by = ?'); params.push(requested_by); }
+  if (!isEndUser) {
+    if (assigned_to === 'unassigned') { where.push('r.assigned_to IS NULL'); }
+    else if (assigned_to) { where.push('r.assigned_to = ?'); params.push(assigned_to); }
+  }
+  if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  let requests = await db.prepare(`
     SELECT r.*, ci.name AS item_name, u.full_name AS requester_name, a.full_name AS assigned_name
     FROM service_requests r
     LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
     LEFT JOIN users u ON u.id = r.requested_by
     LEFT JOIN users a ON a.id = r.assigned_to
+    ${whereSql}
     ORDER BY r.created_at DESC
-  `).all();
+  `).all(...params);
+
+  const sort = parseSort(req, REQUEST_SORT_COLUMNS, 'created_at', 'desc');
+  requests = sortRows(requests, REQUEST_SORT_COLUMNS, sort.key, sort.dir);
 
   const csv = toCsv(requests, [
     { label: 'Number', value: r => r.number },

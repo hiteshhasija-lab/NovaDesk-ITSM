@@ -1,0 +1,71 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-graph-up-arrow text-primary me-1"></i>New Report</h4>
+    <a href="/reports" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Reports</a>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="POST" action="/reports/generate">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Report Name *</label>
+            <input type="text" name="name" class="form-control" required placeholder="e.g. Incident Resolution & SLA Performance">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Data Source *</label>
+            <select name="source" class="form-select" id="reportSourceSelect">
+              <option value="incidents" selected>Incidents (MTTR, SLA Compliance, Volume)</option>
+              <option value="changes">Changes (Success Rate, Risk, Outages)</option>
+              <option value="problems">Problems (Root Causes, Linked Incidents)</option>
+              <option value="cmdb">CMDB (Configuration Items, Status, Environment)</option>
+              <option value="requests">Service Requests (Fulfillment, Categories)</option>
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Time Range</label>
+            <select name="range" class="form-select">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="365">Last 365 days</option>
+              <option value="all">All Time</option>
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Group By / Dimension</label>
+            <select name="group_by" class="form-select">
+              <option value="priority" selected>Priority</option>
+              <option value="status">Status</option>
+              <option value="assigned_to">Assignee / Agent</option>
+              <option value="category">Category / CI</option>
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Output Format</label>
+            <select name="format" class="form-select">
+              <option value="dashboard" selected>Interactive Dashboard</option>
+              <option value="csv">Export CSV</option>
+            </select>
+          </div>
+
+          <div class="col-md-12">
+            <label class="form-label fw-semibold">Description / Notes</label>
+            <textarea name="description" class="form-control" rows="2" placeholder="Optional notes about the criteria or purpose of this report..."></textarea>
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex gap-2">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Run Report</button>
+          <a href="/reports" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

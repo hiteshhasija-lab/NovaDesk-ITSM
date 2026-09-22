@@ -5,7 +5,7 @@
     <h4 class="mb-0"><i class="bi bi-journal-text text-primary me-1"></i>Knowledge Base</h4>
     <% if (isStaff) { %>
     <div class="d-flex gap-2">
-      <a href="/kb/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/kb/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
       <a href="/kb/new" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> New Article</a>
     </div>
     <% } %>
@@ -70,11 +70,26 @@
 
   (function () {
     var input = document.getElementById('kbLiveSearch');
+    var exportBtn = document.getElementById('exportCsvBtn');
     var cards = Array.prototype.slice.call(document.querySelectorAll('.kb-article-card[data-search]'));
     var noResults = document.getElementById('kbNoLiveResults');
     var noResultsQuery = document.getElementById('kbNoLiveResultsQuery');
-    if (!input || cards.length === 0) return;
+    if (!input) return;
 
+    if (exportBtn) {
+      var baseHref = exportBtn.getAttribute('href').split('?')[0];
+      var updateHref = function () {
+        var params = new URLSearchParams(window.location.search);
+        var q = input.value.trim();
+        if (q) { params.set('q', q); } else { params.delete('q'); }
+        params.delete('page');
+        var qs = params.toString();
+        exportBtn.setAttribute('href', baseHref + (qs ? '?' + qs : ''));
+      };
+      input.addEventListener('input', updateHref);
+    }
+
+    if (cards.length === 0) return;
     input.addEventListener('input', function () {
       var q = input.value.trim().toLowerCase();
       var visibleCount = 0;

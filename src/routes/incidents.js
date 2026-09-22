@@ -89,14 +89,43 @@ router.get('/new', requireAuth, async (req, res) => {
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const incidents = await db.prepare(`
+  const { status, priority, q, sla, assigned_to } = req.query;
+  const isEndUser = req.session.user.role === 'user';
+  let where = [];
+  let params = [];
+
+  if (isEndUser) {
+    where.push('i.caller_id = ?');
+    params.push(req.session.user.id);
+  }
+  if (status === 'open') { where.push("i.status IN ('new','in_progress','on_hold')"); }
+  else if (status) { where.push('i.status = ?'); params.push(status); }
+  if (priority) { where.push('i.priority = ?'); params.push(priority); }
+  if (assigned_to === 'unassigned') { where.push('i.assigned_to IS NULL'); }
+  else if (assigned_to) { where.push('i.assigned_to = ?'); params.push(assigned_to); }
+  if (q) {
+    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  let incidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name
     FROM incidents i
     LEFT JOIN users u ON u.id = i.caller_id
     LEFT JOIN users a ON a.id = i.assigned_to
     LEFT JOIN cmdb_ci c ON c.id = i.affected_ci_id
-    ORDER BY i.created_at DESC
-  `).all();
+    ${whereSql}
+    ORDER BY i.priority ASC, i.created_at DESC
+  `).all(...params);
+
+  if (sla) {
+    incidents = incidents.filter(inc => slaStatus(inc).key === sla);
+  }
+
+  const sort = parseSort(req, INCIDENT_SORT_COLUMNS, 'priority', 'asc');
+  incidents = sortRows(incidents, INCIDENT_SORT_COLUMNS, sort.key, sort.dir);
 
   const csv = toCsv(incidents, [
     { label: 'Number', value: r => r.number },

@@ -44,11 +44,25 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const articles = await db.prepare(`
+  const isStaff = ['admin', 'agent'].includes(req.session.user.role);
+  const { q, category } = req.query;
+
+  let where = [isStaff ? "1=1" : "status = 'published'"];
+  let params = [];
+  if (q) { where.push('(title ILIKE ? OR body ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  if (category) { where.push('category = ?'); params.push(category); }
+
+  let articles = await db.prepare(`
     SELECT k.*, u.full_name AS author_name FROM kb_articles k
     LEFT JOIN users u ON u.id = k.author_id
+    WHERE ${where.join(' AND ')}
     ORDER BY k.updated_at DESC
-  `).all();
+  `).all(...params);
+
+  const sortOption = req.query.sort === 'title' ? 'title' : req.query.sort === 'views' ? 'views' : 'recent';
+  const sortMap = { recent: ['updated_at', 'desc'], title: ['title', 'asc'], views: ['view_count', 'desc'] };
+  const [sortKey, sortDir] = sortMap[sortOption];
+  articles = sortRows(articles, KB_SORT_COLUMNS, sortKey, sortDir);
 
   const csv = toCsv(articles, [
     { label: 'Number', value: r => r.number },

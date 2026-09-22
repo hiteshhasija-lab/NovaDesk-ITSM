@@ -26,7 +26,7 @@
       </div>
       <% } %>
       <% if (currentUser.role !== 'user') { %>
-      <a href="/incidents/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/incidents/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
       <% } %>
       <a href="/incidents/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New Incident</a>
     </div>
@@ -154,11 +154,26 @@
 <script>
   (function () {
     var input = document.getElementById('incidentLiveSearch');
+    var exportBtn = document.getElementById('exportCsvBtn');
     var rows = Array.prototype.slice.call(document.querySelectorAll('#incidentsTableBody tr[data-search]'));
     var noResults = document.getElementById('incidentsNoLiveResults');
     var noResultsQuery = document.getElementById('incidentsNoLiveResultsQuery');
-    if (!input || rows.length === 0) return;
+    if (!input) return;
 
+    if (exportBtn) {
+      var baseHref = exportBtn.getAttribute('href').split('?')[0];
+      var updateHref = function () {
+        var params = new URLSearchParams(window.location.search);
+        var q = input.value.trim();
+        if (q) { params.set('q', q); } else { params.delete('q'); }
+        params.delete('page');
+        var qs = params.toString();
+        exportBtn.setAttribute('href', baseHref + (qs ? '?' + qs : ''));
+      };
+      input.addEventListener('input', updateHref);
+    }
+
+    if (rows.length === 0) return;
     input.addEventListener('input', function () {
       var q = input.value.trim().toLowerCase();
       var visibleCount = 0;

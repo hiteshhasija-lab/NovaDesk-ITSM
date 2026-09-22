@@ -5,7 +5,7 @@
     <h4 class="mb-0"><i class="bi bi-hdd-stack text-success me-1"></i>CMDB — Configuration Items</h4>
     <% if (currentUser.role !== 'user') { %>
     <div class="d-flex gap-2">
-      <a href="/cmdb/export.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/cmdb/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
       <a href="/cmdb/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> New CI</a>
     </div>
     <% } %>
@@ -96,11 +96,26 @@
 <script>
   (function () {
     var input = document.getElementById('cmdbLiveSearch');
+    var exportBtn = document.getElementById('exportCsvBtn');
     var rows = Array.prototype.slice.call(document.querySelectorAll('#cmdbTableBody tr[data-search]'));
     var noResults = document.getElementById('cmdbNoLiveResults');
     var noResultsQuery = document.getElementById('cmdbNoLiveResultsQuery');
-    if (!input || rows.length === 0) return;
+    if (!input) return;
 
+    if (exportBtn) {
+      var baseHref = exportBtn.getAttribute('href').split('?')[0];
+      var updateHref = function () {
+        var params = new URLSearchParams(window.location.search);
+        var q = input.value.trim();
+        if (q) { params.set('q', q); } else { params.delete('q'); }
+        params.delete('page');
+        var qs = params.toString();
+        exportBtn.setAttribute('href', baseHref + (qs ? '?' + qs : ''));
+      };
+      input.addEventListener('input', updateHref);
+    }
+
+    if (rows.length === 0) return;
     input.addEventListener('input', function () {
       var q = input.value.trim().toLowerCase();
       var visibleCount = 0;

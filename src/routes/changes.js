@@ -100,14 +100,37 @@ router.get('/new', requireAuth, async (req, res) => {
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const changes = await db.prepare(`
+  const { status, risk, change_type, assigned_to, q } = req.query;
+  const isEndUser = req.session.user.role === 'user';
+  let where = [];
+  let params = [];
+
+  if (isEndUser) { where.push('c.requested_by = ?'); params.push(req.session.user.id); }
+  if (status === 'open') { where.push("c.status IN ('submitted','approved','scheduled','in_progress')"); }
+  else if (status) { where.push('c.status = ?'); params.push(status); }
+  if (risk) { where.push('c.risk = ?'); params.push(risk); }
+  if (change_type) { where.push('c.change_type = ?'); params.push(change_type); }
+  if (assigned_to === 'unassigned') { where.push('c.assigned_to IS NULL'); }
+  else if (assigned_to) { where.push('c.assigned_to = ?'); params.push(assigned_to); }
+  if (q) {
+    where.push('(c.number ILIKE ? OR c.short_description ILIKE ? OR ci.name ILIKE ? OR ci.ci_number ILIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  let changes = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
     LEFT JOIN users a ON a.id = c.assigned_to
     LEFT JOIN cmdb_ci ci ON ci.id = c.affected_ci_id
-    ORDER BY c.created_at DESC
-  `).all();
+    ${whereSql}
+    ORDER BY c.planned_start ASC, c.created_at DESC
+  `).all(...params);
+
+  const sort = parseSort(req, CHANGE_SORT_COLUMNS, 'planned_start', 'asc');
+  changes = sortRows(changes, CHANGE_SORT_COLUMNS, sort.key, sort.dir);
 
   const csv = toCsv(changes, [
     { label: 'Number', value: r => r.number },

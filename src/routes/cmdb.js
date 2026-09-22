@@ -58,11 +58,25 @@ router.get('/new', requireAuth, requireRole('admin', 'agent'), async (req, res) 
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const items = await db.prepare(`
+  const { ci_type, status, environment, location, q } = req.query;
+  let where = [];
+  let params = [];
+  if (ci_type) { where.push('ci.ci_type = ?'); params.push(ci_type); }
+  if (status) { where.push('ci.status = ?'); params.push(status); }
+  if (environment) { where.push('ci.environment = ?'); params.push(environment); }
+  if (location) { where.push('ci.location = ?'); params.push(location); }
+  if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  let items = await db.prepare(`
     SELECT ci.*, u.full_name AS owner_name
     FROM cmdb_ci ci LEFT JOIN users u ON u.id = ci.owner_id
+    ${whereSql}
     ORDER BY ci.ci_type, ci.name
-  `).all();
+  `).all(...params);
+
+  const sort = parseSort(req, CI_SORT_COLUMNS, 'ci_type', 'asc');
+  items = sortRows(items, CI_SORT_COLUMNS, sort.key, sort.dir);
 
   const csv = toCsv(items, [
     { label: 'CI Number', value: r => r.ci_number },
