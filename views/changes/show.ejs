@@ -147,9 +147,9 @@
           <% } %>
           <% tasks.forEach(t => { %>
             <div class="list-group-item d-flex justify-content-between align-items-center">
-              <div class="small">
-                <span class="badge bg-<%= t.status === 'done' ? 'success' : t.status === 'running' ? 'warning' : 'secondary' %> text-uppercase me-2" style="font-size:0.65rem;"><%= t.status %></span>
-                <span class="text-muted"><%= t.task_number %></span> — <%= t.description %>
+              <div class="small d-flex align-items-center gap-2">
+                <%- h.taskStatusIcon(t.status) %>
+                <span><span class="text-muted"><%= t.task_number %></span> — <%= t.description %></span>
               </div>
               <% if (currentUser.role !== 'user') { %>
               <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle">

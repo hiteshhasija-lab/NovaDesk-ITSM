@@ -148,6 +148,26 @@ function initials(fullName) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// Glossy gradient-sphere status icons for the Change Tasks list — all 4 share the same
+// viewBox/circle geometry so they read as one consistent set regardless of status; only the
+// gradient stops and the glyph differ. Rendered inline (not separate image files) so there's
+// a single source of truth and no extra HTTP requests for a handful of small icons. Default
+// size (20px) picked to sit level with the task row's small text — pass a smaller `size` for
+// denser contexts if one ever comes up.
+const TASK_STATUS_ICONS = {
+  done: { from: '#7EE29B', to: '#1E9E4A', glyph: '<path d="M12.5 20.5l5 5 10.5-11" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' },
+  running: { from: '#7CC8F5', to: '#1B7FC4', glyph: '<path d="M20 10.5a9.5 9.5 0 1 1-6.7 2.78" stroke="white" stroke-width="3" stroke-linecap="round" fill="none"/>' },
+  pending: { from: '#FFCB77', to: '#E08A0C', glyph: '<circle cx="20" cy="20" r="9.5" fill="none" stroke="white" stroke-width="2.3"/><path d="M20 14.5v6l4 2.8" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' },
+  skipped: { from: '#C3ABF5', to: '#6E3FC4', glyph: '<path d="M12.5 13v14l9-7z" fill="white"/><path d="M21.5 13v14l9-7z" fill="white"/>' }
+};
+function taskStatusIcon(status, size = 20) {
+  const icon = TASK_STATUS_ICONS[status] || TASK_STATUS_ICONS.pending;
+  const gradId = `taskicon-${status}`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" role="img" aria-label="${status}" style="flex-shrink:0">` +
+    `<defs><radialGradient id="${gradId}" cx="35%" cy="30%" r="75%"><stop offset="0%" stop-color="${icon.from}"/><stop offset="100%" stop-color="${icon.to}"/></radialGradient></defs>` +
+    `<circle cx="20" cy="20" r="18" fill="url(#${gradId})"/>${icon.glyph}</svg>`;
+}
+
 function fmtDate(d) {
   if (!d) return '';
   return dayjs(d.replace(' ', 'T')).format('MMM D, YYYY h:mm A');
@@ -180,5 +200,5 @@ module.exports = {
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
   ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion, appVersion,
-  fmtDate, fmtDateShort
+  fmtDate, fmtDateShort, taskStatusIcon
 };
