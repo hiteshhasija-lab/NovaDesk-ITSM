@@ -317,20 +317,20 @@ router.get('/:id', requireAuth, async (req, res) => {
 
   const comments = await db.prepare(`
     SELECT cc.*, u.full_name AS author_name FROM change_comments cc
-    LEFT JOIN users u ON u.id = cc.user_id WHERE cc.change_id = ? ORDER BY cc.created_at ASC
+    LEFT JOIN users u ON u.id = cc.user_id WHERE cc.change_id = ? ORDER BY cc.created_at ASC, cc.id ASC
   `).all(req.params.id);
 
   const activity = await db.prepare(`
     SELECT al.*, u.full_name AS actor_name
     FROM activity_log al LEFT JOIN users u ON u.id = al.actor_id
     WHERE al.entity_type = 'change' AND al.entity_id = ?
-    ORDER BY al.created_at ASC
+    ORDER BY al.created_at ASC, al.id ASC
   `).all(req.params.id);
 
   const timeline = [
-    ...comments.map(c => ({ type: 'comment', created_at: c.created_at, author_name: c.author_name, text: c.comment })),
-    ...activity.map(a => ({ type: 'activity', created_at: a.created_at, author_name: a.actor_name, text: a.message }))
-  ].sort((x, y) => x.created_at.localeCompare(y.created_at));
+    ...comments.map(c => ({ type: 'comment', id: c.id, created_at: c.created_at, author_name: c.author_name, text: c.comment })),
+    ...activity.map(a => ({ type: 'activity', id: a.id, created_at: a.created_at, author_name: a.actor_name, text: a.message }))
+  ].sort((x, y) => x.created_at.localeCompare(y.created_at) || ((x.id || 0) - (y.id || 0)));
 
   const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(req.params.id);
   const { users, cis } = await loadFormLookups();

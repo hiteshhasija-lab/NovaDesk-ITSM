@@ -169,11 +169,22 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
       `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
 
-      await pushDecomUpdate(
-        change.novaconnect_channel_id,
-        `The remaining pre-decommission checks (${MANUAL_TASKS.join(', ')}) aren't automated in NovaDesk. Confirm these were handled manually, or skip them if not applicable.`,
-        { cardType: 'decom_skip_manual_tasks', changeId: change.id, changeNumber: change.number, tasks: MANUAL_TASKS, status: 'pending' }
-      );
+      for (const desc of MANUAL_TASKS) {
+        const task = (tasks || []).find(t => t.description === desc);
+        await pushDecomUpdate(
+          change.novaconnect_channel_id,
+          `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
+          {
+            cardType: 'decom_precheck_task',
+            changeId: change.id,
+            changeNumber: change.number,
+            taskId: task ? task.id : null,
+            taskNumber: task ? task.task_number : null,
+            taskDescription: desc,
+            status: 'pending'
+          }
+        );
+      }
     } catch (e) {
       await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
       await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
@@ -204,6 +215,48 @@ router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (r
   await logActivity('change', change.id, actor.id, `Manual pre-checks skipped by ${req.body.skipped_by_username} (not automated in NovaDesk): ${MANUAL_TASKS.join(', ')}`);
 
   res.json({ ok: true });
+});
+
+// POST /novaconnect/decommission-requests/:id/precheck-task
+// Individual manual pre-check confirmation — either Completed or Skip.
+router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, res) => {
+  const { change, error, message } = await loadDecomContext(req.params.id);
+  if (error) return res.status(error).json({ error: message });
+
+  const username = req.body.actor_username || req.body.skipped_by_username || req.body.completed_by_username;
+  const actor = username
+    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(username)
+    : null;
+  if (!actor || actor.role !== 'admin') {
+    return res.status(403).json({ error: 'Only a NovaDesk admin can update these tasks.' });
+  }
+
+  const action = req.body.action; // 'complete' or 'skip'
+  const desc = req.body.task_description;
+  const newStatus = action === 'complete' ? 'done' : 'skipped';
+  const actionWord = action === 'complete' ? 'completed' : 'skipped';
+
+  let task;
+  if (req.body.task_id) {
+    task = await db.prepare('SELECT * FROM change_tasks WHERE id = ? AND change_id = ?').get(req.body.task_id, change.id);
+  }
+  if (!task && desc) {
+    task = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? AND description = ?').get(change.id, desc);
+  }
+
+  if (task) {
+    await db.prepare(`
+      UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?
+    `).run(newStatus, nowStr(), task.id);
+    await logActivity('change', change.id, actor.id, `Manual pre-check "${task.description}" marked ${actionWord} by ${username}`);
+  } else if (desc) {
+    await db.prepare(`
+      UPDATE change_tasks SET status = ?, completed_at = ? WHERE change_id = ? AND description = ?
+    `).run(newStatus, nowStr(), change.id, desc);
+    await logActivity('change', change.id, actor.id, `Manual pre-check "${desc}" marked ${actionWord} by ${username}`);
+  }
+
+  res.json({ ok: true, status: newStatus });
 });
 
 // POST /novaconnect/decommission-requests/:id/confirm-destroy
