@@ -147,16 +147,17 @@
           <% } %>
           <% tasks.forEach(t => { %>
             <div class="list-group-item d-flex justify-content-between align-items-center">
-              <div class="small d-flex align-items-center gap-2">
-                <%- h.taskStatusIcon(t.status) %>
-                <span><span class="text-muted"><%= t.task_number %></span> — <%= t.description %></span>
+              <div class="small">
+                <span class="text-muted"><%= t.task_number %></span> — <%= t.description %>
               </div>
               <% if (currentUser.role !== 'user') { %>
               <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle">
-                <button type="submit" class="btn btn-sm btn-outline-<%= t.status === 'done' ? 'secondary' : 'success' %> py-0 px-2" title="<%= t.status === 'done' ? 'Mark pending' : 'Mark done' %>">
-                  <i class="bi bi-<%= t.status === 'done' ? 'arrow-counterclockwise' : 'check-lg' %>"></i>
+                <button type="submit" class="btn p-0 border-0 bg-transparent" title="<%= t.status === 'done' ? 'Mark pending' : 'Mark done' %>">
+                  <%- h.taskStatusIcon(t.status) %>
                 </button>
               </form>
+              <% } else { %>
+                <%- h.taskStatusIcon(t.status) %>
               <% } %>
             </div>
           <% }) %>
