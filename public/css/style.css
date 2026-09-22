@@ -205,7 +205,7 @@ a { color: var(--brand); }
    root rem unit, which would otherwise shrink these padding values a second time on top
    of the reduction they already represent — px keeps them fixed regardless of root size. */
 :root {
-  font-size: 81%; /* re-bases rem app-wide; was the browser default (typically 16px) */
+  font-size: 89.1%; /* re-bases rem app-wide; was the browser default (typically 16px); 81% + 10% */
   --bs-list-group-item-padding-y: 6.5px; /* was 0.5rem (8px) */
   --bs-card-cap-padding-y: 6.5px;        /* was 0.5rem (8px) */
   --bs-card-spacer-y: 13px;              /* was 1rem (16px) */
