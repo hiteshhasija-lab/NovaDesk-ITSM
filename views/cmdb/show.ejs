@@ -18,23 +18,23 @@
 
   <% if (upstream.length > 0 || downstream.length > 0) { %>
   <%
-    const rowH = 54;
-    const boxH = 38;
+    const rowH = 40.5;
+    const boxH = 28.5;
     const maxRows = Math.max(upstream.length, downstream.length, 1);
-    const svgHeight = maxRows * rowH + 30;
+    const svgHeight = maxRows * rowH + 22.5;
     const centerY = svgHeight / 2;
     function boxY(i, count) {
       const totalH = count * rowH;
       const startY = centerY - totalH / 2;
       return startY + i * rowH + (rowH - boxH) / 2;
     }
-    const centerX = 350, centerW = 200, centerBoxH = 50;
+    const centerX = 350, centerW = 200, centerBoxH = 37.5;
     const sideW = 210, leftX = 20, rightX = 690;
   %>
-  <div class="card mb-3" style="max-width: 75%;">
+  <div class="card mb-3">
     <div class="card-header fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Dependency Map</div>
     <div class="card-body" style="overflow-x:auto;">
-      <svg viewBox="0 0 920 <%= svgHeight %>" style="min-width:615px;width:100%;height:auto;" xmlns="http://www.w3.org/2000/svg">
+      <svg viewBox="0 0 920 <%= svgHeight %>" style="min-width:820px;width:100%;height:auto;" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="arrowHead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
             <path d="M0,0 L8,4 L0,8 z" style="fill:var(--brand)"></path>
@@ -47,14 +47,14 @@
                 style="stroke:var(--border);stroke-width:1.5" marker-end="url(#arrowHead)"></line>
           <rect x="<%= leftX %>" y="<%= y %>" width="<%= sideW %>" height="<%= boxH %>" rx="6"
                 style="fill:var(--surface);stroke:var(--border)"></rect>
-          <text x="<%= leftX + 10 %>" y="<%= y + 16 %>" style="fill:var(--text);font-size:11px;font-weight:600;font-family:sans-serif"><%= u.number %></text>
-          <text x="<%= leftX + 10 %>" y="<%= y + 30 %>" style="fill:var(--text-muted);font-size:10.5px;font-family:sans-serif"><%= (u.name || '').slice(0, 26) %></text>
+          <text x="<%= leftX + 10 %>" y="<%= y + 12 %>" style="fill:var(--text);font-size:10px;font-weight:600;font-family:sans-serif"><%= u.number %></text>
+          <text x="<%= leftX + 10 %>" y="<%= y + 22 %>" style="fill:var(--text-muted);font-size:9.5px;font-family:sans-serif"><%= (u.name || '').slice(0, 26) %></text>
         <% }) %>
 
         <rect x="<%= centerX %>" y="<%= centerY - centerBoxH/2 %>" width="<%= centerW %>" height="<%= centerBoxH %>" rx="8"
               style="fill:var(--brand);stroke:var(--brand-dark)"></rect>
-        <text x="<%= centerX + centerW/2 %>" y="<%= centerY - 3 %>" text-anchor="middle" style="fill:#fff;font-size:12px;font-weight:700;font-family:sans-serif"><%= ci.ci_number %></text>
-        <text x="<%= centerX + centerW/2 %>" y="<%= centerY + 15 %>" text-anchor="middle" style="fill:#fff;font-size:11px;font-family:sans-serif"><%= ci.name.slice(0, 24) %></text>
+        <text x="<%= centerX + centerW/2 %>" y="<%= centerY - 2 %>" text-anchor="middle" style="fill:#fff;font-size:11px;font-weight:700;font-family:sans-serif"><%= ci.ci_number %></text>
+        <text x="<%= centerX + centerW/2 %>" y="<%= centerY + 11 %>" text-anchor="middle" style="fill:#fff;font-size:10px;font-family:sans-serif"><%= ci.name.slice(0, 24) %></text>
 
         <% downstream.forEach((d, i) => { %>
           <% const y = boxY(i, downstream.length); %>
@@ -62,8 +62,8 @@
                 style="stroke:var(--border);stroke-width:1.5" marker-end="url(#arrowHead)"></line>
           <rect x="<%= rightX %>" y="<%= y %>" width="<%= sideW %>" height="<%= boxH %>" rx="6"
                 style="fill:var(--surface);stroke:var(--border)"></rect>
-          <text x="<%= rightX + 10 %>" y="<%= y + 16 %>" style="fill:var(--text);font-size:11px;font-weight:600;font-family:sans-serif"><%= d.number %></text>
-          <text x="<%= rightX + 10 %>" y="<%= y + 30 %>" style="fill:var(--text-muted);font-size:10.5px;font-family:sans-serif"><%= (d.name || '').slice(0, 26) %></text>
+          <text x="<%= rightX + 10 %>" y="<%= y + 12 %>" style="fill:var(--text);font-size:10px;font-weight:600;font-family:sans-serif"><%= d.number %></text>
+          <text x="<%= rightX + 10 %>" y="<%= y + 22 %>" style="fill:var(--text-muted);font-size:9.5px;font-family:sans-serif"><%= (d.name || '').slice(0, 26) %></text>
         <% }) %>
       </svg>
       <div class="d-flex justify-content-between small text-muted mt-1">
