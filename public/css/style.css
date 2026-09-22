@@ -195,11 +195,20 @@ a { color: var(--brand); }
 .card-header, .card-footer { background: transparent; border-color: var(--border-glass); }
 .list-group-item { background: transparent; border-color: var(--border-glass); color: var(--text); }
 .list-group-item-action:hover { background: rgba(var(--brand-rgb), 0.08); }
-/* Another 10% off (0.45rem -> 0.405rem) — ~19% shorter than Bootstrap's default 0.5rem. */
-.change-task-row { padding-top: 0.405rem; padding-bottom: 0.405rem; }
+
+/* App-wide compact density standard (2026-09-22): ~19% shorter vertical padding than
+   Bootstrap's defaults, established on the Change Tasks list and extended everywhere.
+   Vertical only — horizontal padding and font sizes are untouched. Re-declaring Bootstrap's
+   own spacing variables (not one-off selector overrides) so every component that reads them
+   — list-group items, card headers/footers, card bodies — picks it up automatically. */
+:root {
+  --bs-list-group-item-padding-y: 0.405rem; /* was 0.5rem */
+  --bs-card-cap-padding-y: 0.405rem;        /* was 0.5rem */
+  --bs-card-spacer-y: 0.81rem;              /* was 1rem */
+}
 
 .table { color: var(--text); }
-.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); }
+.table > :not(caption) > * > * { background: var(--surface-glass-dense); border-bottom-color: var(--border); color: var(--text); padding-top: 0.405rem; padding-bottom: 0.405rem; }
 .table-light, .table-light > th { background: var(--surface-glass-dense); color: var(--text); }
 .table-hover > tbody > tr:hover > * { background: rgba(var(--brand-rgb), 0.08); }
 .table-hover tbody tr { cursor: pointer; }
