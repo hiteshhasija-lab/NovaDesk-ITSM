@@ -11,6 +11,23 @@ const router = createAsyncRouter();
 // judgment call, not something to hardcode.
 const SOAK_PERIOD_HOURS = Number(process.env.DECOM_SOAK_PERIOD_HOURS) || 24;
 
+// For human-facing messages only — the raw hours value (which can be a long fractional
+// number for fast testing, e.g. 0.08333333333333333 for 5 minutes) is never shown directly.
+// Minutes below an hour, hours below a day, days above that.
+function formatSoakDuration(hours) {
+  const minutes = hours * 60;
+  if (minutes <= 59) {
+    const m = Math.round(minutes);
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  }
+  if (hours <= 24) {
+    const h = Math.round(hours * 10) / 10;
+    return `${Number.isInteger(h) ? h : h.toFixed(1)} hour${h === 1 ? '' : 's'}`;
+  }
+  const days = Math.round((hours / 24) * 10) / 10;
+  return `${Number.isInteger(days) ? days : days.toFixed(1)} day${days === 1 ? '' : 's'}`;
+}
+
 async function markTaskDone(changeId, description) {
   await db.prepare(`
     UPDATE change_tasks SET status = 'done', completed_at = ? WHERE change_id = ? AND description = ?
@@ -145,8 +162,8 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}.`);
       await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
       await markTaskDone(change.id, 'Power off — soak period');
-      await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${SOAK_PERIOD_HOURS}h soak period`);
-      await pushDecomUpdate(change.novaconnect_channel_id, `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${SOAK_PERIOD_HOURS}h soak period before the destroy confirmation.`);
+      await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period`);
+      await pushDecomUpdate(change.novaconnect_channel_id, `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
 
       await db.prepare(`
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
