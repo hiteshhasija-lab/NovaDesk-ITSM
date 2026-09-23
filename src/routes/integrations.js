@@ -247,6 +247,15 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
     return res.status(403).json({ error: 'Only a NovaDesk admin can confirm a VM destroy.' });
   }
 
+  // The destroy-confirmation card is dual-posted (DM + server-decom), so the same action is
+  // clickable from two different message copies — a user with both open can click Confirm
+  // Destroy (or Cancel, below) from each. Once the first click moves the Change off
+  // 'scheduled', reject the second cleanly instead of re-running the ESXi calls, which would
+  // fail ungracefully (e.g. destroying an already-destroyed VM) and 500.
+  if (change.status !== 'scheduled') {
+    return res.status(409).json({ error: `${change.number} is no longer awaiting a destroy decision (current status: ${change.status}) — this was likely already actioned from another window.` });
+  }
+
   const esxiHost = await resolveEsxiHost(ci.id);
   if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
 
@@ -331,6 +340,11 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
     : null;
   if (!canceller || canceller.role !== 'admin') {
     return res.status(403).json({ error: 'Only a NovaDesk admin can cancel a VM destroy.' });
+  }
+
+  // See the matching guard in confirm-destroy above — same dual-posted-card race, same fix.
+  if (change.status !== 'scheduled') {
+    return res.status(409).json({ error: `${change.number} is no longer awaiting a destroy decision (current status: ${change.status}) — this was likely already actioned from another window.` });
   }
 
   const esxiHost = await resolveEsxiHost(ci.id);
