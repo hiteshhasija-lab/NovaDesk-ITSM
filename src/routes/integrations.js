@@ -29,6 +29,24 @@ function formatSoakDuration(hours) {
   return `${Number.isInteger(days) ? days : days.toFixed(1)} day${days === 1 ? '' : 's'}`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// For the final decom summary card's "Elapsed" line — same shape as formatSoakDuration but
+// takes milliseconds and also expresses sub-minute durations, since the "sim" figure (how long
+// this request's own automation took) is typically seconds, not hours.
+function formatElapsed(ms) {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `~${Math.round(seconds)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `~${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `~${Math.round(hours)}h`;
+  const days = Math.round(hours / 24);
+  return `~${days} day${days === 1 ? '' : 's'}`;
+}
+
 async function markTaskDone(changeId, description) {
   await db.prepare(`
     UPDATE change_tasks SET status = 'done', completed_at = ? WHERE change_id = ? AND description = ?
@@ -160,6 +178,8 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
 
   const esxiHost = await resolveEsxiHost(ci.id);
   if (esxiHost) {
+    await pushDecomUpdate(decomTarget(change), `⏳ Proceeding with the Power Down...`);
+    await sleep(5000);
     try {
       const sessionId = await esxi.login(esxiHost.ip_address);
       const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
@@ -282,6 +302,8 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   const esxiHost = await resolveEsxiHost(ci.id);
   if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
 
+  const startedAt = Date.now();
+
   const sessionId = await esxi.login(esxiHost.ip_address);
   const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
   if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
@@ -294,8 +316,9 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await markTaskDone(change.id, 'Retire CI in CMDB');
   await pushDecomUpdate(decomTarget(change), `✅ ${ci.ci_number} retired in the CMDB.`);
 
+  let trackerRow = null;
   try {
-    await appendDecomTrackerRow({
+    trackerRow = await appendDecomTrackerRow({
       ciNumber: ci.ci_number,
       name: ci.name,
       ciType: ci.ci_type,
@@ -319,10 +342,23 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   `).get(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
 
+  const reclaimedParts = [ci.cpu, ci.ram, ci.disk].filter(Boolean);
+  const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
   await pushDecomUpdate(
     decomTarget(change),
-    `✅ ${change.number} closed — tracker updated. Decommission of ${ci.name} complete.`,
-    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'destroyed' }
+    `🎉 ${ci.name} decommissioned end-to-end.`,
+    {
+      cardType: 'decom_summary',
+      changeId: change.id,
+      changeNumber: change.number,
+      ciName: ci.name,
+      changeStatus: 'Closed / Successful',
+      cmdbStatus: 'CI retired, audit-frozen',
+      reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
+      trackerRow: trackerRow || '—',
+      elapsedSim: formatElapsed(Date.now() - startedAt),
+      elapsedReal: formatElapsed(Date.now() - createdAtMs)
+    }
   );
 
   res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });

@@ -40,6 +40,7 @@ async function appendDecomTrackerRow(row) {
   sheet.addRow(COLUMNS.map(c => row[c.key] || ''));
 
   await workbook.xlsx.writeFile(TRACKER_PATH);
+  return sheet.rowCount;
 }
 
 module.exports = { TRACKER_PATH, appendDecomTrackerRow };
