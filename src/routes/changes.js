@@ -508,8 +508,12 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
 
 router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const decision = req.body.decision === 'reject' ? 'rejected' : 'approved';
-  const newStatus = decision === 'approved' ? 'scheduled' : 'rejected';
   const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  // A decom Change starts executing (prechecks, power-down) the instant it's approved, rather
+  // than waiting for some future scheduled date — 'in_progress' reflects that, whereas
+  // 'scheduled' is right for a regular Change still waiting on a planned window.
+  const isDecomChange = existing && (existing.novaconnect_channel_id || existing.novaconnect_conversation_id);
+  const newStatus = decision === 'approved' ? (isDecomChange ? 'in_progress' : 'scheduled') : 'rejected';
 
   await db.prepare(`
     UPDATE changes SET approval_status=?, approved_by=?, status=?, updated_at=? WHERE id=?

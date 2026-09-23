@@ -117,8 +117,10 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
     return res.status(403).json({ error: 'Only a NovaDesk admin can approve a decommission request.' });
   }
 
+  // 'in_progress', not 'scheduled' — a decom Change starts executing (prechecks, power-down)
+  // the instant it's approved, not at some future planned date.
   await db.prepare(`
-    UPDATE changes SET approval_status='approved', approved_by=?, status='scheduled', updated_at=? WHERE id=?
+    UPDATE changes SET approval_status='approved', approved_by=?, status='in_progress', updated_at=? WHERE id=?
   `).run(approver.id, nowStr(), change.id);
   await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
 
@@ -209,9 +211,9 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   // The destroy-confirmation card is dual-posted (DM + server-decom), so the same action is
   // clickable from two different message copies — a user with both open can click Confirm
   // Destroy (or Cancel, below) from each. Once the first click moves the Change off
-  // 'scheduled', reject the second cleanly instead of re-running the ESXi calls, which would
+  // 'in_progress', reject the second cleanly instead of re-running the ESXi calls, which would
   // fail ungracefully (e.g. destroying an already-destroyed VM) and 500.
-  if (change.status !== 'scheduled') {
+  if (change.status !== 'in_progress') {
     return res.status(409).json({ error: `${change.number} is no longer awaiting a destroy decision (current status: ${change.status}) — this was likely already actioned from another window.` });
   }
 
@@ -327,7 +329,7 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
   }
 
   // See the matching guard in confirm-destroy above — same dual-posted-card race, same fix.
-  if (change.status !== 'scheduled') {
+  if (change.status !== 'in_progress') {
     return res.status(409).json({ error: `${change.number} is no longer awaiting a destroy decision (current status: ${change.status}) — this was likely already actioned from another window.` });
   }
 
