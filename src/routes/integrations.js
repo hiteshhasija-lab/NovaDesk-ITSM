@@ -264,7 +264,14 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   `).get(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
 
-  const reclaimedParts = [ci.cpu, ci.ram, ci.disk].filter(Boolean);
+  // ci.cpu already reads as self-explanatory ("1 vCPU"), but ci.ram/ci.disk are bare
+  // magnitudes ("512 MB", "1 GB") with nothing distinguishing which is which once joined —
+  // label those two explicitly.
+  const reclaimedParts = [
+    ci.cpu || null,
+    ci.ram ? `${ci.ram} RAM` : null,
+    ci.disk ? `${ci.disk} storage` : null
+  ].filter(Boolean);
   const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
   await pushDecomUpdate(
     decomTargets(change),
