@@ -5,7 +5,8 @@ const esxi = require('../esxi');
 const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('../novaconnect');
 const { appendDecomTrackerRow } = require('../decomTracker');
 const {
-  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, markTaskDone, maybeProceedWithPowerDown
+  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, markTaskDone, maybeProceedWithPowerDown,
+  announceDecomApproval, announceDecomRejection, resolvePrecheckTask
 } = require('../decomAutomation');
 
 const router = createAsyncRouter();
@@ -121,43 +122,13 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   `).run(approver.id, nowStr(), change.id);
   await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
 
-  // Resolve the approval card + announce "approved" FIRST, before posting anything else. This
-  // whole handler runs synchronously before responding, and NovaConnect's own approve route used
-  // to do this resolve+announce itself, but only *after* this entire request returned — meaning
-  // it landed dead last, after the precheck cards and (formerly) power-off messages, even though
-  // logically it's the first thing that happens post-approval. Doing it here, first, makes the
-  // visible order match the real order. See resolveNovaConnectCard's key-based lookup — it
-  // resolves every DM/channel copy of the original approval card in one call.
-  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'approved');
-  await pushDecomUpdate(
-    decomTargets(change),
-    `✅ ${change.number} approved by ${approver.full_name}. Scheduled for decommission.`,
-    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'approved' }
-  );
-
-  const esxiHost = await resolveEsxiHost(ci.id);
-  if (esxiHost) {
-    for (const desc of MANUAL_TASKS) {
-      const task = (tasks || []).find(t => t.description === desc);
-      await pushDecomUpdate(
-        decomTargets(change),
-        `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
-        {
-          cardType: 'decom_precheck_task',
-          changeId: change.id,
-          changeNumber: change.number,
-          taskId: task ? task.id : null,
-          taskNumber: task ? task.task_number : null,
-          taskDescription: desc,
-          status: 'pending'
-        }
-      );
-    }
-    // Power-off no longer happens automatically here — it's gated on all 3 manual prechecks
-    // above being resolved (Completed or Skipped). Whichever route ends up resolving the last of
-    // the 3 (precheck-task or skip-manual-tasks below, or NovaDesk's own Change Tasks toggle in
-    // routes/changes.js) is what actually triggers it, via maybeProceedWithPowerDown.
-  }
+  // announceDecomApproval resolves the approval card + posts "approved" FIRST, before the
+  // precheck cards — see its own comment in decomAutomation.js for why order matters here.
+  // Power-off no longer happens automatically after this — it's gated on all 3 manual prechecks
+  // being resolved (Completed or Skipped). Whichever route ends up resolving the last of the 3
+  // (precheck-task or skip-manual-tasks below, or NovaDesk's own Change Tasks Complete/Skip
+  // buttons in routes/changes.js) is what actually triggers it, via maybeProceedWithPowerDown.
+  await announceDecomApproval(change, approver.full_name);
 
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id), ci, tasks });
 });
@@ -165,7 +136,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
 // POST /novaconnect/decommission-requests/:id/skip-manual-tasks
 // The 3 non-automated pre-checks — explicit human decision, not silently assumed done.
 router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (req, res) => {
-  const { change, error, message } = await loadDecomContext(req.params.id);
+  const { change, tasks, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
   const actor = req.body.skipped_by_username
@@ -175,14 +146,13 @@ router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (r
     return res.status(403).json({ error: 'Only a NovaDesk admin can skip these tasks.' });
   }
 
+  // Resolves each individual precheck card too, not just the bulk "skip all" button's own card
+  // — otherwise the 3 individual cards stay stuck showing "pending" with active buttons even
+  // though they're actually skipped underneath.
   for (const description of MANUAL_TASKS) {
-    await db.prepare(`
-      UPDATE change_tasks SET status = 'skipped', completed_at = ? WHERE change_id = ? AND description = ? AND status = 'pending'
-    `).run(nowStr(), change.id, description);
+    const task = (tasks || []).find((t) => t.description === description && t.status === 'pending');
+    if (task) await resolvePrecheckTask(change, task, 'skipped', actor.id, req.body.skipped_by_username);
   }
-  await logActivity('change', change.id, actor.id, `Manual pre-checks skipped by ${req.body.skipped_by_username} (not automated in NovaDesk): ${MANUAL_TASKS.join(', ')}`);
-
-  await maybeProceedWithPowerDown(change.id, actor.id);
 
   res.json({ ok: true });
 });
@@ -204,7 +174,6 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
   const action = req.body.action; // 'complete' or 'skip'
   const desc = req.body.task_description;
   const newStatus = action === 'complete' ? 'done' : 'skipped';
-  const actionWord = action === 'complete' ? 'completed' : 'skipped';
 
   let task;
   if (req.body.task_id) {
@@ -215,18 +184,8 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
   }
 
   if (task) {
-    await db.prepare(`
-      UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?
-    `).run(newStatus, nowStr(), task.id);
-    await logActivity('change', change.id, actor.id, `Manual pre-check "${task.description}" marked ${actionWord} by ${username}`);
-  } else if (desc) {
-    await db.prepare(`
-      UPDATE change_tasks SET status = ?, completed_at = ? WHERE change_id = ? AND description = ?
-    `).run(newStatus, nowStr(), change.id, desc);
-    await logActivity('change', change.id, actor.id, `Manual pre-check "${desc}" marked ${actionWord} by ${username}`);
+    await resolvePrecheckTask(change, task, newStatus, actor.id, username);
   }
-
-  await maybeProceedWithPowerDown(change.id, actor.id);
 
   res.json({ ok: true, status: newStatus });
 });
@@ -309,7 +268,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
   await pushDecomUpdate(
     decomTargets(change),
-    `🎉 ${ci.name} decommissioned end-to-end.`,
+    `🎉 ${ci.name} decommissioned.`,
     {
       cardType: 'decom_summary',
       changeId: change.id,
@@ -379,13 +338,15 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
   if (error) return res.status(error).json({ error: message });
 
   const rejector = req.body.rejected_by_username
-    ? await db.prepare('SELECT id FROM users WHERE username = ?').get(req.body.rejected_by_username)
+    ? await db.prepare('SELECT id, full_name FROM users WHERE username = ?').get(req.body.rejected_by_username)
     : null;
 
   await db.prepare(`
     UPDATE changes SET approval_status='rejected', status='rejected', updated_at=? WHERE id=?
   `).run(nowStr(), change.id);
   await logActivity('change', change.id, rejector ? rejector.id : null, 'Decommission rejected (via NovaConnect)');
+
+  await announceDecomRejection(change, rejector ? rejector.full_name : (req.body.rejected_by_username || 'someone'));
 
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id) });
 });

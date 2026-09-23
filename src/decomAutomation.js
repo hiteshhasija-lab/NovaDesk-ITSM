@@ -1,6 +1,6 @@
 const { db, nowStr, offsetStr, logActivity } = require('./db');
 const esxi = require('./esxi');
-const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('./novaconnect');
+const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('./novaconnect');
 
 // How long a VM sits powered-off before the destroy-confirmation prompt fires — the window
 // meant to catch a mistake before the irreversible step. Configurable since "how long" is a
@@ -121,6 +121,74 @@ async function maybeProceedWithPowerDown(changeId, actorId) {
   await proceedWithPowerDown(change, ci, esxiHost, actorId);
 }
 
+// Resolves the approval card + posts the "approved" confirmation + posts the 3 precheck cards.
+// Shared by both the NovaConnect-triggered approve route AND NovaDesk's own Change approve
+// action (routes/changes.js) — a Change can be approved either way, and until this was shared,
+// approving directly in NovaDesk's own UI left the NovaConnect approval card stuck on "pending"
+// forever, since none of this ever ran for that path.
+async function announceDecomApproval(change, approverFullName) {
+  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'approved');
+  await pushDecomUpdate(
+    decomTargets(change),
+    `✅ ${change.number} approved by ${approverFullName}. Scheduled for decommission.`,
+    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'approved' }
+  );
+
+  const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
+  if (!ci) return;
+  const esxiHost = await resolveEsxiHost(ci.id);
+  if (!esxiHost) return;
+
+  const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
+  for (const desc of MANUAL_TASKS) {
+    const task = (tasks || []).find((t) => t.description === desc);
+    await pushDecomUpdate(
+      decomTargets(change),
+      `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
+      {
+        cardType: 'decom_precheck_task',
+        changeId: change.id,
+        changeNumber: change.number,
+        taskId: task ? task.id : null,
+        taskNumber: task ? task.task_number : null,
+        taskDescription: desc,
+        status: 'pending'
+      }
+    );
+  }
+}
+
+async function announceDecomRejection(change, rejectorFullName) {
+  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'rejected');
+  await pushDecomUpdate(
+    decomTargets(change),
+    `❌ ${change.number} rejected by ${rejectorFullName}.`,
+    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'rejected' }
+  );
+}
+
+// Resolves one manual precheck task (Completed or Skipped): updates the task row, logs it,
+// resolves every copy of the NovaConnect card for it (so the card flips to its final state
+// before, not after, any power-down messages that might follow — same ordering fix as
+// announceDecomApproval), then checks whether this was the last of the 3, in which case
+// maybeProceedWithPowerDown actually fires the power-off. Shared by NovaConnect's
+// precheck-task route AND NovaDesk's own Change Tasks Complete/Skip buttons.
+async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel) {
+  await db.prepare(`
+    UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?
+  `).run(newStatus, newStatus === 'pending' ? null : nowStr(), task.id);
+  const actionWord = newStatus === 'done' ? 'completed' : newStatus === 'skipped' ? 'skipped' : 'reset to pending';
+  await logActivity('change', change.id, actorId, `Manual pre-check "${task.description}" marked ${actionWord}${actorLabel ? ` by ${actorLabel}` : ''}`);
+
+  if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
+    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+  }
+
+  if (newStatus === 'done' || newStatus === 'skipped') {
+    await maybeProceedWithPowerDown(change.id, actorId);
+  }
+}
+
 module.exports = {
   SOAK_PERIOD_HOURS,
   formatSoakDuration,
@@ -130,5 +198,8 @@ module.exports = {
   MANUAL_TASKS,
   resolveEsxiHost,
   allManualTasksResolved,
-  maybeProceedWithPowerDown
+  maybeProceedWithPowerDown,
+  announceDecomApproval,
+  announceDecomRejection,
+  resolvePrecheckTask
 };

@@ -5,7 +5,7 @@ const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { resolveNovaConnectCard } = require('../novaconnect');
-const { maybeProceedWithPowerDown } = require('../decomAutomation');
+const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -397,6 +397,35 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   res.redirect(`/changes/${change.id}`);
 });
 
+// Skip — the counterpart to toggle above for tasks that don't apply (e.g. the 3 manual decom
+// prechecks aren't automated in this app, so an admin either completes them for real or skips
+// them). Previously there was no way to reach the 'skipped' state from NovaDesk's own UI at
+// all — only NovaConnect's Skip button could set it — which also meant a task skipped in
+// NovaConnect had no NovaDesk-side equivalent action. Same wiring as toggle: resolves the
+// matching NovaConnect card and re-checks whether this completes the trio of 3.
+router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const change = await getChangeById(req.params.id);
+  if (!change) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
+
+  const task = await db.prepare('SELECT * FROM change_tasks WHERE id = ? AND change_id = ?').get(req.params.taskId, req.params.id);
+  if (!task) return res.status(404).render('error', { title: 'Not Found', message: 'Change task not found.' });
+
+  const nowSkipped = task.status !== 'skipped';
+  const newStatus = nowSkipped ? 'skipped' : 'pending';
+  await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
+    .run(newStatus, nowSkipped ? nowStr() : null, task.id);
+  await logActivity('change', change.id, req.session.user.id,
+    `${task.task_number} (${task.description}) marked ${newStatus}`);
+
+  if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
+    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+  }
+
+  await maybeProceedWithPowerDown(change.id, req.session.user.id).catch(() => {});
+
+  res.redirect(`/changes/${change.id}`);
+});
+
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const b = req.body;
   const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
@@ -499,6 +528,22 @@ router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (r
         relatedType: 'change',
         relatedId: existing.id
       }).catch(() => {});
+    }
+
+    // A decom-workflow Change (tied to a NovaConnect channel/DM) can be approved or rejected
+    // either from NovaConnect's own card or directly here in NovaDesk — this used to only work
+    // from NovaConnect's side, leaving the approval card stuck on "pending" forever when decided
+    // here instead. Guard on approval_status actually changing so re-deciding an already-decided
+    // Change here doesn't re-announce/re-post the precheck cards a second time.
+    if ((existing.novaconnect_channel_id || existing.novaconnect_conversation_id) && existing.approval_status !== decision) {
+      const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
+      if (decision === 'approved') {
+        await announceDecomApproval({ ...existing, approval_status: decision, status: newStatus }, actor.full_name)
+          .catch((e) => console.error('announceDecomApproval failed:', e.message));
+      } else {
+        await announceDecomRejection(existing, actor.full_name)
+          .catch((e) => console.error('announceDecomRejection failed:', e.message));
+      }
     }
   }
 
