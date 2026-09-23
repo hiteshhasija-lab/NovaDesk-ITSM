@@ -367,15 +367,18 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
   if (error) return res.status(error).json({ error: message });
 
   const rejector = req.body.rejected_by_username
-    ? await db.prepare('SELECT id, full_name FROM users WHERE username = ?').get(req.body.rejected_by_username)
+    ? await db.prepare('SELECT id, role, full_name FROM users WHERE username = ?').get(req.body.rejected_by_username)
     : null;
+  if (!rejector || rejector.role !== 'admin') {
+    return res.status(403).json({ error: 'Only a NovaDesk admin can reject a decommission request.' });
+  }
 
   await db.prepare(`
     UPDATE changes SET approval_status='rejected', status='rejected', updated_at=? WHERE id=?
   `).run(nowStr(), change.id);
-  await logActivity('change', change.id, rejector ? rejector.id : null, 'Decommission rejected (via NovaConnect)');
+  await logActivity('change', change.id, rejector.id, 'Decommission rejected (via NovaConnect)');
 
-  await announceDecomRejection(change, rejector ? rejector.full_name : (req.body.rejected_by_username || 'someone'));
+  await announceDecomRejection(change, rejector.full_name);
 
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id) });
 });
