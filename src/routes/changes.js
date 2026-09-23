@@ -258,7 +258,7 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
-  await announceGenericDecomStatusChange(existing, status, approval_status, actor.full_name)
+  await announceGenericDecomStatusChange(existing, status, approval_status, actor.full_name, req.session.user.id)
     .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
 
   res.json({ ok: true });
@@ -489,7 +489,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(actorId);
-  await announceGenericDecomStatusChange(existing, b.status, approval_status, actor.full_name)
+  await announceGenericDecomStatusChange(existing, b.status, approval_status, actor.full_name, actorId)
     .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
 
   const newAssignedTo = b.assigned_to ? Number(b.assigned_to) : null;
@@ -592,7 +592,7 @@ router.post('/:id/cancel', requireAuth, async (req, res) => {
   await logActivity('change', existing.id, req.session.user.id, 'Change cancelled by requester');
 
   const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
-  await announceGenericDecomStatusChange(existing, 'cancelled', existing.approval_status, actor.full_name)
+  await announceGenericDecomStatusChange(existing, 'cancelled', existing.approval_status, actor.full_name, req.session.user.id)
     .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
 
   res.redirect(`/changes/${req.params.id}`);
@@ -663,7 +663,7 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
       await logActivity('change', id, actorId, `Reassigned to ${(nameRow || {}).full_name || 'Unassigned'} (bulk action)`);
     }
 
-    await announceGenericDecomStatusChange(existing, newStatus, approval_status, actor.full_name)
+    await announceGenericDecomStatusChange(existing, newStatus, approval_status, actor.full_name, actorId)
       .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
 
     updated++;

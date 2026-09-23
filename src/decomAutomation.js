@@ -185,13 +185,53 @@ async function announceDecomRejection(change, rejectorFullName) {
 // to CHG0000038: cancelled via the edit form, and the chat sat showing a now-stale "needs manual
 // attention" warning forever, with nothing ever telling it the Change had moved on).
 //
+// The inverse of proceedWithPowerDown — powers a VM back on and reverts the "Power off — soak
+// period" task to pending, for a Change that gets cancelled AFTER its VM was already powered
+// off but was cancelled through a path other than the dedicated Cancel button (which already
+// did this itself). Returns whether it actually powered something back on, so callers can word
+// their announcement accordingly. Silently no-ops (not an error) if the VM was never powered off
+// in the first place — cancelling a Change that never got that far has nothing to revert.
+async function revertPowerOffIfNeeded(change, actorId) {
+  const powerOffTask = await db.prepare(`
+    SELECT status FROM change_tasks WHERE change_id = ? AND description = 'Power off — soak period'
+  `).get(change.id);
+  if (!powerOffTask || powerOffTask.status !== 'done') return false;
+
+  const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
+  if (!ci) return false;
+  const esxiHost = await resolveEsxiHost(ci.id);
+  if (!esxiHost) return false;
+
+  try {
+    const sessionId = await esxi.login(esxiHost.ip_address);
+    const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+    if (!vm) {
+      await logActivity('change', change.id, actorId, `Could not power ${ci.name} back on after cancellation — no VM found on ${esxiHost.name}.`);
+      return false;
+    }
+    await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
+    await db.prepare(`
+      UPDATE change_tasks SET status = 'pending', completed_at = NULL WHERE change_id = ? AND description = 'Power off — soak period'
+    `).run(change.id);
+    await logActivity('change', change.id, actorId, `${ci.name} powered back on on ${esxiHost.name} after cancellation`);
+    return true;
+  } catch (e) {
+    await logActivity('change', change.id, actorId, `Failed to power ${ci.name} back on after cancellation: ${e.message}`);
+    return false;
+  }
+}
+
 // `preUpdateChange` must be the row as read BEFORE the update (its novaconnect_channel_id/
 // conversation_id don't change, but its prior status/approval_status are what "did this actually
 // change" is judged against). A transition INTO approved/rejected for the first time is routed
 // through the same rich flow the dedicated routes use (so, e.g., precheck cards still get posted
 // if someone approves via the edit form instead of the Approve button) rather than a generic
-// note; anything else gets a plain status-change message so the chat is never left silent.
-async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newApprovalStatus, actorFullName) {
+// note. A transition INTO cancelled powers the VM back on if it was already off — the dedicated
+// Cancel button (next to Confirm Destroy) already did this; this covers every OTHER way a decom
+// Change can be cancelled (edit form, board, bulk-update, requester self-cancel), which
+// previously left the VM stuck off with nothing to bring it back — caught live via CHG0000042.
+// Anything else gets a plain status-change message so the chat is never left silent.
+async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newApprovalStatus, actorFullName, actorId) {
   if (!preUpdateChange || !(preUpdateChange.novaconnect_channel_id || preUpdateChange.novaconnect_conversation_id)) return;
   if (newStatus === preUpdateChange.status && newApprovalStatus === preUpdateChange.approval_status) return;
 
@@ -201,6 +241,19 @@ async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newA
   }
   if (newApprovalStatus === 'rejected' && preUpdateChange.approval_status !== 'rejected') {
     await announceDecomRejection(preUpdateChange, actorFullName);
+    return;
+  }
+
+  if (newStatus === 'cancelled') {
+    const poweredBackOn = await revertPowerOffIfNeeded(preUpdateChange, actorId);
+    await resolveNovaConnectCard({ changeId: preUpdateChange.id, cardType: 'decom_confirm_destroy' }, 'cancelled').catch(() => {});
+    await pushDecomUpdate(
+      decomTargets(preUpdateChange),
+      poweredBackOn
+        ? `🛑 ${preUpdateChange.number} cancelled${actorFullName ? ` by ${actorFullName}` : ''} — the VM was powered back on automatically (updated directly in NovaDesk).`
+        : `🛑 ${preUpdateChange.number} cancelled${actorFullName ? ` by ${actorFullName}` : ''} (updated directly in NovaDesk).`,
+      { cardType: 'decom_status', changeId: preUpdateChange.id, changeNumber: preUpdateChange.number, status: 'cancelled' }
+    );
     return;
   }
 
