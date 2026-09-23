@@ -191,6 +191,12 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
   }
 
   if (newStatus === 'done' || newStatus === 'skipped') {
+    // Same pacing as every other decom step, after a Complete/Skip action specifically (not a
+    // reset back to pending).
+    await pushDecomThinking(decomTargets(change), true);
+    await sleep(10000);
+    await pushDecomThinking(decomTargets(change), false);
+
     await maybeProceedWithPowerDown(change.id, actorId);
   }
 }

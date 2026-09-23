@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
-const { resolveNovaConnectCard } = require('../novaconnect');
-const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection } = require('../decomAutomation');
+const { resolveNovaConnectCard, pushDecomThinking, decomTargets } = require('../novaconnect');
+const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, sleep } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -387,6 +387,12 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   // finds nothing to resolve.
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
     await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+    if (newStatus === 'done') {
+      // Same pacing as every other decom step, after a Complete action specifically.
+      await pushDecomThinking(decomTargets(change), true).catch(() => {});
+      await sleep(10000);
+      await pushDecomThinking(decomTargets(change), false).catch(() => {});
+    }
   }
 
   // A precheck task resolved here (NovaDesk's own Change Tasks UI) can just as well be the one
@@ -419,6 +425,12 @@ router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'
 
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
     await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+    if (newStatus === 'skipped') {
+      // Same pacing as every other decom step, after a Skip action specifically.
+      await pushDecomThinking(decomTargets(change), true).catch(() => {});
+      await sleep(10000);
+      await pushDecomThinking(decomTargets(change), false).catch(() => {});
+    }
   }
 
   await maybeProceedWithPowerDown(change.id, req.session.user.id).catch(() => {});
