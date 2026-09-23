@@ -1,6 +1,6 @@
 {
   "name": "itsm-app",
-  "version": "0.0.36",
+  "version": "0.0.37",
   "description": "IT Infrastructure ITSM system: Incident Management, Change Management, and CMDB/Asset Inventory",
   "main": "src/server.js",
   "scripts": {
