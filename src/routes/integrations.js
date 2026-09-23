@@ -5,7 +5,7 @@ const esxi = require('../esxi');
 const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('../novaconnect');
 const { appendDecomTrackerRow } = require('../decomTracker');
 const {
-  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, markTaskDone, maybeProceedWithPowerDown,
+  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, markTaskDone, maybeProceedWithPowerDown, sleep,
   announceDecomApproval, announceDecomRejection, resolvePrecheckTask
 } = require('../decomAutomation');
 
@@ -234,9 +234,20 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
   await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
+  // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant
+  // as "destroyed".
+  await pushDecomThinking(decomTargets(change), true);
+  await sleep(5000);
+  await pushDecomThinking(decomTargets(change), false);
+
   await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
   await markTaskDone(change.id, 'Retire CI in CMDB');
   await pushDecomUpdate(decomTargets(change), `✅ ${ci.ci_number} retired in the CMDB.`);
+
+  // Same pacing before the tracker-update/close/summary sequence below.
+  await pushDecomThinking(decomTargets(change), true);
+  await sleep(5000);
+  await pushDecomThinking(decomTargets(change), false);
 
   let trackerRow = null;
   try {
