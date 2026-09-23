@@ -5,6 +5,7 @@ const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { resolveNovaConnectCard } = require('../novaconnect');
+const { maybeProceedWithPowerDown } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -387,6 +388,11 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
     await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
   }
+
+  // A precheck task resolved here (NovaDesk's own Change Tasks UI) can just as well be the one
+  // that completes the trio of 3 manual prechecks — power-off is gated on all 3 being resolved
+  // regardless of which system (this UI or NovaConnect) resolved the last of them.
+  await maybeProceedWithPowerDown(change.id, req.session.user.id).catch(() => {});
 
   res.redirect(`/changes/${change.id}`);
 });

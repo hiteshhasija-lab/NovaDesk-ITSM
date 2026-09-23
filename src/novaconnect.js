@@ -40,6 +40,26 @@ async function pushDecomUpdate(targets, body, metadata) {
 // a specific message id, since NovaConnect can look up every sibling copy of a card from that
 // key alone (see decom.js's resolveCardMessage on the NovaConnect side) — NovaDesk never needs
 // to track NovaConnect message ids at all.
+// Live-only "thinking" indicator (three animated dots) for the 5-7s gaps where real work is
+// happening (CI lookup, ESXi power-off, ESXi destroy) but nothing has been posted as a message
+// yet. Never persisted — just a transient socket event NovaConnect relays to whoever has that
+// channel/DM open, so it never lingers in chat history after the wait ends.
+async function pushDecomThinking(targets, thinking) {
+  const list = Array.isArray(targets) ? targets : [targets];
+  for (const target of list) {
+    try {
+      const res = await fetch(`${NOVACONNECT_BASE_URL}/api/integrations/novadesk/decom-thinking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_API_KEY}` },
+        body: JSON.stringify({ channel_id: target.channelId || null, conversation_id: target.conversationId || null, thinking: !!thinking })
+      });
+      if (!res.ok) console.error(`NovaConnect decom-thinking push returned HTTP ${res.status}`);
+    } catch (e) {
+      console.error('NovaConnect decom-thinking push failed:', e.message);
+    }
+  }
+}
+
 async function resolveNovaConnectCard({ changeId, cardType, taskId }, status) {
   try {
     const res = await fetch(`${NOVACONNECT_BASE_URL}/api/integrations/novadesk/decom-updates/resolve`, {
@@ -64,4 +84,4 @@ function decomTargets(change) {
   return targets;
 }
 
-module.exports = { pushDecomUpdate, resolveNovaConnectCard, decomTargets };
+module.exports = { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets };
