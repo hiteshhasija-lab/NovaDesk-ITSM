@@ -378,11 +378,14 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   await logActivity('change', change.id, req.session.user.id,
     `${task.task_number} (${task.description}) marked ${newStatus}`);
 
-  // If this task has a matching NovaConnect precheck card (decom tasks only — the column is
-  // null for anything else), reflect the change there too, so toggling it here doesn't leave
-  // that card stuck showing "pending" with active buttons.
-  if (task.novaconnect_message_id) {
-    await resolveNovaConnectCard(task.novaconnect_message_id, newStatus).catch(() => {});
+  // If this Change came from NovaConnect (decom workflow only), reflect the change there too —
+  // NovaConnect looks up every copy of this task's precheck card (DM and/or channel) by
+  // (changeId, cardType, taskId) and resolves them all, so toggling it here doesn't leave those
+  // cards stuck showing "pending" with active buttons. Harmless no-op for a task that was never
+  // pushed as a card (e.g. the automated "Power off"/"Destroy VM" steps) — NovaConnect just
+  // finds nothing to resolve.
+  if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
+    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
   }
 
   res.redirect(`/changes/${change.id}`);

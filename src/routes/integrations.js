@@ -2,7 +2,7 @@ const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
-const { pushDecomUpdate, decomTarget } = require('../novaconnect');
+const { pushDecomUpdate, resolveNovaConnectCard, decomTargets } = require('../novaconnect');
 const { appendDecomTrackerRow } = require('../decomTracker');
 
 const router = createAsyncRouter();
@@ -183,8 +183,8 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
     // follow; they just need to be visible before the power-down happens, not after.
     for (const desc of MANUAL_TASKS) {
       const task = (tasks || []).find(t => t.description === desc);
-      const messageId = await pushDecomUpdate(
-        decomTarget(change),
+      await pushDecomUpdate(
+        decomTargets(change),
         `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
         {
           cardType: 'decom_precheck_task',
@@ -196,12 +196,9 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
           status: 'pending'
         }
       );
-      if (task && messageId) {
-        await db.prepare('UPDATE change_tasks SET novaconnect_message_id = ? WHERE id = ?').run(messageId, task.id);
-      }
     }
 
-    await pushDecomUpdate(decomTarget(change), `⏳ Proceeding with the Power Down...`);
+    await pushDecomUpdate(decomTargets(change), `⏳ Proceeding with the Power Down...`);
     await sleep(5000);
     try {
       const sessionId = await esxi.login(esxiHost.ip_address);
@@ -210,14 +207,14 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
       await markTaskDone(change.id, 'Power off — soak period');
       await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period`);
-      await pushDecomUpdate(decomTarget(change), `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
+      await pushDecomUpdate(decomTargets(change), `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
 
       await db.prepare(`
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
       `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
     } catch (e) {
       await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
-      await pushDecomUpdate(decomTarget(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
+      await pushDecomUpdate(decomTargets(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
     }
   }
 
@@ -316,11 +313,11 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
   await markTaskDone(change.id, 'Destroy VM & release storage');
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
-  await pushDecomUpdate(decomTarget(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
+  await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
   await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
   await markTaskDone(change.id, 'Retire CI in CMDB');
-  await pushDecomUpdate(decomTarget(change), `✅ ${ci.ci_number} retired in the CMDB.`);
+  await pushDecomUpdate(decomTargets(change), `✅ ${ci.ci_number} retired in the CMDB.`);
 
   let trackerRow = null;
   try {
@@ -340,7 +337,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
     await markTaskDone(change.id, 'Update tracker & reclaim licenses');
   } catch (e) {
     await logActivity('change', change.id, confirmer.id, `Decommissioned Tracker update failed: ${e.message}`);
-    await pushDecomUpdate(decomTarget(change), `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
+    await pushDecomUpdate(decomTargets(change), `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
   }
 
   const closed = await db.prepare(`
@@ -351,7 +348,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   const reclaimedParts = [ci.cpu, ci.ram, ci.disk].filter(Boolean);
   const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
   await pushDecomUpdate(
-    decomTarget(change),
+    decomTargets(change),
     `🎉 ${ci.name} decommissioned end-to-end.`,
     {
       cardType: 'decom_summary',
@@ -368,6 +365,47 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   );
 
   res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });
+});
+
+// POST /novaconnect/decommission-requests/:id/cancel-destroy
+// The Cancel option next to Confirm Destroy — backs out of the destroy at the last checkpoint
+// by powering the VM back on (undoing the earlier power-off) and marking the Change cancelled,
+// rather than proceeding to the irreversible step. Same admin-only gate as confirm-destroy.
+router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req, res) => {
+  const { change, ci, error, message } = await loadDecomContext(req.params.id);
+  if (error) return res.status(error).json({ error: message });
+
+  const canceller = req.body.cancelled_by_username
+    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.cancelled_by_username)
+    : null;
+  if (!canceller || canceller.role !== 'admin') {
+    return res.status(403).json({ error: 'Only a NovaDesk admin can cancel a VM destroy.' });
+  }
+
+  const esxiHost = await resolveEsxiHost(ci.id);
+  if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
+
+  const sessionId = await esxi.login(esxiHost.ip_address);
+  const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+  if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+  await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
+  await db.prepare(`
+    UPDATE change_tasks SET status = 'pending', completed_at = NULL WHERE change_id = ? AND description = 'Power off — soak period'
+  `).run(change.id);
+  await logActivity('change', change.id, canceller.id, `Destroy cancelled by ${req.body.cancelled_by_username} — ${ci.name} powered back on`);
+
+  const cancelled = await db.prepare(`
+    UPDATE changes SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
+  `).get(nowStr(), nowStr(), change.id);
+  await logActivity('change', change.id, canceller.id, 'Change cancelled — decommission stopped before destroy');
+
+  await pushDecomUpdate(
+    decomTargets(change),
+    `🛑 ${change.number} cancelled — ${ci.name} powered back on, destroy did not proceed.`,
+    { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'cancelled' }
+  );
+
+  res.json({ change: cancelled, ci });
 });
 
 // POST /api/integrations/novaconnect/decommission-requests/:id/reject

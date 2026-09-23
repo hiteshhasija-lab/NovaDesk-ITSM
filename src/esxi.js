@@ -69,4 +69,14 @@ async function destroyVm(hostIp, _sessionId, vmName) {
   }
 }
 
-module.exports = { login, findVm, listVms, powerOff, destroyVm };
+// Used by the confirm-destroy step's "Cancel" path — undoes the earlier power-off rather than
+// proceeding to the irreversible destroy.
+async function powerOn(hostIp, _sessionId, vmName) {
+  try {
+    await govc(hostIp, ['vm.power', '-on', vmName]);
+  } catch (e) {
+    throw new Error(`ESXi power-on on ${hostIp} failed: ${(e.stderr || e.message).trim()}`);
+  }
+}
+
+module.exports = { login, findVm, listVms, powerOff, powerOn, destroyVm };
