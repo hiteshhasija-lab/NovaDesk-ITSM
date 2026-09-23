@@ -246,7 +246,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant
   // as "destroyed".
   await pushDecomThinking(decomTargets(change), true);
-  await sleep(5000);
+  await sleep(10000);
   await pushDecomThinking(decomTargets(change), false);
 
   await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
@@ -255,7 +255,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
 
   // Same pacing before the tracker-update/close/summary sequence below.
   await pushDecomThinking(decomTargets(change), true);
-  await sleep(5000);
+  await sleep(10000);
   await pushDecomThinking(decomTargets(change), false);
 
   let trackerRow = null;

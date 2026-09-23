@@ -76,7 +76,7 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
   await pushDecomUpdate(decomTargets(change), `⏳ Proceeding with the Power Down...`);
   await pushDecomThinking(decomTargets(change), true);
   try {
-    await sleep(5000);
+    await sleep(10000);
     const sessionId = await esxi.login(esxiHost.ip_address);
     const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
     if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}.`);
@@ -142,7 +142,7 @@ async function announceDecomApproval(change, approverFullName) {
   // Same pacing as the CI-search and power-down steps — otherwise the precheck cards land in
   // the same instant as the approval confirmation above.
   await pushDecomThinking(decomTargets(change), true);
-  await sleep(5000);
+  await sleep(10000);
   await pushDecomThinking(decomTargets(change), false);
 
   const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
