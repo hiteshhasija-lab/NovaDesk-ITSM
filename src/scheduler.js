@@ -18,9 +18,15 @@ async function pollScheduledActions() {
 async function processDueAction(action) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(action.change_id);
 
-  // Re-check the Change hasn't been cancelled/rejected since this was scheduled — the soak
-  // period exists precisely so there's a window to catch a mistake before the irreversible step.
-  if (!change || change.status === 'rejected' || change.status === 'cancelled') {
+  // Only fire if the Change is still genuinely awaiting this destroy decision ('in_progress' —
+  // the same state integrations.js's confirm-destroy/cancel-destroy guard requires). Originally
+  // this only excluded 'rejected'/'cancelled', which missed 'closed' — if the Change was somehow
+  // already destroyed through another path (e.g. confirm-destroy called directly, bypassing the
+  // normal wait for this very card to be posted) before this action's run_at, the old guard would
+  // still blindly post a stale "confirm destroy" card for an already-destroyed VM once the timer
+  // caught up. Caught exactly this way (CHG0000037: destroyed early via a direct test call, then
+  // the leftover scheduled action fired 5 minutes later and posted the card anyway).
+  if (!change || change.status !== 'in_progress') {
     await db.prepare(`UPDATE scheduled_actions SET status = 'cancelled' WHERE id = ?`).run(action.id);
     return;
   }
