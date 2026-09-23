@@ -3,6 +3,7 @@ const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
 const { pushDecomUpdate } = require('../novaconnect');
+const { appendDecomTrackerRow } = require('../decomTracker');
 
 const router = createAsyncRouter();
 
@@ -290,7 +291,25 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await markTaskDone(change.id, 'Retire CI in CMDB');
   await pushDecomUpdate(change.novaconnect_channel_id, `✅ ${ci.ci_number} retired in the CMDB.`);
 
-  await markTaskDone(change.id, 'Update tracker & reclaim licenses');
+  try {
+    await appendDecomTrackerRow({
+      ciNumber: ci.ci_number,
+      name: ci.name,
+      ciType: ci.ci_type,
+      ipAddress: ci.ip_address,
+      os: ci.os,
+      serialNumber: ci.serial_number,
+      location: ci.location,
+      supportGroup: ci.support_group,
+      changeNumber: change.number,
+      decommissionedDate: nowStr(),
+      confirmedBy: req.body.confirmed_by_username
+    });
+    await markTaskDone(change.id, 'Update tracker & reclaim licenses');
+  } catch (e) {
+    await logActivity('change', change.id, confirmer.id, `Decommissioned Tracker update failed: ${e.message}`);
+    await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
+  }
 
   const closed = await db.prepare(`
     UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *

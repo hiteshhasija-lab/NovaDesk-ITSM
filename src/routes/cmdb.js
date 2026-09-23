@@ -1,8 +1,10 @@
+const fs = require('fs');
 const { db, nextNumber, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { TRACKER_PATH } = require('../decomTracker');
 
 const router = createAsyncRouter();
 
@@ -96,6 +98,16 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="cmdb.csv"');
   res.send(csv);
+});
+
+router.get('/decommissioned-tracker.xlsx', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!fs.existsSync(TRACKER_PATH)) {
+    return res.status(404).render('error', {
+      title: 'No Decommissioned Tracker Yet',
+      message: 'No servers have been decommissioned yet, so the Decommissioned Tracker file doesn\'t exist.'
+    });
+  }
+  res.download(TRACKER_PATH, 'Decommissioned Tracker.xlsx');
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {

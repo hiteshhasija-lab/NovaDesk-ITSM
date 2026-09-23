@@ -6,6 +6,7 @@
     <% if (currentUser.role !== 'user') { %>
     <div class="d-flex gap-2">
       <a href="/cmdb/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/cmdb/decommissioned-tracker.xlsx" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-excel"></i> Decommissioned Tracker</a>
       <a href="/cmdb/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> New CI</a>
     </div>
     <% } %>
