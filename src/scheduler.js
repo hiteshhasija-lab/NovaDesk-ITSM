@@ -1,5 +1,5 @@
 const { db, nowStr } = require('./db');
-const { pushDecomUpdate, decomTarget } = require('./novaconnect');
+const { pushDecomUpdate, decomTargets } = require('./novaconnect');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 
@@ -28,7 +28,7 @@ async function processDueAction(action) {
   if (action.action_type === 'destroy_vm') {
     const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
     await pushDecomUpdate(
-      decomTarget(change),
+      decomTargets(change),
       `⏳ Soak period elapsed for ${change.number} (${ci ? ci.name : 'unknown CI'}). Confirm to permanently destroy the VM and release its storage — this cannot be undone.`,
       { cardType: 'decom_confirm_destroy', changeId: change.id, changeNumber: change.number, ciName: ci ? ci.name : null, status: 'pending' }
     );
