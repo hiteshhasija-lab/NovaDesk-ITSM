@@ -2,7 +2,7 @@ const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
-const { pushDecomUpdate } = require('../novaconnect');
+const { pushDecomUpdate, decomTarget } = require('../novaconnect');
 const { appendDecomTrackerRow } = require('../decomTracker');
 
 const router = createAsyncRouter();
@@ -78,11 +78,13 @@ async function resolveEsxiHost(ciId) {
 }
 
 // POST /api/integrations/novaconnect/decommission-requests
-// body: { hostname, novaconnect_channel_id, requested_by_username }
+// body: { hostname, novaconnect_channel_id | novaconnect_conversation_id, requested_by_username }
 router.post('/novaconnect/decommission-requests', async (req, res) => {
-  const { hostname, novaconnect_channel_id, requested_by_username } = req.body;
+  const { hostname, novaconnect_channel_id, novaconnect_conversation_id, requested_by_username } = req.body;
   if (!hostname) return res.status(400).json({ error: 'hostname is required.' });
-  if (!novaconnect_channel_id) return res.status(400).json({ error: 'novaconnect_channel_id is required.' });
+  if (!novaconnect_channel_id && !novaconnect_conversation_id) {
+    return res.status(400).json({ error: 'novaconnect_channel_id or novaconnect_conversation_id is required.' });
+  }
 
   const ci = await findCiByHostname(hostname);
   if (!ci) return res.status(404).json({ error: `No CMDB record found for "${hostname}".` });
@@ -101,9 +103,9 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
   const number = await nextNumber('change', 'CHG');
   const change = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status,
-      requested_by, affected_ci_id, novaconnect_channel_id, implementation_plan)
+      requested_by, affected_ci_id, novaconnect_channel_id, novaconnect_conversation_id, implementation_plan)
     VALUES (@number, @short_description, @description, 'normal', 'low', 'submitted',
-      @requested_by, @affected_ci_id, @novaconnect_channel_id, @implementation_plan)
+      @requested_by, @affected_ci_id, @novaconnect_channel_id, @novaconnect_conversation_id, @implementation_plan)
     RETURNING *
   `).get({
     number,
@@ -111,7 +113,8 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
     description: `Automated decommission request for "${ci.name}" (${ci.ci_number}), submitted from NovaConnect.`,
     requested_by: requester ? requester.id : null,
     affected_ci_id: ci.id,
-    novaconnect_channel_id,
+    novaconnect_channel_id: novaconnect_channel_id || null,
+    novaconnect_conversation_id: novaconnect_conversation_id || null,
     implementation_plan: `Shut down and destroy ${ci.name} on ESXi host ${esxiHost.name} (${esxiHost.ip_address}) after a soak period, then retire the CI.`
   });
 
@@ -164,7 +167,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
       await markTaskDone(change.id, 'Power off — soak period');
       await logActivity('change', change.id, approver.id, `VM powered off on ${esxiHost.name}, entering ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period`);
-      await pushDecomUpdate(change.novaconnect_channel_id, `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
+      await pushDecomUpdate(decomTarget(change), `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
 
       await db.prepare(`
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
@@ -173,7 +176,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       for (const desc of MANUAL_TASKS) {
         const task = (tasks || []).find(t => t.description === desc);
         await pushDecomUpdate(
-          change.novaconnect_channel_id,
+          decomTarget(change),
           `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
           {
             cardType: 'decom_precheck_task',
@@ -188,7 +191,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       }
     } catch (e) {
       await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
-      await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
+      await pushDecomUpdate(decomTarget(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
     }
   }
 
@@ -285,11 +288,11 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
   await markTaskDone(change.id, 'Destroy VM & release storage');
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
-  await pushDecomUpdate(change.novaconnect_channel_id, `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
+  await pushDecomUpdate(decomTarget(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
   await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
   await markTaskDone(change.id, 'Retire CI in CMDB');
-  await pushDecomUpdate(change.novaconnect_channel_id, `✅ ${ci.ci_number} retired in the CMDB.`);
+  await pushDecomUpdate(decomTarget(change), `✅ ${ci.ci_number} retired in the CMDB.`);
 
   try {
     await appendDecomTrackerRow({
@@ -308,7 +311,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
     await markTaskDone(change.id, 'Update tracker & reclaim licenses');
   } catch (e) {
     await logActivity('change', change.id, confirmer.id, `Decommissioned Tracker update failed: ${e.message}`);
-    await pushDecomUpdate(change.novaconnect_channel_id, `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
+    await pushDecomUpdate(decomTarget(change), `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
   }
 
   const closed = await db.prepare(`
@@ -317,7 +320,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
 
   await pushDecomUpdate(
-    change.novaconnect_channel_id,
+    decomTarget(change),
     `✅ ${change.number} closed — tracker updated. Decommission of ${ci.name} complete.`,
     { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'destroyed' }
   );

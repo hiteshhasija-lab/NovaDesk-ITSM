@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS changes (
 );
 
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_channel_id INTEGER;
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_conversation_id INTEGER;
 
 CREATE TABLE IF NOT EXISTS change_comments (
   id SERIAL PRIMARY KEY,
