@@ -1,6 +1,7 @@
 const { db, nowStr, offsetStr, logActivity } = require('./db');
 const esxi = require('./esxi');
 const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('./novaconnect');
+const { CHANGE_STATUS_LABELS } = require('./helpers');
 
 // How long a VM sits powered-off before the destroy-confirmation prompt fires — the window
 // meant to catch a mistake before the irreversible step. Configurable since "how long" is a
@@ -173,6 +174,40 @@ async function announceDecomRejection(change, rejectorFullName) {
   );
 }
 
+// The generic Change edit form, board drag, bulk-update, and requester self-cancel can all
+// change a decom Change's status/approval_status too, outside the dedicated approve/reject/
+// confirm-destroy/cancel-destroy actions that already push their own rich announcements. Without
+// this, NovaConnect has no way to know — the chat just goes stale (this is exactly what happened
+// to CHG0000038: cancelled via the edit form, and the chat sat showing a now-stale "needs manual
+// attention" warning forever, with nothing ever telling it the Change had moved on).
+//
+// `preUpdateChange` must be the row as read BEFORE the update (its novaconnect_channel_id/
+// conversation_id don't change, but its prior status/approval_status are what "did this actually
+// change" is judged against). A transition INTO approved/rejected for the first time is routed
+// through the same rich flow the dedicated routes use (so, e.g., precheck cards still get posted
+// if someone approves via the edit form instead of the Approve button) rather than a generic
+// note; anything else gets a plain status-change message so the chat is never left silent.
+async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newApprovalStatus, actorFullName) {
+  if (!preUpdateChange || !(preUpdateChange.novaconnect_channel_id || preUpdateChange.novaconnect_conversation_id)) return;
+  if (newStatus === preUpdateChange.status && newApprovalStatus === preUpdateChange.approval_status) return;
+
+  if (newApprovalStatus === 'approved' && preUpdateChange.approval_status !== 'approved') {
+    await announceDecomApproval({ ...preUpdateChange, approval_status: newApprovalStatus, status: newStatus }, actorFullName);
+    return;
+  }
+  if (newApprovalStatus === 'rejected' && preUpdateChange.approval_status !== 'rejected') {
+    await announceDecomRejection(preUpdateChange, actorFullName);
+    return;
+  }
+
+  const label = CHANGE_STATUS_LABELS[newStatus] || newStatus;
+  await pushDecomUpdate(
+    decomTargets(preUpdateChange),
+    `ℹ️ ${preUpdateChange.number} status changed to "${label}"${actorFullName ? ` by ${actorFullName}` : ''} (updated directly in NovaDesk).`,
+    { cardType: 'decom_status', changeId: preUpdateChange.id, changeNumber: preUpdateChange.number, status: newStatus }
+  );
+}
+
 // Resolves one manual precheck task (Completed or Skipped): updates the task row, logs it,
 // resolves every copy of the NovaConnect card for it (so the card flips to its final state
 // before, not after, any power-down messages that might follow — same ordering fix as
@@ -213,5 +248,6 @@ module.exports = {
   maybeProceedWithPowerDown,
   announceDecomApproval,
   announceDecomRejection,
+  announceGenericDecomStatusChange,
   resolvePrecheckTask
 };

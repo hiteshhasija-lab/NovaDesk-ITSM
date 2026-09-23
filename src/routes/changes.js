@@ -5,7 +5,7 @@ const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { resolveNovaConnectCard, pushDecomThinking, decomTargets } = require('../novaconnect');
-const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, sleep } = require('../decomAutomation');
+const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, sleep } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -257,6 +257,10 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
       `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[status]} (board)`);
   }
 
+  const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
+  await announceGenericDecomStatusChange(existing, status, approval_status, actor.full_name)
+    .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
+
   res.json({ ok: true });
 });
 
@@ -483,6 +487,11 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     await logActivity('change', existing.id, actorId,
       `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[b.status]}`);
   }
+
+  const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(actorId);
+  await announceGenericDecomStatusChange(existing, b.status, approval_status, actor.full_name)
+    .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
+
   const newAssignedTo = b.assigned_to ? Number(b.assigned_to) : null;
   if (newAssignedTo !== existing.assigned_to) {
     const newNameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
@@ -581,6 +590,11 @@ router.post('/:id/cancel', requireAuth, async (req, res) => {
 
   await db.prepare(`UPDATE changes SET status = 'cancelled', updated_at = ? WHERE id = ?`).run(nowStr(), req.params.id);
   await logActivity('change', existing.id, req.session.user.id, 'Change cancelled by requester');
+
+  const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
+  await announceGenericDecomStatusChange(existing, 'cancelled', existing.approval_status, actor.full_name)
+    .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
+
   res.redirect(`/changes/${req.params.id}`);
 });
 
@@ -618,6 +632,7 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
   if (!status && assigned_to === undefined) return res.status(400).json({ error: 'No changes specified' });
 
   const actorId = req.session.user.id;
+  const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(actorId);
   let updated = 0;
 
   for (const id of ids) {
@@ -647,6 +662,10 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
       const nameRow = newAssignedTo ? await db.prepare('SELECT full_name FROM users WHERE id = ?').get(newAssignedTo) : null;
       await logActivity('change', id, actorId, `Reassigned to ${(nameRow || {}).full_name || 'Unassigned'} (bulk action)`);
     }
+
+    await announceGenericDecomStatusChange(existing, newStatus, approval_status, actor.full_name)
+      .catch((e) => console.error('announceGenericDecomStatusChange failed:', e.message));
+
     updated++;
   }
 
