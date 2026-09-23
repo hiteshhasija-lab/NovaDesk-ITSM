@@ -4,6 +4,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
+const { resolveNovaConnectCard } = require('../novaconnect');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -371,10 +372,18 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   if (!task) return res.status(404).render('error', { title: 'Not Found', message: 'Change task not found.' });
 
   const nowDone = task.status !== 'done';
+  const newStatus = nowDone ? 'done' : 'pending';
   await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
-    .run(nowDone ? 'done' : 'pending', nowDone ? nowStr() : null, task.id);
+    .run(newStatus, nowDone ? nowStr() : null, task.id);
   await logActivity('change', change.id, req.session.user.id,
-    `${task.task_number} (${task.description}) marked ${nowDone ? 'done' : 'pending'}`);
+    `${task.task_number} (${task.description}) marked ${newStatus}`);
+
+  // If this task has a matching NovaConnect precheck card (decom tasks only — the column is
+  // null for anything else), reflect the change there too, so toggling it here doesn't leave
+  // that card stuck showing "pending" with active buttons.
+  if (task.novaconnect_message_id) {
+    await resolveNovaConnectCard(task.novaconnect_message_id, newStatus).catch(() => {});
+  }
 
   res.redirect(`/changes/${change.id}`);
 });

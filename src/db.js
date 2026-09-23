@@ -217,6 +217,11 @@ CREATE TABLE IF NOT EXISTS change_tasks (
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
+-- The NovaConnect message id of the precheck card pushed for this task, if any (decom tasks
+-- only). Lets a NovaDesk-side status change (the Change Tasks toggle button) push the matching
+-- card's resolution back to NovaConnect, instead of leaving it stuck showing "pending" forever.
+ALTER TABLE change_tasks ADD COLUMN IF NOT EXISTS novaconnect_message_id INTEGER;
+
 CREATE TABLE IF NOT EXISTS scheduled_actions (
   id SERIAL PRIMARY KEY,
   change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,

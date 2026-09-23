@@ -178,6 +178,29 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
 
   const esxiHost = await resolveEsxiHost(ci.id);
   if (esxiHost) {
+    // Precheck cards first, before the power-off sequence — these are informational/manual
+    // (backup/monitoring/DNS aren't automated here) and don't gate the automated steps that
+    // follow; they just need to be visible before the power-down happens, not after.
+    for (const desc of MANUAL_TASKS) {
+      const task = (tasks || []).find(t => t.description === desc);
+      const messageId = await pushDecomUpdate(
+        decomTarget(change),
+        `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
+        {
+          cardType: 'decom_precheck_task',
+          changeId: change.id,
+          changeNumber: change.number,
+          taskId: task ? task.id : null,
+          taskNumber: task ? task.task_number : null,
+          taskDescription: desc,
+          status: 'pending'
+        }
+      );
+      if (task && messageId) {
+        await db.prepare('UPDATE change_tasks SET novaconnect_message_id = ? WHERE id = ?').run(messageId, task.id);
+      }
+    }
+
     await pushDecomUpdate(decomTarget(change), `⏳ Proceeding with the Power Down...`);
     await sleep(5000);
     try {
@@ -192,23 +215,6 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
       await db.prepare(`
         INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
       `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
-
-      for (const desc of MANUAL_TASKS) {
-        const task = (tasks || []).find(t => t.description === desc);
-        await pushDecomUpdate(
-          decomTarget(change),
-          `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
-          {
-            cardType: 'decom_precheck_task',
-            changeId: change.id,
-            changeNumber: change.number,
-            taskId: task ? task.id : null,
-            taskNumber: task ? task.task_number : null,
-            taskDescription: desc,
-            status: 'pending'
-          }
-        );
-      }
     } catch (e) {
       await logActivity('change', change.id, approver.id, `ESXi power-off failed: ${e.message}`);
       await pushDecomUpdate(decomTarget(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);

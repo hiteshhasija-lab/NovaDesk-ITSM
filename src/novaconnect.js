@@ -19,6 +19,8 @@ const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
 // that already happened. Mirrors mailer.js's sendNotification() shape (best-effort, always
 // resolves) rather than the callNovaDesk() shape (which is allowed to throw, since NovaConnect
 // callers there are already wrapped in their own try/catch at the call site).
+// Returns the created message's id (so callers can later resolve that specific card — see
+// resolveNovaConnectCard below) or null on any failure.
 async function pushDecomUpdate(target, body, metadata) {
   try {
     const res = await fetch(`${NOVACONNECT_BASE_URL}/api/integrations/novadesk/decom-updates`, {
@@ -26,9 +28,32 @@ async function pushDecomUpdate(target, body, metadata) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_API_KEY}` },
       body: JSON.stringify({ channel_id: target.channelId || null, conversation_id: target.conversationId || null, body, metadata: metadata || null })
     });
-    if (!res.ok) console.error(`NovaConnect decom-update push returned HTTP ${res.status}`);
+    if (!res.ok) {
+      console.error(`NovaConnect decom-update push returned HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json().catch(() => ({}));
+    return data.messageId || null;
   } catch (e) {
     console.error('NovaConnect decom-update push failed:', e.message);
+    return null;
+  }
+}
+
+// Lets a status change made directly in NovaDesk (the Change Tasks toggle button) resolve the
+// matching precheck card in NovaConnect in place, instead of leaving it stuck showing "pending"
+// with active buttons — same best-effort, never-throw shape as pushDecomUpdate.
+async function resolveNovaConnectCard(messageId, status) {
+  if (!messageId) return;
+  try {
+    const res = await fetch(`${NOVACONNECT_BASE_URL}/api/integrations/novadesk/decom-updates/${messageId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_API_KEY}` },
+      body: JSON.stringify({ status })
+    });
+    if (!res.ok) console.error(`NovaConnect card-resolve returned HTTP ${res.status}`);
+  } catch (e) {
+    console.error('NovaConnect card-resolve failed:', e.message);
   }
 }
 
@@ -38,4 +63,4 @@ function decomTarget(change) {
   return { channelId: change.novaconnect_channel_id, conversationId: change.novaconnect_conversation_id };
 }
 
-module.exports = { pushDecomUpdate, decomTarget };
+module.exports = { pushDecomUpdate, resolveNovaConnectCard, decomTarget };
