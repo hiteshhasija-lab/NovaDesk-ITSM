@@ -232,6 +232,13 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   }
   await markTaskDone(change.id, 'Destroy VM & release storage');
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
+
+  // Resolve the confirm-destroy card here, same as approve/reject/precheck-task — this route
+  // can be reached without a NovaConnect card ever having been clicked (this is exactly how it
+  // was caught: a confirm-destroy driven directly via this endpoint left the card stuck showing
+  // "Confirm Destroy" with active buttons, since only NovaConnect's own relay route used to
+  // resolve it). Resolving here makes it correct regardless of which door was used.
+  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'destroyed');
   await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
   // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant
@@ -341,6 +348,8 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
   `).get(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, canceller.id, 'Change cancelled — decommission stopped before destroy');
 
+  // See the matching resolve in confirm-destroy above — same reasoning, same fix.
+  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'cancelled');
   await pushDecomUpdate(
     decomTargets(change),
     `🛑 ${change.number} cancelled — ${ci.name} powered back on, destroy did not proceed.`,
