@@ -5,7 +5,7 @@ const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { resolveNovaConnectCard, pushDecomThinking, decomTargets } = require('../novaconnect');
-const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, sleep } = require('../decomAutomation');
+const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -399,6 +399,10 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
     }
   }
 
+  // The 3 precheck cards appear one at a time in NovaConnect — post the next one now that this
+  // one is resolved (no-ops once all 3 are done, or for a non-decom Change).
+  await postNextPrecheckCard(change).catch(() => {});
+
   // A precheck task resolved here (NovaDesk's own Change Tasks UI) can just as well be the one
   // that completes the trio of 3 manual prechecks — power-off is gated on all 3 being resolved
   // regardless of which system (this UI or NovaConnect) resolved the last of them.
@@ -436,6 +440,10 @@ router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'
       await pushDecomThinking(decomTargets(change), false).catch(() => {});
     }
   }
+
+  // The 3 precheck cards appear one at a time in NovaConnect — post the next one now that this
+  // one is resolved (no-ops once all 3 are done, or for a non-decom Change).
+  await postNextPrecheckCard(change).catch(() => {});
 
   await maybeProceedWithPowerDown(change.id, req.session.user.id).catch(() => {});
 

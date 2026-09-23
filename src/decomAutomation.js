@@ -126,11 +126,38 @@ async function maybeProceedWithPowerDown(changeId, actorId) {
   await proceedWithPowerDown(change, ci, esxiHost, actorId);
 }
 
-// Resolves the approval card + posts the "approved" confirmation + posts the 3 precheck cards.
-// Shared by both the NovaConnect-triggered approve route AND NovaDesk's own Change approve
-// action (routes/changes.js) — a Change can be approved either way, and until this was shared,
-// approving directly in NovaDesk's own UI left the NovaConnect approval card stuck on "pending"
-// forever, since none of this ever ran for that path.
+// Posts the precheck card for the next unresolved MANUAL_TASK (by sequence), if any remain —
+// one at a time, not all 3 at once. Relies on the 3 always being resolved in order: a later
+// task's card is never posted until the earlier one is resolved, so "the lowest-sequence
+// MANUAL_TASK still pending" is always unambiguous. No-ops once all 3 are resolved.
+async function postNextPrecheckCard(change) {
+  const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
+  const nextTask = MANUAL_TASKS
+    .map((desc) => tasks.find((t) => t.description === desc))
+    .find((t) => t && t.status === 'pending');
+  if (!nextTask) return;
+
+  await pushDecomUpdate(
+    decomTargets(change),
+    `Pre-decommission check: **${nextTask.description}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
+    {
+      cardType: 'decom_precheck_task',
+      changeId: change.id,
+      changeNumber: change.number,
+      taskId: nextTask.id,
+      taskNumber: nextTask.task_number,
+      taskDescription: nextTask.description,
+      status: 'pending'
+    }
+  );
+}
+
+// Resolves the approval card + posts the "approved" confirmation + posts the FIRST precheck
+// card (the other 2 follow one at a time, via postNextPrecheckCard, as each prior one gets
+// resolved — see resolvePrecheckTask below). Shared by both the NovaConnect-triggered approve
+// route AND NovaDesk's own Change approve action (routes/changes.js) — a Change can be approved
+// either way, and until this was shared, approving directly in NovaDesk's own UI left the
+// NovaConnect approval card stuck on "pending" forever, since none of this ever ran for that path.
 async function announceDecomApproval(change, approverFullName) {
   await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'approved');
   await pushDecomUpdate(
@@ -144,29 +171,13 @@ async function announceDecomApproval(change, approverFullName) {
   const esxiHost = await resolveEsxiHost(ci.id);
   if (!esxiHost) return;
 
-  // Same pacing as the CI-search and power-down steps — otherwise the precheck cards land in
-  // the same instant as the approval confirmation above.
+  // Same pacing as the CI-search and power-down steps — otherwise the first precheck card lands
+  // in the same instant as the approval confirmation above.
   await pushDecomThinking(decomTargets(change), true);
   await sleep(10000);
   await pushDecomThinking(decomTargets(change), false);
 
-  const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
-  for (const desc of MANUAL_TASKS) {
-    const task = (tasks || []).find((t) => t.description === desc);
-    await pushDecomUpdate(
-      decomTargets(change),
-      `Pre-decommission check: **${desc}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
-      {
-        cardType: 'decom_precheck_task',
-        changeId: change.id,
-        changeNumber: change.number,
-        taskId: task ? task.id : null,
-        taskNumber: task ? task.task_number : null,
-        taskDescription: desc,
-        status: 'pending'
-      }
-    );
-  }
+  await postNextPrecheckCard(change);
 }
 
 async function announceDecomRejection(change, rejectorFullName) {
@@ -289,6 +300,11 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
     await sleep(10000);
     await pushDecomThinking(decomTargets(change), false);
 
+    // The 3 precheck cards appear one at a time, not all together — post the next one now that
+    // this one is resolved (no-ops once all 3 are done). maybeProceedWithPowerDown itself
+    // no-ops unless this was the last of the 3, so calling both unconditionally is safe: exactly
+    // one of them ever does anything on a given call.
+    await postNextPrecheckCard(change);
     await maybeProceedWithPowerDown(change.id, actorId);
   }
 }
@@ -306,5 +322,6 @@ module.exports = {
   announceDecomApproval,
   announceDecomRejection,
   announceGenericDecomStatusChange,
-  resolvePrecheckTask
+  resolvePrecheckTask,
+  postNextPrecheckCard
 };

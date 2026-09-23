@@ -83,13 +83,12 @@
             <td><span class="badge bg-<%= h.CI_STATUS_BADGE[ci.status] %>"><%= h.CI_STATUS_LABELS[ci.status] %></span></td>
             <td><%= ci.ip_address || '—' %></td>
             <td><%= ci.location || '—' %></td>
-            <td class="small text-muted"><%= h.fmtDateShort(ci.created_at) || '—' %></td>
+            <td class="small text-muted"><%- h.fmtDateShort(ci.created_at) || '—' %></td>
             <td><%= ci.owner_name || '—' %></td>
           </tr>
           <% }) %>
         </tbody>
       </table>
-      <div id="cmdbNoLiveResults" class="text-center text-muted py-4" hidden>No configuration items match "<span id="cmdbNoLiveResultsQuery"></span>".</div>
     </div>
   </div>
   <%- include('../partials/pagination', { pagination, query }) %>
@@ -97,10 +96,8 @@
 <script>
   (function () {
     var input = document.getElementById('cmdbLiveSearch');
+    var form = document.getElementById('cmdbFilterForm');
     var exportBtn = document.getElementById('exportCsvBtn');
-    var rows = Array.prototype.slice.call(document.querySelectorAll('#cmdbTableBody tr[data-search]'));
-    var noResults = document.getElementById('cmdbNoLiveResults');
-    var noResultsQuery = document.getElementById('cmdbNoLiveResultsQuery');
     if (!input) return;
 
     if (exportBtn) {
@@ -116,18 +113,16 @@
       input.addEventListener('input', updateHref);
     }
 
-    if (rows.length === 0) return;
-    input.addEventListener('input', function () {
-      var q = input.value.trim().toLowerCase();
-      var visibleCount = 0;
-      rows.forEach(function (row) {
-        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
-        row.hidden = !match;
-        if (match) visibleCount++;
+    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
+    // rows already rendered on this one), instead of the old behavior of hiding/showing
+    // already-rendered rows client-side, which silently missed matches sitting on another page.
+    if (form) {
+      var searchTimer = null;
+      input.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () { form.submit(); }, 400);
       });
-      noResults.hidden = !(q && visibleCount === 0);
-      noResultsQuery.textContent = input.value.trim();
-    });
+    }
   })();
 
   document.querySelectorAll('#cmdbFilterForm .auto-filter').forEach(function (el) {

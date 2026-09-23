@@ -30,7 +30,7 @@
               <p class="card-desc"><%= ch.short_description %></p>
               <div class="card-meta">
                 <span><i class="bi bi-person"></i> <%= ch.assigned_name || 'Unassigned' %></span>
-                <% if (ch.planned_start) { %><span><i class="bi bi-calendar-event"></i> <%= h.fmtDateShort(ch.planned_start) %></span><% } %>
+                <% if (ch.planned_start) { %><span><i class="bi bi-calendar-event"></i> <%- h.fmtDateShort(ch.planned_start) %></span><% } %>
               </div>
             </div>
           <% }) %>

@@ -168,12 +168,33 @@ function taskStatusIcon(status, size = 20) {
     `<circle cx="20" cy="20" r="18" fill="url(#${gradId})"/>${icon.glyph}</svg>`;
 }
 
+// Stored timestamps (nowStr(), in db.js) are always UTC with no timezone suffix. Rendering them
+// as plain server-formatted text means every viewer sees the same string regardless of their
+// own timezone — wrong for anyone not in the server's timezone. Instead this emits a <time>
+// element carrying the real UTC instant in its `datetime` attribute (explicitly marked with a
+// trailing Z), with a UTC-labeled fallback as the initial text; foot.ejs's shared script then
+// replaces that text with the viewer's own local-timezone rendering on load. Callers must use
+// unescaped output (`<%- %>`, not `<%= %>`) since this returns markup, not plain text.
 function fmtDate(d) {
   if (!d) return '';
-  return dayjs(d.replace(' ', 'T')).format('MMM D, YYYY h:mm A');
+  const iso = escapeHtml(d.replace(' ', 'T') + 'Z');
+  const fallback = escapeHtml(dayjs(d.replace(' ', 'T')).format('MMM D, YYYY h:mm A') + ' UTC');
+  return `<time class="local-datetime" datetime="${iso}" data-fmt="datetime">${fallback}</time>`;
 }
 
 function fmtDateShort(d) {
+  if (!d) return '';
+  const iso = escapeHtml(d.replace(' ', 'T') + 'Z');
+  const fallback = escapeHtml(dayjs(d.replace(' ', 'T')).format('MMM D, YYYY') + ' UTC');
+  return `<time class="local-datetime" datetime="${iso}" data-fmt="date">${fallback}</time>`;
+}
+
+// Plain-text date-only formatting (no <time>/localization wrapper) for contexts that embed the
+// result into something other than page HTML, e.g. chart axis labels built inside a client-side
+// <script> block — wrapping those in markup would break the chart, and a day-bucket axis label
+// isn't really a "moment in time" that needs per-viewer timezone correction the way a record's
+// created/updated timestamp is.
+function fmtDateShortPlain(d) {
   if (!d) return '';
   return dayjs(d.replace(' ', 'T')).format('MMM D, YYYY');
 }
@@ -200,5 +221,5 @@ module.exports = {
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
   SLA_HOURS, slaStatus,
   ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion, appVersion,
-  fmtDate, fmtDateShort, taskStatusIcon
+  fmtDate, fmtDateShort, fmtDateShortPlain, taskStatusIcon
 };

@@ -47,7 +47,7 @@
               </div>
               <div class="fw-semibold small mt-1"><%= ch.number %></div>
               <div class="small"><%= ch.short_description %></div>
-              <% if (ch.planned_start) { %><div class="small text-muted">Planned: <%= h.fmtDateShort(ch.planned_start) %></div><% } %>
+              <% if (ch.planned_start) { %><div class="small text-muted">Planned: <%- h.fmtDateShort(ch.planned_start) %></div><% } %>
             </a>
           <% }) %>
         </div>

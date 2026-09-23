@@ -20,7 +20,7 @@
           <% } %>
           <% notifications.forEach(n => { %>
           <tr>
-            <td class="small text-muted"><%= h.fmtDate(n.created_at) %></td>
+            <td class="small text-muted"><%- h.fmtDate(n.created_at) %></td>
             <td><%= n.recipient_name || n.recipient_email %><div class="small text-muted"><%= n.recipient_email %></div></td>
             <td><%= n.subject %></td>
             <td>

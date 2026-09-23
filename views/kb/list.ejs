@@ -49,7 +49,7 @@
             </div>
             <div class="card-footer small text-muted d-flex justify-content-between">
               <span><i class="bi bi-eye"></i> <%= a.view_count %> views</span>
-              <span>Updated <%= h.fmtDateShort(a.updated_at) %></span>
+              <span>Updated <%- h.fmtDateShort(a.updated_at) %></span>
             </div>
           </div>
         </a>
@@ -59,7 +59,6 @@
       <div class="col-12 text-muted text-center py-5" id="kbNoResults">No articles found.</div>
     <% } %>
   </div>
-  <div class="col-12 text-muted text-center py-5" id="kbNoLiveResults" hidden>No articles match "<span id="kbNoLiveResultsQuery"></span>".</div>
   <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
@@ -70,10 +69,8 @@
 
   (function () {
     var input = document.getElementById('kbLiveSearch');
+    var form = document.getElementById('kbFilterForm');
     var exportBtn = document.getElementById('exportCsvBtn');
-    var cards = Array.prototype.slice.call(document.querySelectorAll('.kb-article-card[data-search]'));
-    var noResults = document.getElementById('kbNoLiveResults');
-    var noResultsQuery = document.getElementById('kbNoLiveResultsQuery');
     if (!input) return;
 
     if (exportBtn) {
@@ -89,18 +86,16 @@
       input.addEventListener('input', updateHref);
     }
 
-    if (cards.length === 0) return;
-    input.addEventListener('input', function () {
-      var q = input.value.trim().toLowerCase();
-      var visibleCount = 0;
-      cards.forEach(function (card) {
-        var match = !q || card.getAttribute('data-search').indexOf(q) !== -1;
-        card.hidden = !match;
-        if (match) visibleCount++;
+    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
+    // cards already rendered on this one), instead of the old behavior of hiding/showing
+    // already-rendered cards client-side, which silently missed matches sitting on another page.
+    if (form) {
+      var searchTimer = null;
+      input.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(function () { form.submit(); }, 400);
       });
-      noResults.hidden = !(q && visibleCount === 0);
-      noResultsQuery.textContent = input.value.trim();
-    });
+    }
   })();
 </script>
 <%- include('../partials/foot') %>

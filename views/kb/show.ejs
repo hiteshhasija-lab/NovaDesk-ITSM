@@ -4,7 +4,7 @@
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h4 class="mb-0"><%= article.title %> <% if (article.status === 'draft') { %><span class="badge bg-secondary ms-2">Draft</span><% } %></h4>
-      <div class="text-muted small"><%= article.number %> · <span class="text-capitalize"><%= article.category %></span> · by <%= article.author_name || 'Unknown' %> · Updated <%= h.fmtDateShort(article.updated_at) %> · <i class="bi bi-eye"></i> <%= article.view_count %> views</div>
+      <div class="text-muted small"><%= article.number %> · <span class="text-capitalize"><%= article.category %></span> · by <%= article.author_name || 'Unknown' %> · Updated <%- h.fmtDateShort(article.updated_at) %> · <i class="bi bi-eye"></i> <%= article.view_count %> views</div>
     </div>
     <div class="d-flex gap-2">
       <% if (currentUser.role !== 'user') { %>

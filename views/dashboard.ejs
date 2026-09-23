@@ -116,7 +116,7 @@
               <div>
                 <span class="badge bg-<%= h.CHANGE_STATUS_BADGE[ch.status] %> me-2"><%= h.CHANGE_STATUS_LABELS[ch.status] %></span>
                 <strong><%= ch.number %></strong> — <%= ch.short_description %>
-                <div class="small text-muted"><%= ch.requester_name %> · Planned: <%= h.fmtDateShort(ch.planned_start) %></div>
+                <div class="small text-muted"><%= ch.requester_name %> · Planned: <%- h.fmtDateShort(ch.planned_start) %></div>
               </div>
               <i class="bi bi-chevron-right text-muted"></i>
             </a>
@@ -196,7 +196,7 @@
     Chart.defaults.color = mutedColor;
     Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
-    var trendLabels = <%- JSON.stringify(trend.map(t => h.fmtDateShort(t.day).replace(/, \d{4}$/, ''))) %>;
+    var trendLabels = <%- JSON.stringify(trend.map(t => h.fmtDateShortPlain(t.day).replace(/, \d{4}$/, ''))) %>;
     var trendData = <%- JSON.stringify(trend.map(t => t.c)) %>;
 
     allCharts.push(new Chart(document.getElementById('trendChart'), {

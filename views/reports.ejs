@@ -132,7 +132,7 @@
     Chart.defaults.color = mutedColor;
     Chart.defaults.font.family = "system-ui, -apple-system, 'Segoe UI', sans-serif";
 
-    var volumeLabels = <%- JSON.stringify(volume.map(v => h.fmtDateShort(v.day).replace(/, \d{4}$/, ''))) %>;
+    var volumeLabels = <%- JSON.stringify(volume.map(v => h.fmtDateShortPlain(v.day).replace(/, \d{4}$/, ''))) %>;
     var volumeData = <%- JSON.stringify(volume.map(v => v.c)) %>;
     allCharts.push(new Chart(document.getElementById('volumeChart'), {
       type: 'line',

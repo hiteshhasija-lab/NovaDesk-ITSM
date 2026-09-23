@@ -31,7 +31,7 @@
             <div class="list-group-item small text-muted d-flex align-items-center gap-2">
               <i class="bi bi-clock-history"></i>
               <span><strong><%= a.actor_name || 'System' %></strong> — <%= a.message %></span>
-              <span class="ms-auto"><%= h.fmtDate(a.created_at) %></span>
+              <span class="ms-auto"><%- h.fmtDate(a.created_at) %></span>
             </div>
           <% }) %>
         </div>
@@ -46,8 +46,8 @@
             <dt class="col-sm-6">Requested By</dt><dd class="col-sm-6"><%= request.requester_name || '—' %></dd>
             <dt class="col-sm-6">Fulfillment Group</dt><dd class="col-sm-6"><%= request.fulfillment_group || '—' %></dd>
             <dt class="col-sm-6">Assigned To</dt><dd class="col-sm-6"><%= request.assigned_name || 'Unassigned' %></dd>
-            <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%= h.fmtDate(request.created_at) %></dd>
-            <dt class="col-sm-6">Fulfilled</dt><dd class="col-sm-6"><%= request.fulfilled_at ? h.fmtDate(request.fulfilled_at) : '—' %></dd>
+            <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%- h.fmtDate(request.created_at) %></dd>
+            <dt class="col-sm-6">Fulfilled</dt><dd class="col-sm-6"><%- request.fulfilled_at ? h.fmtDate(request.fulfilled_at) : '—' %></dd>
           </dl>
         </div>
       </div>
