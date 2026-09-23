@@ -222,16 +222,18 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
 
   const startedAt = Date.now();
 
+  // Dots stop BEFORE the real destroy command runs, not during it — see the matching fix in
+  // decomAutomation.js's proceedWithPowerDown for why (caught live: the command was executing
+  // while the animation was still showing, since thinking=false previously only fired in a
+  // `finally` after the command had already completed).
   await pushDecomThinking(decomTargets(change), true);
-  let vm;
-  try {
-    const sessionId = await esxi.login(esxiHost.ip_address);
-    vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
-    if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
-    await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
-  } finally {
-    await pushDecomThinking(decomTargets(change), false);
-  }
+  await sleep(10000);
+  await pushDecomThinking(decomTargets(change), false);
+
+  const sessionId = await esxi.login(esxiHost.ip_address);
+  const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+  if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+  await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
   await markTaskDone(change.id, 'Destroy VM & release storage');
   await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
 
@@ -335,6 +337,11 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
 
   const esxiHost = await resolveEsxiHost(ci.id);
   if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
+
+  // Same "dots stop before the real command runs" pacing as confirm-destroy above.
+  await pushDecomThinking(decomTargets(change), true);
+  await sleep(10000);
+  await pushDecomThinking(decomTargets(change), false);
 
   const sessionId = await esxi.login(esxiHost.ip_address);
   const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);

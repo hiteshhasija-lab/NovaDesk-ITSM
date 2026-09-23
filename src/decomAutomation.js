@@ -75,9 +75,15 @@ async function allManualTasksResolved(changeId) {
 // maybeProceedWithPowerDown below), not just unconditionally from approve itself.
 async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
   await pushDecomUpdate(decomTargets(change), `⏳ Proceeding with the Power Down...`);
+  // The dots represent "thinking" — they must stop BEFORE the real ESXi command runs, not
+  // during it. Previously the power-off call ran inside the try block with thinking=false only
+  // in `finally`, so it fired while the dots were still animating (caught live: power-off had
+  // already executed while the animation was still showing).
   await pushDecomThinking(decomTargets(change), true);
+  await sleep(10000);
+  await pushDecomThinking(decomTargets(change), false);
+
   try {
-    await sleep(10000);
     const sessionId = await esxi.login(esxiHost.ip_address);
     const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
     if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}.`);
@@ -92,8 +98,6 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
   } catch (e) {
     await logActivity('change', change.id, actorId, `ESXi power-off failed: ${e.message}`);
     await pushDecomUpdate(decomTargets(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
-  } finally {
-    await pushDecomThinking(decomTargets(change), false);
   }
 }
 
