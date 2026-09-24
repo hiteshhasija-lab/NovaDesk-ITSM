@@ -58,36 +58,38 @@
       return `<a href="${h.withQuery(query, { sort: col, dir: nextDir, page: 1 })}" class="text-decoration-none text-reset">${label} <i class="bi ${icon} small"></i></a>`;
     }
   %>
-  <div class="card">
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <thead class="table-light">
-          <tr>
-            <th><%- sortHeader('number', 'Number') %></th><th>Short Description</th><th><%- sortHeader('priority', 'Priority') %></th><th><%- sortHeader('status', 'Status') %></th>
-            <th>Assigned To</th><th>Affected CI</th><th>Linked Incidents</th><th><%- sortHeader('created_at', 'Created') %></th>
-          </tr>
-        </thead>
-        <tbody id="problemsTableBody">
-          <% if (problems.length === 0) { %>
-            <tr><td colspan="8" class="text-center text-muted py-4">No problems found.</td></tr>
-          <% } %>
-          <% problems.forEach(p => { %>
-          <tr onclick="window.location='/problems/<%= p.id %>'" data-search="<%= [p.number, p.short_description, p.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
-            <td class="fw-semibold"><%= p.number %></td>
-            <td><%= p.short_description %></td>
-            <td><span class="badge bg-<%= h.PRIORITY_BADGE[p.priority] %>">P<%= p.priority %> · <%= h.PRIORITY_LABELS[p.priority] %></span></td>
-            <td><span class="badge bg-<%= h.PROBLEM_STATUS_BADGE[p.status] %>"><%= h.PROBLEM_STATUS_LABELS[p.status] %></span></td>
-            <td><%= p.assigned_name || 'Unassigned' %></td>
-            <td><%= p.ci_name || '—' %></td>
-            <td><span class="badge bg-secondary"><%= p.incident_count %></span></td>
-            <td class="small text-muted"><%- h.fmtDateShort(p.created_at) %></td>
-          </tr>
-          <% }) %>
-        </tbody>
-      </table>
+  <div id="problemsResults">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th><%- sortHeader('number', 'Number') %></th><th>Short Description</th><th><%- sortHeader('priority', 'Priority') %></th><th><%- sortHeader('status', 'Status') %></th>
+              <th>Assigned To</th><th>Affected CI</th><th>Linked Incidents</th><th><%- sortHeader('created_at', 'Created') %></th>
+            </tr>
+          </thead>
+          <tbody id="problemsTableBody">
+            <% if (problems.length === 0) { %>
+              <tr><td colspan="8" class="text-center text-muted py-4">No problems found.</td></tr>
+            <% } %>
+            <% problems.forEach(p => { %>
+            <tr onclick="window.location='/problems/<%= p.id %>'" data-search="<%= [p.number, p.short_description, p.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+              <td class="fw-semibold"><%= p.number %></td>
+              <td><%= p.short_description %></td>
+              <td><span class="badge bg-<%= h.PRIORITY_BADGE[p.priority] %>">P<%= p.priority %> · <%= h.PRIORITY_LABELS[p.priority] %></span></td>
+              <td><span class="badge bg-<%= h.PROBLEM_STATUS_BADGE[p.status] %>"><%= h.PROBLEM_STATUS_LABELS[p.status] %></span></td>
+              <td><%= p.assigned_name || 'Unassigned' %></td>
+              <td><%= p.ci_name || '—' %></td>
+              <td><span class="badge bg-secondary"><%= p.incident_count %></span></td>
+              <td class="small text-muted"><%- h.fmtDateShort(p.created_at) %></td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
     </div>
+    <%- include('../partials/pagination', { pagination, query }) %>
   </div>
-  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>
@@ -97,7 +99,7 @@
 
   (function () {
     var input = document.getElementById('problemsLiveSearch');
-    var form = document.getElementById('problemsFilterForm');
+    var resultsEl = document.getElementById('problemsResults');
     var exportBtn = document.getElementById('exportCsvBtn');
     if (!input) return;
 
@@ -114,14 +116,33 @@
       input.addEventListener('input', updateHref);
     }
 
-    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
-    // rows already rendered on this one), instead of the old behavior of hiding/showing
-    // already-rendered rows client-side, which silently missed matches sitting on another page.
-    if (form) {
+    // Debounced live search — fetches the real server-side results (the full dataset, not just
+    // the rows already on this page) and swaps them in without a full page navigation, so the
+    // search box never loses focus or cursor position while typing. A generation counter
+    // discards any response that's no longer the latest one requested.
+    if (resultsEl) {
       var searchTimer = null;
+      var generation = 0;
       input.addEventListener('input', function () {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () { form.submit(); }, 400);
+        searchTimer = setTimeout(function () {
+          var params = new URLSearchParams(window.location.search);
+          var q = input.value.trim();
+          if (q) { params.set('q', q); } else { params.delete('q'); }
+          params.delete('page');
+          var qs = params.toString();
+          var url = window.location.pathname + (qs ? '?' + qs : '');
+          var myGen = ++generation;
+          fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (res) { return res.text(); })
+            .then(function (html) {
+              if (myGen !== generation) return;
+              var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('problemsResults');
+              if (fresh) resultsEl.innerHTML = fresh.innerHTML;
+              history.replaceState(null, '', url);
+            })
+            .catch(function () {});
+        }, 350);
       });
     }
   })();

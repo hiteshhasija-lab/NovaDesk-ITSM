@@ -34,32 +34,34 @@
       <button class="btn btn-sm btn-outline-secondary w-100" type="submit">Go</button>
     </div>
   </form>
-  <div class="row g-3" id="kbArticleGrid">
-    <% articles.forEach(a => { %>
-      <div class="col-md-6 kb-article-card" data-search="<%= [a.title, a.body].filter(Boolean).join(' ').toLowerCase() %>">
-        <a href="/kb/<%= a.id %>" class="text-decoration-none">
-          <div class="card h-100 tile-card">
-            <div class="card-body">
-              <div class="d-flex justify-content-between align-items-start">
-                <h6 class="fw-semibold mb-1"><%= a.title %></h6>
-                <% if (a.status === 'draft') { %><span class="badge bg-secondary ms-2">Draft</span><% } %>
+  <div id="kbResults">
+    <div class="row g-3" id="kbArticleGrid">
+      <% articles.forEach(a => { %>
+        <div class="col-md-6 kb-article-card" data-search="<%= [a.title, a.body].filter(Boolean).join(' ').toLowerCase() %>">
+          <a href="/kb/<%= a.id %>" class="text-decoration-none">
+            <div class="card h-100 tile-card">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                  <h6 class="fw-semibold mb-1"><%= a.title %></h6>
+                  <% if (a.status === 'draft') { %><span class="badge bg-secondary ms-2">Draft</span><% } %>
+                </div>
+                <div class="small text-muted mb-2"><%= a.number %> · <span class="text-capitalize"><%= a.category %></span> · by <%= a.author_name || 'Unknown' %></div>
+                <p class="small text-muted mb-0"><%= a.body.replace(/\n/g,' ').slice(0, 140) %>…</p>
               </div>
-              <div class="small text-muted mb-2"><%= a.number %> · <span class="text-capitalize"><%= a.category %></span> · by <%= a.author_name || 'Unknown' %></div>
-              <p class="small text-muted mb-0"><%= a.body.replace(/\n/g,' ').slice(0, 140) %>…</p>
+              <div class="card-footer small text-muted d-flex justify-content-between">
+                <span><i class="bi bi-eye"></i> <%= a.view_count %> views</span>
+                <span>Updated <%- h.fmtDateShort(a.updated_at) %></span>
+              </div>
             </div>
-            <div class="card-footer small text-muted d-flex justify-content-between">
-              <span><i class="bi bi-eye"></i> <%= a.view_count %> views</span>
-              <span>Updated <%- h.fmtDateShort(a.updated_at) %></span>
-            </div>
-          </div>
-        </a>
-      </div>
-    <% }) %>
-    <% if (articles.length === 0) { %>
-      <div class="col-12 text-muted text-center py-5" id="kbNoResults">No articles found.</div>
-    <% } %>
+          </a>
+        </div>
+      <% }) %>
+      <% if (articles.length === 0) { %>
+        <div class="col-12 text-muted text-center py-5" id="kbNoResults">No articles found.</div>
+      <% } %>
+    </div>
+    <%- include('../partials/pagination', { pagination, query }) %>
   </div>
-  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>
@@ -69,7 +71,7 @@
 
   (function () {
     var input = document.getElementById('kbLiveSearch');
-    var form = document.getElementById('kbFilterForm');
+    var resultsEl = document.getElementById('kbResults');
     var exportBtn = document.getElementById('exportCsvBtn');
     if (!input) return;
 
@@ -86,14 +88,33 @@
       input.addEventListener('input', updateHref);
     }
 
-    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
-    // cards already rendered on this one), instead of the old behavior of hiding/showing
-    // already-rendered cards client-side, which silently missed matches sitting on another page.
-    if (form) {
+    // Debounced live search — fetches the real server-side results (the full dataset, not just
+    // the cards already on this page) and swaps them in without a full page navigation, so the
+    // search box never loses focus or cursor position while typing. A generation counter
+    // discards any response that's no longer the latest one requested.
+    if (resultsEl) {
       var searchTimer = null;
+      var generation = 0;
       input.addEventListener('input', function () {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () { form.submit(); }, 400);
+        searchTimer = setTimeout(function () {
+          var params = new URLSearchParams(window.location.search);
+          var q = input.value.trim();
+          if (q) { params.set('q', q); } else { params.delete('q'); }
+          params.delete('page');
+          var qs = params.toString();
+          var url = window.location.pathname + (qs ? '?' + qs : '');
+          var myGen = ++generation;
+          fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (res) { return res.text(); })
+            .then(function (html) {
+              if (myGen !== generation) return;
+              var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('kbResults');
+              if (fresh) resultsEl.innerHTML = fresh.innerHTML;
+              history.replaceState(null, '', url);
+            })
+            .catch(function () {});
+        }, 350);
       });
     }
   })();

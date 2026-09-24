@@ -107,53 +107,55 @@
       return `<a href="${h.withQuery(query, { sort: col, dir: nextDir, page: 1 })}" class="text-decoration-none text-reset">${label} <i class="bi ${icon} small"></i></a>`;
     }
   %>
-  <div class="card">
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <thead class="table-light">
-          <tr>
-            <% if (currentUser.role !== 'user') { %><th style="width:2rem;"><input type="checkbox" id="selectAll" class="form-check-input"></th><% } %>
-            <th><%- sortHeader('number', 'Number') %></th><th>Short Description</th><th><%- sortHeader('priority', 'Priority') %></th><th><%- sortHeader('status', 'Status') %></th><th>SLA</th>
-            <th>Caller</th><th>Assigned To</th><th>Affected CI</th><th><%- sortHeader('created_at', 'Created') %></th>
-          </tr>
-        </thead>
-        <tbody id="incidentsTableBody">
-          <% if (incidents.length === 0) { %>
-            <tr><td colspan="10" class="text-center text-muted py-4">No incidents found.</td></tr>
-          <% } %>
-          <% incidents.forEach(inc => { %>
-          <% const sla = h.slaStatus(inc); %>
-          <tr onclick="window.location='/incidents/<%= inc.id %>'" data-search="<%= [inc.number, inc.short_description, inc.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
-            <% if (currentUser.role !== 'user') { %>
-            <td onclick="event.stopPropagation()"><input type="checkbox" class="form-check-input row-check" value="<%= inc.id %>"></td>
+  <div id="incidentsResults">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <% if (currentUser.role !== 'user') { %><th style="width:2rem;"><input type="checkbox" id="selectAll" class="form-check-input"></th><% } %>
+              <th><%- sortHeader('number', 'Number') %></th><th>Short Description</th><th><%- sortHeader('priority', 'Priority') %></th><th><%- sortHeader('status', 'Status') %></th><th>SLA</th>
+              <th>Caller</th><th>Assigned To</th><th>Affected CI</th><th><%- sortHeader('created_at', 'Created') %></th>
+            </tr>
+          </thead>
+          <tbody id="incidentsTableBody">
+            <% if (incidents.length === 0) { %>
+              <tr><td colspan="10" class="text-center text-muted py-4">No incidents found.</td></tr>
             <% } %>
-            <td class="fw-semibold"><%= inc.number %></td>
-            <td><%= inc.short_description %></td>
-            <td><span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %>">P<%= inc.priority %> · <%= h.PRIORITY_LABELS[inc.priority] %></span></td>
-            <td><span class="badge bg-<%= h.INCIDENT_STATUS_BADGE[inc.status] %>"><%= h.INCIDENT_STATUS_LABELS[inc.status] %></span></td>
-            <td>
-              <span class="badge bg-<%= sla.badge %>"><%= sla.label %></span>
-              <% if (sla.key === 'on_track' || sla.key === 'at_risk') { %>
-                <div class="small text-muted"><%- h.fmtDateShort(inc.sla_due_at) %></div>
+            <% incidents.forEach(inc => { %>
+            <% const sla = h.slaStatus(inc); %>
+            <tr onclick="window.location='/incidents/<%= inc.id %>'" data-search="<%= [inc.number, inc.short_description, inc.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+              <% if (currentUser.role !== 'user') { %>
+              <td onclick="event.stopPropagation()"><input type="checkbox" class="form-check-input row-check" value="<%= inc.id %>"></td>
               <% } %>
-            </td>
-            <td><%= inc.caller_name || '—' %></td>
-            <td><%= inc.assigned_name || '—' %></td>
-            <td><%= inc.ci_name || '—' %></td>
-            <td class="small text-muted"><%- h.fmtDateShort(inc.created_at) %></td>
-          </tr>
-          <% }) %>
-        </tbody>
-      </table>
+              <td class="fw-semibold"><%= inc.number %></td>
+              <td><%= inc.short_description %></td>
+              <td><span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %>">P<%= inc.priority %> · <%= h.PRIORITY_LABELS[inc.priority] %></span></td>
+              <td><span class="badge bg-<%= h.INCIDENT_STATUS_BADGE[inc.status] %>"><%= h.INCIDENT_STATUS_LABELS[inc.status] %></span></td>
+              <td>
+                <span class="badge bg-<%= sla.badge %>"><%= sla.label %></span>
+                <% if (sla.key === 'on_track' || sla.key === 'at_risk') { %>
+                  <div class="small text-muted"><%- h.fmtDateShort(inc.sla_due_at) %></div>
+                <% } %>
+              </td>
+              <td><%= inc.caller_name || '—' %></td>
+              <td><%= inc.assigned_name || '—' %></td>
+              <td><%= inc.ci_name || '—' %></td>
+              <td class="small text-muted"><%- h.fmtDateShort(inc.created_at) %></td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
     </div>
+    <%- include('../partials/pagination', { pagination, query }) %>
   </div>
-  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>
   (function () {
     var input = document.getElementById('incidentLiveSearch');
-    var form = document.getElementById('incidentFilterForm');
+    var resultsEl = document.getElementById('incidentsResults');
     var exportBtn = document.getElementById('exportCsvBtn');
     if (!input) return;
 
@@ -170,14 +172,33 @@
       input.addEventListener('input', updateHref);
     }
 
-    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
-    // rows already rendered on this one), instead of the old behavior of hiding/showing
-    // already-rendered rows client-side, which silently missed matches sitting on another page.
-    if (form) {
+    // Debounced live search — fetches the real server-side results (the full dataset, not just
+    // the rows already on this page) and swaps them in without a full page navigation, so the
+    // search box never loses focus or cursor position while typing. A generation counter
+    // discards any response that's no longer the latest one requested.
+    if (resultsEl) {
       var searchTimer = null;
+      var generation = 0;
       input.addEventListener('input', function () {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () { form.submit(); }, 400);
+        searchTimer = setTimeout(function () {
+          var params = new URLSearchParams(window.location.search);
+          var q = input.value.trim();
+          if (q) { params.set('q', q); } else { params.delete('q'); }
+          params.delete('page');
+          var qs = params.toString();
+          var url = window.location.pathname + (qs ? '?' + qs : '');
+          var myGen = ++generation;
+          fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (res) { return res.text(); })
+            .then(function (html) {
+              if (myGen !== generation) return;
+              var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('incidentsResults');
+              if (fresh) resultsEl.innerHTML = fresh.innerHTML;
+              history.replaceState(null, '', url);
+            })
+            .catch(function () {});
+        }, 350);
       });
     }
   })();
@@ -192,7 +213,6 @@
   (function () {
     const toolbar = document.getElementById('bulkToolbar');
     const countEl = document.getElementById('bulkCount');
-    const selectAll = document.getElementById('selectAll');
     const checks = () => Array.from(document.querySelectorAll('.row-check'));
 
     function refresh() {
@@ -201,15 +221,23 @@
       toolbar.hidden = selected.length === 0;
     }
 
-    selectAll.addEventListener('change', function () {
-      checks().forEach(c => { c.checked = selectAll.checked; });
-      refresh();
+    // #selectAll and .row-check both live inside #incidentsResults, which the live-search script
+    // replaces wholesale on every search — direct addEventListener calls on those specific nodes
+    // would go stale the moment a search swaps in fresh ones. Delegating from `document` means
+    // this keeps working for whichever checkboxes currently exist, no re-wiring needed.
+    document.addEventListener('change', function (e) {
+      if (e.target.id === 'selectAll') {
+        checks().forEach(c => { c.checked = e.target.checked; });
+        refresh();
+      } else if (e.target.matches('.row-check')) {
+        refresh();
+      }
     });
-    checks().forEach(c => c.addEventListener('change', refresh));
 
     document.getElementById('bulkClear').addEventListener('click', function () {
       checks().forEach(c => { c.checked = false; });
-      selectAll.checked = false;
+      const selectAll = document.getElementById('selectAll');
+      if (selectAll) selectAll.checked = false;
       refresh();
     });
 

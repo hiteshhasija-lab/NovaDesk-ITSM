@@ -62,35 +62,37 @@
       return `<a href="${h.withQuery(query, { sort: col, dir: nextDir, page: 1 })}" class="text-decoration-none text-reset">${label} <i class="bi ${icon} small"></i></a>`;
     }
   %>
-  <div class="card">
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <thead class="table-light">
-          <tr>
-            <th><%- sortHeader('number', 'Number') %></th><th><%- sortHeader('item_name', 'Item') %></th><th><%- sortHeader('status', 'Status') %></th>
-            <% if (!isEndUser) { %><th>Requested By</th><% } %>
-            <th>Assigned To</th><th><%- sortHeader('created_at', 'Created') %></th>
-          </tr>
-        </thead>
-        <tbody id="requestsTableBody">
-          <% if (requests.length === 0) { %>
-            <tr><td colspan="6" class="text-center text-muted py-4">No requests found.</td></tr>
-          <% } %>
-          <% requests.forEach(r => { %>
-          <tr onclick="window.location='/requests/<%= r.id %>'" data-search="<%= [r.number, r.item_name].filter(Boolean).join(' ').toLowerCase() %>">
-            <td class="fw-semibold"><%= r.number %></td>
-            <td><i class="bi <%= r.item_icon %> me-1"></i><%= r.item_name %></td>
-            <td><span class="badge bg-<%= h.REQUEST_STATUS_BADGE[r.status] %>"><%= h.REQUEST_STATUS_LABELS[r.status] %></span></td>
-            <% if (!isEndUser) { %><td><%= r.requester_name || '—' %></td><% } %>
-            <td><%= r.assigned_name || '—' %></td>
-            <td class="small text-muted"><%- h.fmtDateShort(r.created_at) %></td>
-          </tr>
-          <% }) %>
-        </tbody>
-      </table>
+  <div id="requestsResults">
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th><%- sortHeader('number', 'Number') %></th><th><%- sortHeader('item_name', 'Item') %></th><th><%- sortHeader('status', 'Status') %></th>
+              <% if (!isEndUser) { %><th>Requested By</th><% } %>
+              <th>Assigned To</th><th><%- sortHeader('created_at', 'Created') %></th>
+            </tr>
+          </thead>
+          <tbody id="requestsTableBody">
+            <% if (requests.length === 0) { %>
+              <tr><td colspan="6" class="text-center text-muted py-4">No requests found.</td></tr>
+            <% } %>
+            <% requests.forEach(r => { %>
+            <tr onclick="window.location='/requests/<%= r.id %>'" data-search="<%= [r.number, r.item_name].filter(Boolean).join(' ').toLowerCase() %>">
+              <td class="fw-semibold"><%= r.number %></td>
+              <td><i class="bi <%= r.item_icon %> me-1"></i><%= r.item_name %></td>
+              <td><span class="badge bg-<%= h.REQUEST_STATUS_BADGE[r.status] %>"><%= h.REQUEST_STATUS_LABELS[r.status] %></span></td>
+              <% if (!isEndUser) { %><td><%= r.requester_name || '—' %></td><% } %>
+              <td><%= r.assigned_name || '—' %></td>
+              <td class="small text-muted"><%- h.fmtDateShort(r.created_at) %></td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
     </div>
+    <%- include('../partials/pagination', { pagination, query }) %>
   </div>
-  <%- include('../partials/pagination', { pagination, query }) %>
 </div>
 
 <script>
@@ -100,7 +102,7 @@
 
   (function () {
     var input = document.getElementById('requestsLiveSearch');
-    var form = document.getElementById('requestsFilterForm');
+    var resultsEl = document.getElementById('requestsResults');
     var exportBtn = document.getElementById('exportCsvBtn');
     if (!input) return;
 
@@ -117,14 +119,33 @@
       input.addEventListener('input', updateHref);
     }
 
-    // Debounced auto-submit — searches the full dataset server-side (every page, not just the
-    // rows already rendered on this one), instead of the old behavior of hiding/showing
-    // already-rendered rows client-side, which silently missed matches sitting on another page.
-    if (form) {
+    // Debounced live search — fetches the real server-side results (the full dataset, not just
+    // the rows already on this page) and swaps them in without a full page navigation, so the
+    // search box never loses focus or cursor position while typing. A generation counter
+    // discards any response that's no longer the latest one requested.
+    if (resultsEl) {
       var searchTimer = null;
+      var generation = 0;
       input.addEventListener('input', function () {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(function () { form.submit(); }, 400);
+        searchTimer = setTimeout(function () {
+          var params = new URLSearchParams(window.location.search);
+          var q = input.value.trim();
+          if (q) { params.set('q', q); } else { params.delete('q'); }
+          params.delete('page');
+          var qs = params.toString();
+          var url = window.location.pathname + (qs ? '?' + qs : '');
+          var myGen = ++generation;
+          fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (res) { return res.text(); })
+            .then(function (html) {
+              if (myGen !== generation) return;
+              var fresh = new DOMParser().parseFromString(html, 'text/html').getElementById('requestsResults');
+              if (fresh) resultsEl.innerHTML = fresh.innerHTML;
+              history.replaceState(null, '', url);
+            })
+            .catch(function () {});
+        }, 350);
       });
     }
   })();

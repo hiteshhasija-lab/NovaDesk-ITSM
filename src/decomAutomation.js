@@ -139,7 +139,7 @@ async function postNextPrecheckCard(change) {
 
   await pushDecomUpdate(
     decomTargets(change),
-    `Pre-decommission check: **${nextTask.description}** isn't automated in NovaDesk. Confirm when completed manually, or skip if not applicable.`,
+    `Pre-decommission check: **${nextTask.description}**. Confirm when completed, or skip if not applicable.`,
     {
       cardType: 'decom_precheck_task',
       changeId: change.id,

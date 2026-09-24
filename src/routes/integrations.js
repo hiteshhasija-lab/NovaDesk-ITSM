@@ -220,8 +220,6 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   const esxiHost = await resolveEsxiHost(ci.id);
   if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
 
-  const startedAt = Date.now();
-
   // Dots stop BEFORE the real destroy command runs, not during it — see the matching fix in
   // decomAutomation.js's proceedWithPowerDown for why (caught live: the command was executing
   // while the animation was still showing, since thinking=false previously only fired in a
@@ -307,7 +305,6 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
       cmdbStatus: 'CI retired, audit-frozen',
       reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
       trackerRow: trackerRow || '—',
-      elapsedSim: formatElapsed(Date.now() - startedAt),
       elapsedReal: formatElapsed(Date.now() - createdAtMs)
     }
   );
