@@ -4,7 +4,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
-const { TRACKER_PATH } = require('../decomTracker');
+const { TRACKER_PATH, readTrackerForDownload } = require('../decomTracker');
 
 const router = createAsyncRouter();
 
@@ -107,7 +107,19 @@ router.get('/decommissioned-tracker.xlsx', requireAuth, requireRole('admin', 'ag
       message: 'No servers have been decommissioned yet, so the Decommissioned Tracker file doesn\'t exist.'
     });
   }
-  res.download(TRACKER_PATH, 'Decommissioned Tracker.xlsx');
+
+  // ?tz is the downloading browser's own IANA zone (see the link's JS in cmdb/list.ejs) — used
+  // to convert the stored UTC "Decommissioned Date" column into that viewer's local time. A
+  // missing/unrecognized value just falls back to serving the file as stored (UTC).
+  let buffer;
+  try {
+    buffer = await readTrackerForDownload(req.query.tz);
+  } catch (e) {
+    buffer = await readTrackerForDownload(null);
+  }
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="Decommissioned Tracker.xlsx"');
+  res.send(buffer);
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {

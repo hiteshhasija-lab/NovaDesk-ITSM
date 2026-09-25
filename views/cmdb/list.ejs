@@ -6,7 +6,7 @@
     <% if (currentUser.role !== 'user') { %>
     <div class="d-flex gap-2">
       <a href="/cmdb/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
-      <a href="/cmdb/decommissioned-tracker.xlsx" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-excel"></i> Decommissioned Tracker</a>
+      <a href="/cmdb/decommissioned-tracker.xlsx" id="decomTrackerBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-file-earmark-excel"></i> Decommissioned Tracker</a>
       <a href="/cmdb/new" class="btn btn-success btn-sm"><i class="bi bi-plus-lg"></i> New CI</a>
     </div>
     <% } %>
@@ -151,5 +151,18 @@
   document.querySelectorAll('#cmdbFilterForm .auto-filter').forEach(function (el) {
     el.addEventListener('change', function () { el.form.submit(); });
   });
+
+  // The tracker's "Decommissioned Date" column is stored as UTC (like every other timestamp in
+  // the app, see fmtDate in helpers.js) — Excel has no client-side JS to re-render it per-viewer
+  // the way HTML pages do, so instead the download itself carries the downloader's own IANA
+  // timezone and the server converts that column before streaming the file.
+  (function () {
+    var trackerBtn = document.getElementById('decomTrackerBtn');
+    if (!trackerBtn) return;
+    try {
+      var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) trackerBtn.setAttribute('href', trackerBtn.getAttribute('href') + '?tz=' + encodeURIComponent(tz));
+    } catch (e) {}
+  })();
 </script>
 <%- include('../partials/foot') %>
