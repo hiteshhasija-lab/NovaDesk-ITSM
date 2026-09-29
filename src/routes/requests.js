@@ -130,7 +130,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const { status, assigned_to } = req.body;
+  const { status, assigned_to, assignment_group } = req.body;
   const existing = await db.prepare('SELECT * FROM service_requests WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Request not found.' });
 
@@ -142,8 +142,8 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   await db.prepare(`
-    UPDATE service_requests SET status = ?, assigned_to = ?, fulfilled_at = ?, updated_at = ? WHERE id = ?
-  `).run(status, assigned_to || null, fulfilled_at, nowStr(), req.params.id);
+    UPDATE service_requests SET status = ?, assigned_to = ?, assignment_group = ?, fulfilled_at = ?, updated_at = ? WHERE id = ?
+  `).run(status, assigned_to || null, assignment_group || null, fulfilled_at, nowStr(), req.params.id);
 
   if (status !== existing.status) {
     await logActivity('request', existing.id, req.session.user.id,

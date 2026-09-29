@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS problems (
   affected_ci_id INTEGER REFERENCES cmdb_ci(id),
   raised_by INTEGER REFERENCES users(id),
   assigned_to INTEGER REFERENCES users(id),
+  assignment_group TEXT,
   created_at TEXT NOT NULL ${TS_DEFAULT},
   updated_at TEXT NOT NULL ${TS_DEFAULT},
   resolved_at TEXT,
@@ -183,6 +184,7 @@ CREATE TABLE IF NOT EXISTS changes (
   status TEXT NOT NULL DEFAULT 'draft', -- draft, submitted, approved, rejected, scheduled, in_progress, implemented, closed, cancelled
   requested_by INTEGER REFERENCES users(id),
   assigned_to INTEGER REFERENCES users(id),
+  assignment_group TEXT,
   affected_ci_id INTEGER REFERENCES cmdb_ci(id),
   planned_start TEXT,
   planned_end TEXT,
@@ -197,6 +199,9 @@ CREATE TABLE IF NOT EXISTS changes (
 
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_channel_id INTEGER;
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_conversation_id INTEGER;
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS assignment_group TEXT;
+ALTER TABLE problems ADD COLUMN IF NOT EXISTS assignment_group TEXT;
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS assignment_group TEXT;
 
 CREATE TABLE IF NOT EXISTS change_comments (
   id SERIAL PRIMARY KEY,
@@ -259,6 +264,7 @@ CREATE TABLE IF NOT EXISTS service_requests (
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'submitted', -- submitted, in_progress, fulfilled, rejected, cancelled
   assigned_to INTEGER REFERENCES users(id),
+  assignment_group TEXT,
   created_at TEXT NOT NULL ${TS_DEFAULT},
   updated_at TEXT NOT NULL ${TS_DEFAULT},
   fulfilled_at TEXT
@@ -429,12 +435,12 @@ async function seedIfEmpty() {
   const SLA_HOURS = { 1: 4, 2: 8, 3: 24, 4: 72 };
 
   const incidentSeed = [
-    { short_description: 'Production web servers responding slowly', description: 'Users report the ERP app is taking 10-15s to load pages during peak hours.', category: 'software', subcategory: 'performance', impact: 1, urgency: 1, status: 'in_progress', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['PRD-WEB-01'], created_at: offsetStr(-2) },
-    { short_description: 'Cannot connect to VPN from home', description: 'User unable to establish VPN tunnel since this morning, gets timeout error.', category: 'network', subcategory: 'vpn', impact: 3, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Network Operations', affected_ci_id: ciIds['EDGE-FW-01'], created_at: offsetStr(-1) },
-    { short_description: 'Database replication lag on PRD-DB-02', description: 'Monitoring alert fired for replication lag exceeding 5 minutes on the DR replica.', category: 'software', subcategory: 'database', impact: 2, urgency: 1, status: 'resolved', caller_id: agent2Id, assigned_to: agent2Id, assignment_group: 'Database Team', affected_ci_id: ciIds['PRD-DB-02-REPLICA'], resolution_notes: 'Restarted replication stream after clearing a network blip; lag recovered to <1s.', resolved_at: offsetStr(0, -3), created_at: offsetStr(-1) },
-    { short_description: "Workstation won't boot", description: "Maria Chen's workstation shows a blue screen on startup.", category: 'hardware', subcategory: 'workstation', impact: 3, urgency: 3, status: 'closed', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'Desktop Support', affected_ci_id: ciIds['WKS-FIN-014'], resolution_notes: 'Reseated RAM module and ran disk check; issue resolved.', resolved_at: offsetStr(-5), closed_at: offsetStr(-4), created_at: offsetStr(-6) },
-    { short_description: 'Email delivery delayed to external domains', description: 'Outbound email to some external domains is delayed by 30+ minutes.', category: 'software', subcategory: 'email', impact: 2, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'Applications Team', affected_ci_id: ciIds['EMAIL-SVC'], created_at: offsetStr(0, -4) },
-    { short_description: 'Backup job failed on BKUP-NAS-01', description: "Last night's backup job for PRD-DB-01 failed with a storage quota error.", category: 'hardware', subcategory: 'storage', impact: 2, urgency: 2, status: 'in_progress', caller_id: agent1Id, assigned_to: agent1Id, assignment_group: 'Infrastructure Support', affected_ci_id: ciIds['BKUP-NAS-01'], created_at: offsetStr(0, -10) }
+    { short_description: 'Production web servers responding slowly', description: 'Users report the ERP app is taking 10-15s to load pages during peak hours.', category: 'software', subcategory: 'performance', impact: 1, urgency: 1, status: 'in_progress', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'IRO-UNIX', affected_ci_id: ciIds['PRD-WEB-01'], created_at: offsetStr(-2) },
+    { short_description: 'Cannot connect to VPN from home', description: 'User unable to establish VPN tunnel since this morning, gets timeout error.', category: 'network', subcategory: 'vpn', impact: 3, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'IRO-Network/Security', affected_ci_id: ciIds['EDGE-FW-01'], created_at: offsetStr(-1) },
+    { short_description: 'Database replication lag on PRD-DB-02', description: 'Monitoring alert fired for replication lag exceeding 5 minutes on the DR replica.', category: 'software', subcategory: 'database', impact: 2, urgency: 1, status: 'resolved', caller_id: agent2Id, assigned_to: agent2Id, assignment_group: 'IRO-Database', affected_ci_id: ciIds['PRD-DB-02-REPLICA'], resolution_notes: 'Restarted replication stream after clearing a network blip; lag recovered to <1s.', resolved_at: offsetStr(0, -3), created_at: offsetStr(-1) },
+    { short_description: "Workstation won't boot", description: "Maria Chen's workstation shows a blue screen on startup.", category: 'hardware', subcategory: 'workstation', impact: 3, urgency: 3, status: 'closed', caller_id: user1Id, assigned_to: agent1Id, assignment_group: 'IRO-Windows', affected_ci_id: ciIds['WKS-FIN-014'], resolution_notes: 'Reseated RAM module and ran disk check; issue resolved.', resolved_at: offsetStr(-5), closed_at: offsetStr(-4), created_at: offsetStr(-6) },
+    { short_description: 'Email delivery delayed to external domains', description: 'Outbound email to some external domains is delayed by 30+ minutes.', category: 'software', subcategory: 'email', impact: 2, urgency: 2, status: 'new', caller_id: user2Id, assigned_to: null, assignment_group: 'IRO-Cloud', affected_ci_id: ciIds['EMAIL-SVC'], created_at: offsetStr(0, -4) },
+    { short_description: 'Backup job failed on BKUP-NAS-01', description: "Last night's backup job for PRD-DB-01 failed with a storage quota error.", category: 'hardware', subcategory: 'storage', impact: 2, urgency: 2, status: 'in_progress', caller_id: agent1Id, assigned_to: agent1Id, assignment_group: 'IRO-Backup/Storage', affected_ci_id: ciIds['BKUP-NAS-01'], created_at: offsetStr(0, -10) }
   ];
 
   const incidentIds = {};
@@ -564,12 +570,12 @@ async function seedIfEmpty() {
     RETURNING id
   `);
   const catalogSeed = [
-    { name: 'New Laptop', description: 'Request a new company laptop for a new starter or a hardware refresh.', category: 'hardware', icon: 'bi-laptop', fulfillment_group: 'Desktop Support' },
-    { name: 'Software License', description: 'Request a license for approved business software (e.g. Adobe, Visio, project tools).', category: 'software', icon: 'bi-file-earmark-code', fulfillment_group: 'Applications Team' },
-    { name: 'VPN Access', description: 'Request remote VPN access for working outside the office.', category: 'access', icon: 'bi-shield-lock', fulfillment_group: 'Network Operations' },
-    { name: 'New Starter Setup', description: 'Full onboarding request: accounts, hardware, and access for a new employee.', category: 'access', icon: 'bi-person-plus', fulfillment_group: 'Service Desk' },
-    { name: 'Mobile Phone', description: 'Request a company mobile phone and line.', category: 'hardware', icon: 'bi-phone', fulfillment_group: 'Desktop Support' },
-    { name: 'Distribution List Change', description: 'Add or remove members from an email distribution list.', category: 'software', icon: 'bi-envelope-plus', fulfillment_group: 'Applications Team' }
+    { name: 'New Laptop', description: 'Request a new company laptop for a new starter or a hardware refresh.', category: 'hardware', icon: 'bi-laptop', fulfillment_group: 'IRO-ServiceDesk' },
+    { name: 'Software License', description: 'Request a license for approved business software (e.g. Adobe, Visio, project tools).', category: 'software', icon: 'bi-file-earmark-code', fulfillment_group: 'IRO-ServiceDesk' },
+    { name: 'VPN Access', description: 'Request remote VPN access for working outside the office.', category: 'access', icon: 'bi-shield-lock', fulfillment_group: 'IRO-ServiceDesk' },
+    { name: 'New Starter Setup', description: 'Full onboarding request: accounts, hardware, and access for a new employee.', category: 'access', icon: 'bi-person-plus', fulfillment_group: 'IRO-ServiceDesk' },
+    { name: 'Mobile Phone', description: 'Request a company mobile phone and line.', category: 'hardware', icon: 'bi-phone', fulfillment_group: 'IRO-ServiceDesk' },
+    { name: 'Distribution List Change', description: 'Add or remove members from an email distribution list.', category: 'software', icon: 'bi-envelope-plus', fulfillment_group: 'IRO-ServiceDesk' }
   ];
   const catalogIds = {};
   for (const item of catalogSeed) {

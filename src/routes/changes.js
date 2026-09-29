@@ -269,9 +269,9 @@ router.post('/', requireAuth, async (req, res) => {
   const number = await nextNumber('change', 'CHG');
   const info = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status, requested_by,
-      assigned_to, affected_ci_id, planned_start, planned_end, implementation_plan, backout_plan)
+      assigned_to, assignment_group, affected_ci_id, planned_start, planned_end, implementation_plan, backout_plan)
     VALUES (@number, @short_description, @description, @change_type, @risk, 'draft', @requested_by,
-      @assigned_to, @affected_ci_id, @planned_start, @planned_end, @implementation_plan, @backout_plan)
+      @assigned_to, @assignment_group, @affected_ci_id, @planned_start, @planned_end, @implementation_plan, @backout_plan)
     RETURNING id
   `).run({
     number,
@@ -281,6 +281,7 @@ router.post('/', requireAuth, async (req, res) => {
     risk: b.risk || 'medium',
     requested_by: req.session.user.id,
     assigned_to: b.assigned_to || null,
+    assignment_group: b.assignment_group || null,
     affected_ci_id: b.affected_ci_id || null,
     planned_start: b.planned_start || null,
     planned_end: b.planned_end || null,
@@ -466,7 +467,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
 
   await db.prepare(`
     UPDATE changes SET short_description=@short_description, description=@description, change_type=@change_type,
-      risk=@risk, status=@status, assigned_to=@assigned_to, affected_ci_id=@affected_ci_id,
+      risk=@risk, status=@status, assigned_to=@assigned_to, assignment_group=@assignment_group, affected_ci_id=@affected_ci_id,
       planned_start=@planned_start, planned_end=@planned_end, implementation_plan=@implementation_plan,
       backout_plan=@backout_plan, approval_status=@approval_status, approved_by=@approved_by,
       updated_at=@updated_at, closed_at=@closed_at
@@ -479,6 +480,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     risk: b.risk,
     status: b.status,
     assigned_to: b.assigned_to || null,
+    assignment_group: b.assignment_group || null,
     affected_ci_id: b.affected_ci_id || null,
     planned_start: b.planned_start || null,
     planned_end: b.planned_end || null,

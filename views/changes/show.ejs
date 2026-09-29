@@ -45,6 +45,7 @@
               <dt class="col-sm-3">Change Type</dt><dd class="col-sm-9 text-capitalize"><%= change.change_type %></dd>
               <dt class="col-sm-3">Risk</dt><dd class="col-sm-9 text-capitalize"><%= change.risk %></dd>
               <dt class="col-sm-3">Assigned To</dt><dd class="col-sm-9"><%= change.assigned_name || 'Unassigned' %></dd>
+              <dt class="col-sm-3">Assignment Group</dt><dd class="col-sm-9"><%= change.assignment_group || 'Unassigned' %></dd>
               <dt class="col-sm-3">Planned Start</dt><dd class="col-sm-9"><%- change.planned_start ? h.fmtDate(change.planned_start) : '—' %></dd>
               <dt class="col-sm-3">Planned End</dt><dd class="col-sm-9"><%- change.planned_end ? h.fmtDate(change.planned_end) : '—' %></dd>
               <dt class="col-sm-3">Affected CI</dt><dd class="col-sm-9"><%= change.ci_name ? change.ci_number + ' — ' + change.ci_name : '—' %></dd>
@@ -98,6 +99,15 @@
                   <option value="">Unassigned</option>
                   <% users.filter(u => u.role !== 'user').forEach(u => { %>
                     <option value="<%= u.id %>" <%= change.assigned_to === u.id ? 'selected' : '' %>><%= u.full_name %></option>
+                  <% }) %>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">Assignment Group</label>
+                <select name="assignment_group" class="form-select">
+                  <option value="">Unassigned</option>
+                  <% h.ASSIGNMENT_GROUPS.forEach(g => { %>
+                    <option value="<%= g %>" <%= change.assignment_group === g ? 'selected' : '' %>><%= g %></option>
                   <% }) %>
                 </select>
               </div>
@@ -265,6 +275,7 @@
           <dl class="row mb-0 small">
             <dt class="col-sm-6">Requested By</dt><dd class="col-sm-6"><%= change.requester_name || '—' %></dd>
             <dt class="col-sm-6">Assigned To</dt><dd class="col-sm-6"><%= change.assigned_name || 'Unassigned' %></dd>
+            <dt class="col-sm-6">Assignment Group</dt><dd class="col-sm-6"><%= change.assignment_group || 'Unassigned' %></dd>
             <dt class="col-sm-6">Approval Status</dt><dd class="col-sm-6 text-capitalize"><%= change.approval_status %></dd>
             <dt class="col-sm-6">Approved By</dt><dd class="col-sm-6"><%= change.approver_name || '—' %></dd>
             <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%- h.fmtDate(change.created_at) %></dd>

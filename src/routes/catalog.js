@@ -42,10 +42,10 @@ router.post('/:id/request', requireAuth, async (req, res) => {
 
   const number = await nextNumber('request', 'REQ');
   const info = await db.prepare(`
-    INSERT INTO service_requests (number, catalog_item_id, requested_by, notes)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO service_requests (number, catalog_item_id, requested_by, notes, assignment_group)
+    VALUES (?, ?, ?, ?, ?)
     RETURNING id
-  `).run(number, item.id, req.session.user.id, req.body.notes || null);
+  `).run(number, item.id, req.session.user.id, req.body.notes || null, item.fulfillment_group || null);
 
   await logActivity('request', info.lastInsertRowid, req.session.user.id, 'Request submitted');
 

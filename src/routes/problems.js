@@ -125,8 +125,8 @@ router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) =>
   const b = req.body;
   const number = await nextNumber('problem', 'PRB');
   const info = await db.prepare(`
-    INSERT INTO problems (number, short_description, description, priority, affected_ci_id, raised_by, assigned_to)
-    VALUES (@number, @short_description, @description, @priority, @affected_ci_id, @raised_by, @assigned_to)
+    INSERT INTO problems (number, short_description, description, priority, affected_ci_id, raised_by, assigned_to, assignment_group)
+    VALUES (@number, @short_description, @description, @priority, @affected_ci_id, @raised_by, @assigned_to, @assignment_group)
     RETURNING id
   `).run({
     number,
@@ -135,7 +135,8 @@ router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) =>
     priority: Number(b.priority) || 3,
     affected_ci_id: b.affected_ci_id || null,
     raised_by: req.session.user.id,
-    assigned_to: b.assigned_to || null
+    assigned_to: b.assigned_to || null,
+    assignment_group: b.assignment_group || null
   });
 
   await logActivity('problem', info.lastInsertRowid, req.session.user.id, 'Problem raised');
@@ -203,7 +204,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   await db.prepare(`
     UPDATE problems SET short_description=@short_description, description=@description, status=@status,
       priority=@priority, root_cause=@root_cause, workaround=@workaround, affected_ci_id=@affected_ci_id,
-      assigned_to=@assigned_to, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=@updated_at
+      assigned_to=@assigned_to, assignment_group=@assignment_group, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=@updated_at
     WHERE id=@id
   `).run({
     id: req.params.id,
@@ -215,6 +216,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     workaround: b.workaround || null,
     affected_ci_id: b.affected_ci_id || null,
     assigned_to: b.assigned_to || null,
+    assignment_group: b.assignment_group || null,
     resolved_at, closed_at,
     updated_at: nowStr()
   });

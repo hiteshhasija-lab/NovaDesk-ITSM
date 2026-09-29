@@ -114,8 +114,8 @@ function slaStatus(incident) {
 }
 
 const ASSIGNMENT_GROUPS = [
-  'Infrastructure Support', 'Network Operations', 'Database Team',
-  'Desktop Support', 'Applications Team', 'Security Team', 'Service Desk'
+  'IRO-Windows', 'IRO-UNIX', 'IRO-Database', 'IRO-Network/Security',
+  'IRO-Cloud', 'IRO-Build/Decom', 'IRO-Backup/Storage', 'IRO-ServiceDesk'
 ];
 
 function escapeHtml(str) {

@@ -32,6 +32,15 @@
             </select>
           </div>
           <div class="col-md-4">
+            <label class="form-label">Assignment Group</label>
+            <select name="assignment_group" class="form-select">
+              <option value="">Unassigned</option>
+              <% h.ASSIGNMENT_GROUPS.forEach(g => { %>
+                <option value="<%= g %>"><%= g %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="col-md-4">
             <label class="form-label">Affected Configuration Item</label>
             <select name="affected_ci_id" class="form-select">
               <option value="">None</option>
