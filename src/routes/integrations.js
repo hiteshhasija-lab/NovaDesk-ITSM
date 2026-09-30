@@ -67,15 +67,16 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
   const number = await nextNumber('change', 'CHG');
   const change = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status,
-      requested_by, affected_ci_id, novaconnect_channel_id, novaconnect_conversation_id, implementation_plan)
+      requested_by, assignment_group, affected_ci_id, novaconnect_channel_id, novaconnect_conversation_id, implementation_plan)
     VALUES (@number, @short_description, @description, 'normal', 'low', 'submitted',
-      @requested_by, @affected_ci_id, @novaconnect_channel_id, @novaconnect_conversation_id, @implementation_plan)
+      @requested_by, @assignment_group, @affected_ci_id, @novaconnect_channel_id, @novaconnect_conversation_id, @implementation_plan)
     RETURNING *
   `).get({
     number,
     short_description: `Decommission ${ci.name}`,
     description: `Automated decommission request for "${ci.name}" (${ci.ci_number}), submitted from NovaConnect.`,
     requested_by: requester ? requester.id : null,
+    assignment_group: 'IRO-Build/Decom',
     affected_ci_id: ci.id,
     novaconnect_channel_id: novaconnect_channel_id || null,
     novaconnect_conversation_id: novaconnect_conversation_id || null,
