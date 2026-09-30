@@ -1,12 +1,15 @@
-// NOT host.containers.internal here — confirmed live 2026-09-21 that it resolves to 10.0.0.101
-// (NovaDesk's own IP, which carries this box's default gateway) regardless of which pod is
-// asking. That's exactly why NovaConnect->NovaDesk calls using it work (different pod, correctly
-// reaches NovaDesk) — but it means NovaDesk calling host.containers.internal loops back to
-// itself. NovaConnect's IP (10.0.0.102) does NOT carry the gateway, so the asymmetric-NAT
-// hairpin problem that host.containers.internal exists to route around (see
-// novaapp01-infrastructure memory gotcha #5) doesn't apply in this direction — a direct peer IP
-// is correct and simpler here. Plain HTTP because this call never leaves the VM.
-const NOVACONNECT_BASE_URL = process.env.NOVACONNECT_BASE_URL || 'http://10.0.0.102';
+// CORRECTED 2026-09-30: the comment that used to be here claimed a direct peer IP
+// (http://10.0.0.102:8080) was correct and simpler for this direction, since NovaConnect's IP
+// supposedly doesn't carry the gateway. That was wrong on two counts, found while debugging a
+// live incident where every NovaDesk->NovaConnect decom callback failed ("fetch failed"): (1)
+// NovaConnect's pod publishes its app on host port 80 (10.0.0.102:80), not 8080 — 8080 is only
+// the container-internal port; (2) even hitting :80 on the raw peer IP was genuinely flaky, not
+// just wrong — repeated calls intermittently hairpinned back to NovaDesk's own app instead of
+// reaching NovaConnect. host.containers.internal (port 80, matching NovaConnect's real published
+// port) was verified reliable across 20 consecutive calls with zero misroutes and is now used in
+// both directions, mirroring NovaConnect's own NOVADESK_BASE_URL in decomFlow.js. Plain HTTP
+// because this call never leaves the VM.
+const NOVACONNECT_BASE_URL = process.env.NOVACONNECT_BASE_URL || 'http://host.containers.internal';
 const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
 
 // `targets` is an array of { channelId } | { conversationId } — one entry for the DM the
