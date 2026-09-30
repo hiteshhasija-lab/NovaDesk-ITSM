@@ -1,4 +1,4 @@
-const { db, nextNumber, logActivity, nowStr } = require('../db');
+const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
@@ -64,20 +64,32 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
     ? await db.prepare('SELECT id FROM users WHERE username = ?').get(requested_by_username)
     : null;
 
+  // Decommission changes are always assigned to Alex Admin (username 'admin') and scheduled to
+  // start immediately with a 1-day window -- there's no separate approval-to-schedule gap for
+  // this automated flow, so "planned" is just "now" through "now + 1 day".
+  const defaultAssignee = await db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+  const plannedStart = nowStr();
+  const plannedEnd = offsetStr(1);
+
   const number = await nextNumber('change', 'CHG');
   const change = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status,
-      requested_by, assignment_group, affected_ci_id, novaconnect_channel_id, novaconnect_conversation_id, implementation_plan)
+      requested_by, assigned_to, assignment_group, affected_ci_id, planned_start, planned_end,
+      novaconnect_channel_id, novaconnect_conversation_id, implementation_plan)
     VALUES (@number, @short_description, @description, 'normal', 'low', 'submitted',
-      @requested_by, @assignment_group, @affected_ci_id, @novaconnect_channel_id, @novaconnect_conversation_id, @implementation_plan)
+      @requested_by, @assigned_to, @assignment_group, @affected_ci_id, @planned_start, @planned_end,
+      @novaconnect_channel_id, @novaconnect_conversation_id, @implementation_plan)
     RETURNING *
   `).get({
     number,
     short_description: `Decommission ${ci.name}`,
     description: `Automated decommission request for "${ci.name}" (${ci.ci_number}), submitted from NovaConnect.`,
     requested_by: requester ? requester.id : null,
+    assigned_to: defaultAssignee ? defaultAssignee.id : null,
     assignment_group: 'IRO-Build/Decom',
     affected_ci_id: ci.id,
+    planned_start: plannedStart,
+    planned_end: plannedEnd,
     novaconnect_channel_id: novaconnect_channel_id || null,
     novaconnect_conversation_id: novaconnect_conversation_id || null,
     implementation_plan: `Shut down and destroy ${ci.name} on ESXi host ${esxiHost.name} (${esxiHost.ip_address}) after a soak period, then retire the CI.`
