@@ -4,8 +4,11 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
-const { resolveNovaConnectCard, pushDecomThinking, decomTargets } = require('../novaconnect');
-const { maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep } = require('../decomAutomation');
+const { resolveNovaConnectCard, pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
+const {
+  maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep,
+  DESTROY_TASK, RETIRE_TASK, TRACKER_TASK, destroySoakOver, resolveEsxiHost, runConfirmedDestroy, announceManualFinalTask
+} = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -367,7 +370,8 @@ router.get('/:id', requireAuth, async (req, res) => {
   const attachments = await getAttachments('change', change.id);
   const watchers = await getWatchers('change', change.id);
   const watching = await isWatching('change', change.id, req.session.user.id);
-  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching });
+  const notice = typeof req.query.notice === 'string' ? req.query.notice.slice(0, 300) : null;
+  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice });
 });
 
 router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -378,6 +382,35 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   if (!task) return res.status(404).render('error', { title: 'Not Found', message: 'Change task not found.' });
 
   const nowDone = task.status !== 'done';
+  const isDecom = !!(change.novaconnect_channel_id || change.novaconnect_conversation_id);
+  const backWith = (notice) => res.redirect(`/changes/${change.id}?notice=${encodeURIComponent(notice)}#tasks`);
+
+  // On a decommission Change, completing "Destroy VM & release storage" here is the same as Confirm
+  // Destroy in NovaConnect: it destroys the VM on ESXi, retires the CI, updates the tracker, closes
+  // the Change and posts every step plus the summary in NovaConnect (runConfirmedDestroy). Same
+  // gates as NovaConnect: admin only, and only once the soak period is over. The sequence takes
+  // ~30 s, so it runs in the background and the page comes straight back; the task is marked done
+  // by the sequence itself, only once the VM is actually destroyed.
+  if (isDecom && nowDone && task.description === DESTROY_TASK) {
+    if (req.session.user.role !== 'admin') {
+      return backWith('Only an admin can complete the destroy step: it permanently destroys the VM.');
+    }
+    if (change.status !== 'in_progress' || !(await destroySoakOver(change.id))) {
+      return backWith(`The destroy step isn't ready: ${change.number} must be in progress with its soak period over (the point where NovaConnect shows Confirm Destroy).`);
+    }
+    const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
+    if (!ci) return backWith('This Change has no affected CI to destroy.');
+    if (!(await resolveEsxiHost(ci.id))) return backWith(`"${ci.name}" has no resolvable ESXi host, so it can't be destroyed from here.`);
+    const me = await db.prepare('SELECT id, username, full_name FROM users WHERE id = ?').get(req.session.user.id);
+    await logActivity('change', change.id, me.id, `${task.task_number} (${task.description}) completed in NovaDesk: destroy confirmed by ${me.username}`);
+    runConfirmedDestroy(change, ci, { id: me.id, username: me.username }).catch(async (e) => {
+      console.error(`Destroy of ${ci.name} (${change.number}) from NovaDesk failed:`, e.message);
+      await logActivity('change', change.id, me.id, `Destroy failed: ${e.message}`).catch(() => {});
+      await pushDecomUpdate(decomTargets(change), `⚠️ Destroy of ${ci.name} (confirmed in NovaDesk by ${me.full_name}) failed: ${e.message}`).catch(() => {});
+    });
+    return backWith(`Destroy confirmed: ${ci.name} is being destroyed. Each step is posted in NovaConnect; refresh in about 30 seconds to see the tasks complete and the Change close.`);
+  }
+
   const newStatus = nowDone ? 'done' : 'pending';
   await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
     .run(newStatus, nowDone ? nowStr() : null, task.id);
@@ -408,6 +441,13 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   // that completes the trio of 3 manual prechecks — power-off is gated on all 3 being resolved
   // regardless of which system (this UI or NovaConnect) resolved the last of them.
   await maybeProceedWithPowerDown(change.id, req.session.user.id).catch(() => {});
+
+  // "Retire CI in CMDB" / "Update tracker & reclaim licenses" completed by hand: report it in
+  // NovaConnect (the CI and tracker are left as they are — the user's choice), and close the Change
+  // with the summary card once all 7 tasks are resolved.
+  if (isDecom && newStatus === 'done' && (task.description === RETIRE_TASK || task.description === TRACKER_TASK)) {
+    await announceManualFinalTask(change, task, { id: req.session.user.id, fullName: req.session.user.full_name }).catch(() => {});
+  }
 
   res.redirect(`/changes/${change.id}`);
 });

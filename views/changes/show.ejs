@@ -146,7 +146,10 @@
       </div>
 
       <% if (tasks.length > 0 || currentUser.role !== 'user') { %>
-      <div class="card mb-3">
+      <% if (notice) { %>
+      <div class="alert alert-info py-2 small" role="status"><%= notice %></div>
+      <% } %>
+      <div class="card mb-3" id="tasks">
         <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
           <span><i class="bi bi-list-check"></i> Change Tasks</span>
           <span class="badge bg-secondary"><%= tasks.filter(t => t.status === 'done').length %> / <%= tasks.length %> done</span>
@@ -166,8 +169,9 @@
               <% if (currentUser.role !== 'user') { %>
                 <div class="d-flex align-items-center gap-2">
                   <% if (t.status === 'pending') { %>
-                    <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle" class="d-inline">
-                      <button type="submit" class="btn btn-sm btn-outline-success py-0 px-2" title="Mark complete"><i class="bi bi-check-lg"></i> Complete</button>
+                    <% const destroysVm = t.description === 'Destroy VM & release storage' && (change.novaconnect_channel_id || change.novaconnect_conversation_id); %>
+                    <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle" class="d-inline"<% if (destroysVm) { %> onsubmit="return confirm('Completing this permanently destroys the VM on ESXi, retires the CI, updates the tracker and closes <%= change.number %>, the same as Confirm Destroy in NovaConnect. This cannot be undone. Continue?');"<% } %>>
+                      <button type="submit" class="btn btn-sm btn-outline-success py-0 px-2" title="<%= destroysVm ? 'Destroy the VM and finish the decommission' : 'Mark complete' %>"><i class="bi bi-check-lg"></i> Complete</button>
                     </form>
                     <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/skip" class="d-inline">
                       <button type="submit" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Skip"><i class="bi bi-skip-forward"></i> Skip</button>

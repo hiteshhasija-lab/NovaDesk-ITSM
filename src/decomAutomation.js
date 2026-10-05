@@ -2,6 +2,7 @@ const { db, nowStr, offsetStr, logActivity } = require('./db');
 const esxi = require('./esxi');
 const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('./novaconnect');
 const { CHANGE_STATUS_LABELS } = require('./helpers');
+const { appendDecomTrackerRow } = require('./decomTracker');
 
 // How long a VM sits powered-off before the destroy-confirmation prompt fires — the window
 // meant to catch a mistake before the irreversible step. Configurable since "how long" is a
@@ -309,7 +310,181 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
   }
 }
 
+// The last three decom steps (Destroy VM, Retire CI, Update tracker) and the Change close used to
+// live only inside integrations.js's confirm-destroy route, so they only ever ran from NovaConnect's
+// Confirm Destroy button. Completing "Destroy VM & release storage" in NovaDesk's own Change Tasks
+// list now runs the very same sequence (pending-list enhancement, 2026-10-04), so it lives here and
+// both doors call it.
+const DESTROY_TASK = 'Destroy VM & release storage';
+const RETIRE_TASK = 'Retire CI in CMDB';
+const TRACKER_TASK = 'Update tracker & reclaim licenses';
+
+// For the final decom summary card's "Elapsed" line — like formatSoakDuration but takes
+// milliseconds and also expresses sub-minute durations.
+function formatElapsed(ms) {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `~${Math.round(seconds)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `~${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `~${Math.round(hours)}h`;
+  const days = Math.round(hours / 24);
+  return `~${days} day${days === 1 ? '' : 's'}`;
+}
+
+function decomError(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+// The destroy-confirmation stage: the Change is in progress and its soak period is over (the
+// scheduler's destroy_vm action is due — the same moment NovaConnect gets its Confirm Destroy card).
+async function destroySoakOver(changeId) {
+  const row = await db.prepare(`
+    SELECT 1 FROM scheduled_actions
+    WHERE change_id = ? AND action_type = 'destroy_vm' AND status IN ('pending', 'executed') AND run_at <= ?
+    LIMIT 1
+  `).get(changeId, nowStr());
+  return !!row;
+}
+
+async function postDecomSummary(change, ci, trackerRow, cmdbStatus) {
+  // ci.cpu already reads as self-explanatory ("1 vCPU"), but ci.ram/ci.disk are bare magnitudes
+  // ("512 MB", "1 GB") with nothing distinguishing which is which once joined — label those two.
+  const reclaimedParts = [
+    ci.cpu || null,
+    ci.ram ? `${ci.ram} RAM` : null,
+    ci.disk ? `${ci.disk} storage` : null
+  ].filter(Boolean);
+  const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
+  await pushDecomUpdate(
+    decomTargets(change),
+    `🎉 ${ci.name} decommissioned.`,
+    {
+      cardType: 'decom_summary',
+      changeId: change.id,
+      changeNumber: change.number,
+      ciName: ci.name,
+      changeStatus: 'Closed / Successful',
+      cmdbStatus,
+      reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
+      trackerRow: trackerRow || '—',
+      elapsedReal: formatElapsed(Date.now() - createdAtMs)
+    }
+  );
+}
+
+// One destroy at a time per Change: the card is dual-posted in NovaConnect and NovaDesk's task list
+// is a third door, and the sequence takes ~30 s (paced steps) before the Change leaves 'in_progress'.
+const destroysRunning = new Set();
+
+// Destroy the VM on ESXi, retire the CI, update the tracker, close the Change and post the summary —
+// each step announced in NovaConnect. `confirmer` is { id, username } of the admin who confirmed.
+// Throws an Error with .status (409/422) for a request that can't proceed; ESXi failures throw as-is.
+async function runConfirmedDestroy(change, ci, confirmer) {
+  // Claimed before the first await, so two confirmations arriving together can't both start.
+  if (destroysRunning.has(change.id)) throw decomError(409, `${change.number}: the destroy is already running.`);
+  destroysRunning.add(change.id);
+  try {
+    // The destroy-confirmation card is dual-posted (DM + server-decom), so the same action is
+    // clickable from two message copies (and from NovaDesk). Once the first one moves the Change
+    // off 'in_progress', reject the rest instead of re-running the ESXi calls. Re-read the Change:
+    // the caller's copy may be from before another door finished.
+    const current = await db.prepare('SELECT status FROM changes WHERE id = ?').get(change.id);
+    if (!current || current.status !== 'in_progress') {
+      throw decomError(409, `${change.number} is no longer awaiting a destroy decision (current status: ${current ? current.status : 'deleted'}) — this was likely already actioned from another window.`);
+    }
+    const esxiHost = await resolveEsxiHost(ci.id);
+    if (!esxiHost) throw decomError(422, `"${ci.name}" has no resolvable ESXi host.`);
+
+    // Dots stop BEFORE the real destroy command runs, not during it — see proceedWithPowerDown.
+    await pushDecomThinking(decomTargets(change), true);
+    await sleep(10000);
+    await pushDecomThinking(decomTargets(change), false);
+
+    const sessionId = await esxi.login(esxiHost.ip_address);
+    const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+    if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+    await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
+    await markTaskDone(change.id, DESTROY_TASK);
+    await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${confirmer.username})`);
+
+    // Resolve the confirm-destroy card whichever door was used, or it stays stuck showing
+    // "Confirm Destroy" with active buttons.
+    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'destroyed');
+    await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
+
+    // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant.
+    await pushDecomThinking(decomTargets(change), true);
+    await sleep(10000);
+    await pushDecomThinking(decomTargets(change), false);
+
+    await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
+    await markTaskDone(change.id, RETIRE_TASK);
+    await pushDecomUpdate(decomTargets(change), `✅ ${ci.ci_number} retired in the CMDB.`);
+
+    await pushDecomThinking(decomTargets(change), true);
+    await sleep(10000);
+    await pushDecomThinking(decomTargets(change), false);
+
+    let trackerRow = null;
+    try {
+      trackerRow = await appendDecomTrackerRow({
+        ciNumber: ci.ci_number,
+        name: ci.name,
+        ciType: ci.ci_type,
+        ipAddress: ci.ip_address,
+        os: ci.os,
+        serialNumber: ci.serial_number,
+        location: ci.location,
+        supportGroup: ci.support_group,
+        changeNumber: change.number,
+        decommissionedDate: nowStr(),
+        confirmedBy: confirmer.username
+      });
+      await markTaskDone(change.id, TRACKER_TASK);
+    } catch (e) {
+      await logActivity('change', change.id, confirmer.id, `Decommissioned Tracker update failed: ${e.message}`);
+      await pushDecomUpdate(decomTargets(change), `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
+    }
+
+    const closed = await db.prepare(`
+      UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
+    `).get(nowStr(), nowStr(), change.id);
+    await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
+    await postDecomSummary(change, ci, trackerRow, 'CI retired, audit-frozen');
+    return closed;
+  } finally {
+    destroysRunning.delete(change.id);
+  }
+}
+
+// "Retire CI in CMDB" / "Update tracker & reclaim licenses" completed by hand in NovaDesk: by the
+// user's choice these only report to NovaConnect (the CI record and the tracker are not touched).
+// Once all 7 tasks are resolved, the Change closes and the summary card posts, as after a destroy.
+async function announceManualFinalTask(change, task, actor) {
+  await pushDecomUpdate(decomTargets(change), `✅ ${task.task_number} — ${task.description} marked complete in NovaDesk by ${actor.fullName}.`);
+  const tasks = await db.prepare('SELECT status FROM change_tasks WHERE change_id = ?').all(change.id);
+  const fresh = await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id);
+  if (!tasks.length || !tasks.every((t) => t.status === 'done' || t.status === 'skipped')) return;
+  if (!fresh || fresh.status === 'closed' || fresh.status === 'cancelled' || fresh.status === 'rejected') return;
+  await db.prepare(`UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ?`).run(nowStr(), nowStr(), change.id);
+  await logActivity('change', change.id, actor.id, 'Change closed — all decommission tasks resolved');
+  const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
+  if (!ci) return;
+  const cmdbStatus = ci.status === 'retired' ? 'CI retired, audit-frozen' : `CI status unchanged (${ci.status}) — final tasks marked complete in NovaDesk`;
+  await postDecomSummary(fresh, ci, null, cmdbStatus);
+}
+
 module.exports = {
+  DESTROY_TASK,
+  RETIRE_TASK,
+  TRACKER_TASK,
+  formatElapsed,
+  destroySoakOver,
+  runConfirmedDestroy,
+  announceManualFinalTask,
   SOAK_PERIOD_HOURS,
   formatSoakDuration,
   sleep,

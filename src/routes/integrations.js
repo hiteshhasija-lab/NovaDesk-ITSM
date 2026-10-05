@@ -3,27 +3,12 @@ const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
 const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('../novaconnect');
-const { appendDecomTrackerRow } = require('../decomTracker');
 const {
-  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, markTaskDone, maybeProceedWithPowerDown, sleep,
-  announceDecomApproval, announceDecomRejection, resolvePrecheckTask
+  DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, maybeProceedWithPowerDown, sleep,
+  announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy
 } = require('../decomAutomation');
 
 const router = createAsyncRouter();
-
-// For the final decom summary card's "Elapsed" line — same shape as decomAutomation's
-// formatSoakDuration but takes milliseconds and also expresses sub-minute durations, since the
-// "sim" figure (how long this request's own automation took) is typically seconds, not hours.
-function formatElapsed(ms) {
-  const seconds = ms / 1000;
-  if (seconds < 60) return `~${Math.round(seconds)}s`;
-  const minutes = seconds / 60;
-  if (minutes < 60) return `~${Math.round(minutes)}m`;
-  const hours = minutes / 60;
-  if (hours < 24) return `~${Math.round(hours)}h`;
-  const days = Math.round(hours / 24);
-  return `~${days} day${days === 1 ? '' : 's'}`;
-}
 
 function requireSyncAuth(req, res, next) {
   const expected = process.env.SYNC_API_KEY;
@@ -221,108 +206,15 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
     return res.status(403).json({ error: 'Only a NovaDesk admin can confirm a VM destroy.' });
   }
 
-  // The destroy-confirmation card is dual-posted (DM + server-decom), so the same action is
-  // clickable from two different message copies — a user with both open can click Confirm
-  // Destroy (or Cancel, below) from each. Once the first click moves the Change off
-  // 'in_progress', reject the second cleanly instead of re-running the ESXi calls, which would
-  // fail ungracefully (e.g. destroying an already-destroyed VM) and 500.
-  if (change.status !== 'in_progress') {
-    return res.status(409).json({ error: `${change.number} is no longer awaiting a destroy decision (current status: ${change.status}) — this was likely already actioned from another window.` });
-  }
-
-  const esxiHost = await resolveEsxiHost(ci.id);
-  if (!esxiHost) return res.status(422).json({ error: `"${ci.name}" has no resolvable ESXi host.` });
-
-  // Dots stop BEFORE the real destroy command runs, not during it — see the matching fix in
-  // decomAutomation.js's proceedWithPowerDown for why (caught live: the command was executing
-  // while the animation was still showing, since thinking=false previously only fired in a
-  // `finally` after the command had already completed).
-  await pushDecomThinking(decomTargets(change), true);
-  await sleep(10000);
-  await pushDecomThinking(decomTargets(change), false);
-
-  const sessionId = await esxi.login(esxiHost.ip_address);
-  const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
-  if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
-  await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
-  await markTaskDone(change.id, 'Destroy VM & release storage');
-  await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${req.body.confirmed_by_username})`);
-
-  // Resolve the confirm-destroy card here, same as approve/reject/precheck-task — this route
-  // can be reached without a NovaConnect card ever having been clicked (this is exactly how it
-  // was caught: a confirm-destroy driven directly via this endpoint left the card stuck showing
-  // "Confirm Destroy" with active buttons, since only NovaConnect's own relay route used to
-  // resolve it). Resolving here makes it correct regardless of which door was used.
-  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'destroyed');
-  await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
-
-  // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant
-  // as "destroyed".
-  await pushDecomThinking(decomTargets(change), true);
-  await sleep(10000);
-  await pushDecomThinking(decomTargets(change), false);
-
-  await db.prepare(`UPDATE cmdb_ci SET status = 'retired', updated_at = ? WHERE id = ?`).run(nowStr(), ci.id);
-  await markTaskDone(change.id, 'Retire CI in CMDB');
-  await pushDecomUpdate(decomTargets(change), `✅ ${ci.ci_number} retired in the CMDB.`);
-
-  // Same pacing before the tracker-update/close/summary sequence below.
-  await pushDecomThinking(decomTargets(change), true);
-  await sleep(10000);
-  await pushDecomThinking(decomTargets(change), false);
-
-  let trackerRow = null;
+  // The whole sequence (destroy, retire, tracker, close, summary) is shared with NovaDesk's own
+  // Change Tasks list, where completing "Destroy VM & release storage" runs the same thing.
   try {
-    trackerRow = await appendDecomTrackerRow({
-      ciNumber: ci.ci_number,
-      name: ci.name,
-      ciType: ci.ci_type,
-      ipAddress: ci.ip_address,
-      os: ci.os,
-      serialNumber: ci.serial_number,
-      location: ci.location,
-      supportGroup: ci.support_group,
-      changeNumber: change.number,
-      decommissionedDate: nowStr(),
-      confirmedBy: req.body.confirmed_by_username
-    });
-    await markTaskDone(change.id, 'Update tracker & reclaim licenses');
+    const closed = await runConfirmedDestroy(change, ci, { id: confirmer.id, username: req.body.confirmed_by_username });
+    res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });
   } catch (e) {
-    await logActivity('change', change.id, confirmer.id, `Decommissioned Tracker update failed: ${e.message}`);
-    await pushDecomUpdate(decomTargets(change), `⚠️ ${ci.name} was destroyed and retired, but updating the Decommissioned Tracker failed: ${e.message}. Update it manually.`);
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
   }
-
-  const closed = await db.prepare(`
-    UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
-  `).get(nowStr(), nowStr(), change.id);
-  await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
-
-  // ci.cpu already reads as self-explanatory ("1 vCPU"), but ci.ram/ci.disk are bare
-  // magnitudes ("512 MB", "1 GB") with nothing distinguishing which is which once joined —
-  // label those two explicitly.
-  const reclaimedParts = [
-    ci.cpu || null,
-    ci.ram ? `${ci.ram} RAM` : null,
-    ci.disk ? `${ci.disk} storage` : null
-  ].filter(Boolean);
-  const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
-  await pushDecomUpdate(
-    decomTargets(change),
-    `🎉 ${ci.name} decommissioned.`,
-    {
-      cardType: 'decom_summary',
-      changeId: change.id,
-      changeNumber: change.number,
-      ciName: ci.name,
-      changeStatus: 'Closed / Successful',
-      cmdbStatus: 'CI retired, audit-frozen',
-      reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
-      trackerRow: trackerRow || '—',
-      elapsedReal: formatElapsed(Date.now() - createdAtMs)
-    }
-  );
-
-  res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });
 });
 
 // POST /novaconnect/decommission-requests/:id/cancel-destroy
