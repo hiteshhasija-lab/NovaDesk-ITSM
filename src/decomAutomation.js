@@ -349,13 +349,44 @@ async function destroySoakOver(changeId) {
   return !!row;
 }
 
-async function postDecomSummary(change, ci, trackerRow, cmdbStatus) {
-  // ci.cpu already reads as self-explanatory ("1 vCPU"), but ci.ram/ci.disk are bare magnitudes
+// A VM's size as ESXi reports it (govc vm.info -json, the `raw` that esxi.findVm returns), in the
+// CMDB's own style: "1 vCPU", "512 MB", "1 GB". Used for the summary's "Reclaimed" line when the
+// CI's CPU/RAM/Disk fields are empty — the batch of test CIs created on 2026-09-24 (DECOM-TEST-19
+// onwards) has none, so their summaries showed "—".
+function sizeLabel(mb) {
+  if (!(mb > 0)) return null;
+  if (mb < 1024) return `${Math.round(mb)} MB`;
+  const gb = mb / 1024;
+  return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`;
+}
+function hardwareFromVm(raw) {
+  const config = raw && (raw.config || raw.Config);
+  const hw = config && (config.hardware || config.Hardware);
+  if (!hw) return null;
+  const cpus = hw.numCPU ?? hw.NumCPU;
+  const diskBytes = (hw.device || hw.Device || []).reduce((sum, d) => {
+    const bytes = d.capacityInBytes ?? d.CapacityInBytes;
+    const kb = d.capacityInKB ?? d.CapacityInKB;
+    return sum + (bytes > 0 ? bytes : kb > 0 ? kb * 1024 : 0);
+  }, 0);
+  return {
+    cpu: cpus > 0 ? `${cpus} vCPU` : null,
+    ram: sizeLabel(hw.memoryMB ?? hw.MemoryMB),
+    disk: sizeLabel(diskBytes / 1048576)
+  };
+}
+
+// `fromEsxi` (optional): the VM's size from hardwareFromVm, filling any CPU/RAM/Disk the CI lacks.
+async function postDecomSummary(change, ci, trackerRow, cmdbStatus, fromEsxi) {
+  const cpu = ci.cpu || (fromEsxi && fromEsxi.cpu);
+  const ram = ci.ram || (fromEsxi && fromEsxi.ram);
+  const disk = ci.disk || (fromEsxi && fromEsxi.disk);
+  // cpu already reads as self-explanatory ("1 vCPU"), but ram/disk are bare magnitudes
   // ("512 MB", "1 GB") with nothing distinguishing which is which once joined — label those two.
   const reclaimedParts = [
-    ci.cpu || null,
-    ci.ram ? `${ci.ram} RAM` : null,
-    ci.disk ? `${ci.disk} storage` : null
+    cpu || null,
+    ram ? `${ram} RAM` : null,
+    disk ? `${disk} storage` : null
   ].filter(Boolean);
   const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
   await pushDecomUpdate(
@@ -406,6 +437,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
     const sessionId = await esxi.login(esxiHost.ip_address);
     const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
     if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+    const fromEsxi = hardwareFromVm(vm.raw); // read before it's gone, for the summary
     await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
     await markTaskDone(change.id, DESTROY_TASK);
     await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${confirmer.username})`);
@@ -453,7 +485,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
       UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
     `).get(nowStr(), nowStr(), change.id);
     await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
-    await postDecomSummary(change, ci, trackerRow, 'CI retired, audit-frozen');
+    await postDecomSummary(change, ci, trackerRow, 'CI retired, audit-frozen', fromEsxi);
     return closed;
   } finally {
     destroysRunning.delete(change.id);
