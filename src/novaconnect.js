@@ -1,40 +1,29 @@
-// CORRECTED 2026-09-30: the comment that used to be here claimed a direct peer IP
-// (http://10.0.0.102:8080) was correct and simpler for this direction, since NovaConnect's IP
-// supposedly doesn't carry the gateway. That was wrong on two counts, found while debugging a
-// live incident where every NovaDesk->NovaConnect decom callback failed ("fetch failed"): (1)
-// NovaConnect's pod publishes its app on host port 80 (10.0.0.102:80), not 8080 — 8080 is only
-// the container-internal port; (2) even hitting :80 on the raw peer IP was genuinely flaky, not
-// just wrong — repeated calls intermittently hairpinned back to NovaDesk's own app instead of
-// reaching NovaConnect. host.containers.internal (port 80, matching NovaConnect's real published
-// port) was verified reliable across 20 consecutive calls with zero misroutes and is now used in
-// both directions, mirroring NovaConnect's own NOVADESK_BASE_URL in decomFlow.js. Plain HTTP
-// because this call never leaves the VM.
-const NOVACONNECT_BASE_URL = process.env.NOVACONNECT_BASE_URL || 'http://host.containers.internal';
+// Where NovaDesk sends decommission updates (decom-updates, decom-thinking, card-resolve) in NovaConnect.
+// It must be configured: NOVACONNECT_BASE_URL, e.g. http://10.0.0.102 on NOVAAPP01 (plain HTTP to
+// NovaConnect's published port 80; the call never leaves the VM). There is deliberately no default.
+//
+// CORRECTED 2026-10-04 (pending-list #35): the previous default, http://host.containers.internal, is
+// always wrong for this direction. From NovaDesk's own pod that name maps to the host address NovaDesk
+// itself is published on, so every update landed on NovaDesk's login page ("misrouted response",
+// cards stuck in NovaConnect until a refresh). On NOVAAPP01's three-card layout it reached NovaDesk
+// 10 times out of 10, while http://10.0.0.102 reached NovaConnect 20 times out of 20. The
+// "intermittent pasta hairpin" described here before was observed while NOVAAPP01 briefly had all
+// three app addresses on one card (2026-09-29/30, since reverted), not on the normal layout.
+// (host.containers.internal is fine the OTHER way round: NovaConnect's NOVADESK_BASE_URL.)
+const NOVACONNECT_BASE_URL = (process.env.NOVACONNECT_BASE_URL || '').trim().replace(/\/+$/, '');
 const SYNC_API_KEY = process.env.SYNC_API_KEY || '';
+if (!NOVACONNECT_BASE_URL) {
+  console.warn('NOVACONNECT_BASE_URL is not set: decommission updates will not be sent to NovaConnect.');
+}
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-// INCIDENT, 2026-09-30 (part 2): fixing the host/port above (see the comment that used to be
-// here, now above the constant) did NOT fully fix the callback — this host's rootless-podman
-// pasta networking has a genuine, non-deterministic hairpin bug where a call to
-// host.containers.internal intermittently loops back to THIS pod's own app instead of reaching
-// NovaConnect. This is NOT simple per-call flakiness — it's streaky and can get stuck for
-// extended windows: the exact same request (same body, same headers) failed 40/40 in a row
-// spanning roughly 15-20 seconds, then succeeded 5/5 moments later with zero code change in
-// between. Ruled out payload shape, Connection:close, and keep-alive reuse as causes — all
-// tested, none explain it. There's no shared podman network between the novadesk-lab and
-// novaconnect-lab pods to route around this (confirmed via `podman inspect` — each pod is an
-// isolated pasta netns, only reachable via the host's published ports), so a proper fix means
-// changing the pods' network topology — real risk to the already-tuned meeting/mediasoup UDP
-// and TLS setup, not something to change without the user's explicit sign-off. Retrying here is
-// a pragmatic mitigation, not a real fix: MAX_ATTEMPTS/RETRY_DELAY_MS gives ~24s of retry budget,
-// enough to ride out every broken window observed so far, but a long enough or repeated bad
-// window could still exceed it. Detected by Content-Type rather than string-matching the
-// misrouted page's HTML: NovaConnect's integration endpoints always answer JSON, so a non-JSON
-// response means we hit NovaDesk's own app instead.
+// Retries a short while when the request fails or the answer isn't JSON (NovaConnect's integration
+// endpoints always answer JSON, so anything else means another app answered). ~24 s budget.
 const MAX_ATTEMPTS = 24;
 const RETRY_DELAY_MS = 1000;
 async function postToNovaConnect(path, payload) {
+  if (!NOVACONNECT_BASE_URL) throw new Error('NOVACONNECT_BASE_URL is not set, so nothing was sent');
   let lastError;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
@@ -45,7 +34,7 @@ async function postToNovaConnect(path, payload) {
       });
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) return res;
-      lastError = new Error(`misrouted response, content-type "${contentType || 'none'}" (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      lastError = new Error(`misrouted response from ${NOVACONNECT_BASE_URL} (content-type "${contentType || 'none'}", attempt ${attempt}/${MAX_ATTEMPTS}): check NOVACONNECT_BASE_URL points at NovaConnect`);
     } catch (e) {
       lastError = e;
     }
