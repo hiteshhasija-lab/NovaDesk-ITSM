@@ -5,3 +5,4 @@ data/
 npm-debug.log*
 certs/
 .claude/
+experiments/fault-injection/results/
