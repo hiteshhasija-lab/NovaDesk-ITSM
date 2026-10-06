@@ -103,7 +103,7 @@ async function onRequest(req, res) {
   const m = mode;
   const base = { path, mode: m.name };
 
-  if (m.name === 'hang') { hung.add(res); record({ ...base, outcome: 'hung' }); return; }
+  if (m.name === 'hang') { hung.add({ req, res, path, body, base }); record({ ...base, outcome: 'hung' }); return; }
   if (m.name === 'html404') { record({ ...base, outcome: 'html404' }); return send(res, 404, HTML404, 'text/html; charset=utf-8'); }
   if (m.name === 'status500') { record({ ...base, outcome: '500' }); return send(res, 500, { error: 'injected' }); }
   if (m.name === 'flaky' && Math.random() < (m.p == null ? 0.5 : m.p)) { record({ ...base, outcome: '500-flaky' }); return send(res, 500, { error: 'injected' }); }
@@ -132,8 +132,10 @@ function stopMain() {
 async function setMode(next) {
   const prev = mode.name;
   if (prev === 'hang' && next.name !== 'hang') {
-    for (const res of hung) send(res, 200, { ok: true, released: true });
-    hung.clear();
+    // Process each held request exactly as if it had merely been slow, so releasing a hang
+    // models a late answer, not a dropped one.
+    const held = [...hung]; hung.clear();
+    for (const h of held) handleReal(h.req, h.res, h.path, h.body, { ...h.base, released: true });
   }
   if (next.name === 'refuse') {
     if (main) await stopMain();

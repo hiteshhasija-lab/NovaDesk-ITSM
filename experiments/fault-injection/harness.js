@@ -182,12 +182,13 @@ async function runFlow(opts = {}) {
   if (window === 'approve') await setFault('normal');
   if (window === 'prechecks') await setFault(fault, faultArgs);
 
-  for (const t of tasksOf(changeId).filter((x) => MANUAL.includes(x.description))) {
+  const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+  for (const [idx, t] of manual.entries()) {
     const st = await stubState();
     const visible = st.cards.some((c) => Number(c.changeId) === changeId && c.cardType === 'decom_precheck_task' && Number(c.taskId) === t.id);
     if (!visible) rec.blocked += 1; // an operator working only in chat would have had no card to click
     const r = await precheck(changeId, t.id, 'complete');
-    rec.steps[`precheck${t.sequence}`] = { ms: r.ms, status: r.status, cardVisibleBeforeAction: visible };
+    rec.steps[`precheck${idx + 1}`] = { ms: r.ms, status: r.status, cardVisibleBeforeAction: visible };
   }
   await setFault('normal');
   rec.totalMs = Date.now() - t0;
