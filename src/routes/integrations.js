@@ -10,6 +10,9 @@ const {
 
 const router = createAsyncRouter();
 
+// A Change in one of these states is finished; nothing in the decommission flow may act on it.
+const CLOSED_STATUSES = ['closed', 'cancelled', 'rejected'];
+
 function requireSyncAuth(req, res, next) {
   const expected = process.env.SYNC_API_KEY;
   const provided = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -114,12 +117,26 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   if (!approver || approver.role !== 'admin') {
     return res.status(403).json({ error: 'Only a NovaDesk admin can approve a decommission request.' });
   }
+  // One-shot decision: only a still-pending, still-open Change can be approved. Without this a
+  // second click (the card exists in the DM and in the channel), a stale window, or a direct call
+  // re-approved a rejected or closed Change, reopened it as in progress, and re-posted the
+  // approval message and first precheck card (fault-injection probes P6, P7, P9).
+  if (change.approval_status !== 'pending' || CLOSED_STATUSES.includes(change.status)) {
+    return res.status(409).json({ error: `${change.number} can't be approved now (status: ${change.status}, approval: ${change.approval_status}); it was probably already actioned from another window.` });
+  }
 
   // 'in_progress', not 'scheduled' — a decom Change starts executing (prechecks, power-down)
   // the instant it's approved, not at some future planned date.
-  await db.prepare(`
-    UPDATE changes SET approval_status='approved', approved_by=?, status='in_progress', updated_at=? WHERE id=?
-  `).run(approver.id, nowStr(), change.id);
+  // The state change is the real gate: it only succeeds while the Change is still pending and open,
+  // so two simultaneous approvals can't both get through the read check above.
+  const claimed = await db.prepare(`
+    UPDATE changes SET approval_status='approved', approved_by=?, status='in_progress', updated_at=?
+    WHERE id=? AND approval_status='pending' AND status NOT IN ('closed','cancelled','rejected')
+    RETURNING id
+  `).get(approver.id, nowStr(), change.id);
+  if (!claimed) {
+    return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
+  }
   await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
 
   // announceDecomApproval resolves the approval card + posts "approved" FIRST, before the
@@ -144,6 +161,12 @@ router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (r
     : null;
   if (!actor || actor.role !== 'admin') {
     return res.status(403).json({ error: 'Only a NovaDesk admin can skip these tasks.' });
+  }
+  if (change.approval_status !== 'approved' || CLOSED_STATUSES.includes(change.status)) {
+    return res.status(409).json({ error: `${change.number}: the pre-checks can only be skipped while the Change is approved and open (status: ${change.status}, approval: ${change.approval_status}).` });
+  }
+  if (!(tasks || []).some((t) => MANUAL_TASKS.includes(t.description) && t.status === 'pending')) {
+    return res.status(409).json({ error: `${change.number}: there are no pending pre-checks left to skip.` });
   }
 
   // Resolves each individual precheck card too, not just the bulk "skip all" button's own card
@@ -170,6 +193,12 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
   if (!actor || actor.role !== 'admin') {
     return res.status(403).json({ error: 'Only a NovaDesk admin can update these tasks.' });
   }
+  // Pre-checks belong to an approved, open Change, and each can be resolved once. Without this a
+  // pre-check could be completed before approval, and a repeat click re-ran the pacing step and
+  // posted another copy of the next card (probes P10, P11).
+  if (change.approval_status !== 'approved' || CLOSED_STATUSES.includes(change.status)) {
+    return res.status(409).json({ error: `${change.number}: pre-checks can only be updated while the Change is approved and open (status: ${change.status}, approval: ${change.approval_status}).` });
+  }
 
   const action = req.body.action; // 'complete' or 'skip'
   const desc = req.body.task_description;
@@ -183,6 +212,9 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
     task = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? AND description = ?').get(change.id, desc);
   }
 
+  if (task && task.status !== 'pending') {
+    return res.status(409).json({ error: `${change.number}: "${task.description}" is already ${task.status === 'done' ? 'completed' : task.status}; it was probably already actioned from another window.` });
+  }
   if (task) {
     await resolvePrecheckTask(change, task, newStatus, actor.id, username);
   }
@@ -281,10 +313,21 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
   if (!rejector || rejector.role !== 'admin') {
     return res.status(403).json({ error: 'Only a NovaDesk admin can reject a decommission request.' });
   }
+  // Same one-shot rule as approve. Once approved, work has started (prechecks, power-off), so
+  // stopping it goes through the Cancel path, not a late "reject" that left tasks and cards behind
+  // (probe P8).
+  if (change.approval_status !== 'pending' || CLOSED_STATUSES.includes(change.status)) {
+    return res.status(409).json({ error: `${change.number} can't be rejected now (status: ${change.status}, approval: ${change.approval_status}); it was probably already actioned from another window.` });
+  }
 
-  await db.prepare(`
-    UPDATE changes SET approval_status='rejected', status='rejected', updated_at=? WHERE id=?
-  `).run(nowStr(), change.id);
+  const claimed = await db.prepare(`
+    UPDATE changes SET approval_status='rejected', status='rejected', updated_at=?
+    WHERE id=? AND approval_status='pending' AND status NOT IN ('closed','cancelled','rejected')
+    RETURNING id
+  `).get(nowStr(), change.id);
+  if (!claimed) {
+    return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
+  }
   await logActivity('change', change.id, rejector.id, 'Decommission rejected (via NovaConnect)');
 
   await announceDecomRejection(change, rejector.full_name);
