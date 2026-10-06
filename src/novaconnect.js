@@ -25,6 +25,10 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 // real reason (wrong URL, NovaConnect down).
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 500;
+// A receiver that accepts the connection and never answers used to block the caller forever
+// (the approve call, the scheduler loop); fault-injection run, 2026-10-06. Each attempt now gives up
+// after this long and counts as a failed attempt.
+const CALLBACK_TIMEOUT_MS = 15000;
 async function postToNovaConnect(path, payload) {
   if (!NOVACONNECT_BASE_URL) throw new Error('NOVACONNECT_BASE_URL is not set, so nothing was sent');
   let lastError;
@@ -33,7 +37,8 @@ async function postToNovaConnect(path, payload) {
       const res = await fetch(`${NOVACONNECT_BASE_URL}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SYNC_API_KEY}` },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS)
       });
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) return res;
@@ -55,18 +60,27 @@ async function postToNovaConnect(path, payload) {
 // that already happened. Mirrors mailer.js's sendNotification() shape (best-effort, always
 // resolves) rather than the callNovaDesk() shape (which is allowed to throw, since NovaConnect
 // callers there are already wrapped in their own try/catch at the call site).
+//
+// Resolves to [{ target, ok }], one entry per target, so a caller that must not lose a message
+// (the scheduler's destroy-confirm card) can tell which targets actually received it. Most callers
+// ignore the result, which keeps their behaviour exactly as before.
 async function pushDecomUpdate(targets, body, metadata) {
   const list = Array.isArray(targets) ? targets : [targets];
+  const results = [];
   for (const target of list) {
+    let ok = false;
     try {
       const res = await postToNovaConnect('/api/integrations/novadesk/decom-updates', {
         channel_id: target.channelId || null, conversation_id: target.conversationId || null, body, metadata: metadata || null
       });
+      ok = res.ok;
       if (!res.ok) console.error(`NovaConnect decom-update push returned HTTP ${res.status}`);
     } catch (e) {
       console.error('NovaConnect decom-update push failed:', e.message);
     }
+    results.push({ target, ok });
   }
+  return results;
 }
 
 // Lets a status change made directly in NovaDesk (the Change Tasks toggle button, or any future

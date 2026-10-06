@@ -63,7 +63,7 @@ function handleReal(req, res, path, body, base) {
       cards.push({
         id: nextId++, changeId: meta.changeId, cardType: meta.cardType, taskId: meta.taskId ?? null,
         status: meta.status || 'pending', createdAt: Date.now(), updatedAt: Date.now(), target: body.channel_id || body.conversation_id || null,
-        source: 'novadesk'
+        targetKind: body.channel_id ? 'channel' : 'dm', source: 'novadesk'
       });
     }
     record({ ...base, outcome: 'ok', cardType: meta && meta.cardType, changeId: meta && meta.changeId, taskId: meta && meta.taskId, bodyText: String(body.body || '').slice(0, 80) });
@@ -106,6 +106,10 @@ async function onRequest(req, res) {
   if (m.name === 'hang') { hung.add({ req, res, path, body, base }); record({ ...base, outcome: 'hung' }); return; }
   if (m.name === 'html404') { record({ ...base, outcome: 'html404' }); return send(res, 404, HTML404, 'text/html; charset=utf-8'); }
   if (m.name === 'status500') { record({ ...base, outcome: '500' }); return send(res, 500, { error: 'injected' }); }
+  if (m.name === 'failtarget' && path === '/api/integrations/novadesk/decom-updates') {
+    const key = body.channel_id ? `channel:${body.channel_id}` : `dm:${body.conversation_id}`;
+    if (key === m.target) { record({ ...base, outcome: '500-target', target: key }); return send(res, 500, { error: 'injected for ' + key }); }
+  }
   if (m.name === 'flaky' && Math.random() < (m.p == null ? 0.5 : m.p)) { record({ ...base, outcome: '500-flaky' }); return send(res, 500, { error: 'injected' }); }
   if (m.name === 'slow') await new Promise((r) => setTimeout(r, m.ms || 5000));
   return handleReal(req, res, path, body, base);
@@ -157,7 +161,7 @@ const ctl = http.createServer(async (req, res) => {
     return send(res, 200, { now: Date.now(), log: log.filter((e) => e.t >= since) });
   }
   if (req.method === 'POST' && path === '/ctl') {
-    await setMode({ name: body.mode || 'normal', ms: body.ms, p: body.p });
+    await setMode({ name: body.mode || 'normal', ms: body.ms, p: body.p, target: body.target });
     return send(res, 200, { ok: true, mode });
   }
   if (req.method === 'POST' && path === '/seed') {

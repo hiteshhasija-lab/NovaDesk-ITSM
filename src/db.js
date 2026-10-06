@@ -236,6 +236,14 @@ CREATE TABLE IF NOT EXISTS scheduled_actions (
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
 
+-- Delivery bookkeeping for the destroy-confirm card (see scheduler.js). A timer is only
+-- 'executed' once the card reached every NovaConnect target; until then it stays 'pending' and is
+-- retried, and delivered_targets remembers which targets already have the card so a retry never
+-- posts a second copy there. Placed AFTER the CREATE TABLE above (an ALTER before its table exists
+-- aborts the schema on a fresh database).
+ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS delivered_targets TEXT;
+ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,

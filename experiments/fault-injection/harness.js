@@ -114,9 +114,9 @@ function makeVm(label, { linked = true } = {}) {
 const tasksOf = (changeId) => q(`SELECT id, description, status, sequence FROM change_tasks WHERE change_id=${changeId} ORDER BY sequence`);
 const changeRow = (changeId) => q(`SELECT id, number, status, approval_status, assigned_to, assignment_group, planned_start, planned_end FROM changes WHERE id=${changeId}`)[0];
 
-async function newChange(label = 'RUN') {
+async function newChange(label = 'RUN', { conversationId = null } = {}) {
   const vm = makeVm(label);
-  const r = await nd('POST', REQ, { hostname: vm.name, novaconnect_channel_id: CHANNEL, requested_by_username: 'admin' });
+  const r = await nd('POST', REQ, { hostname: vm.name, novaconnect_channel_id: CHANNEL, ...(conversationId ? { novaconnect_conversation_id: conversationId } : {}), requested_by_username: 'admin' });
   if (r.status !== 201) throw new Error(`create failed: ${r.status} ${JSON.stringify(r.json || r.error)}`);
   const changeId = r.json.change.id;
   // NovaConnect itself posts the first (approval) card locally, so the harness seeds it directly.
@@ -312,15 +312,15 @@ async function e2() {
 }
 
 // ---------------------------------------------------------------- E4 scheduler / soak
-async function prepareApproved(label) {
+async function prepareApproved(label, opts) {
   await resetStub();
-  const { changeId } = await newChange(label);
+  const { changeId } = await newChange(label, opts);
   const ap = await approve(changeId);
   if (ap.status !== 200) throw new Error(`approve failed in prepare: ${ap.status}`);
   return changeId;
 }
 const insertDestroy = (changeId, runAtMs) => psql(`INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (${changeId}, 'destroy_vm', '${utc(runAtMs)}') RETURNING id`, { firstLine: true });
-const schedRow = (changeId) => q(`SELECT id, status, run_at, executed_at FROM scheduled_actions WHERE change_id=${changeId} ORDER BY id DESC LIMIT 1`)[0];
+const schedRow = (changeId) => q(`SELECT id, status, run_at, executed_at, attempts, delivered_targets FROM scheduled_actions WHERE change_id=${changeId} ORDER BY id DESC LIMIT 1`)[0];
 async function waitForCard(changeId, cardType, timeoutMs) {
   const w0 = Date.now();
   while (Date.now() - w0 < timeoutMs) {
@@ -353,13 +353,29 @@ async function e4() {
     const c = await waitForCard(id, 'decom_confirm_destroy', 120000);
     out.push({ case: '4c', title: 'Timer already overdue when NovaDesk boots', arrived: !!c, secAfterHealthy: c ? sec(c.createdAt - healthyAt) : null, bootSec: sec(healthyAt - t0), sched: schedRow(id).status }); }
 
-  say('  4d receiver down when the timer fires');
+  say('  4d receiver down when the timer fires, then restored');
   { const id = await prepareApproved('S4D'); await setFault('refuse'); const due = Date.now() + 5000; insertDestroy(id, due);
-    await sleep(45000); const duringSched = schedRow(id).status;
-    await setFault('normal'); await sleep(95000);
-    const st = await stubState(); const c = st.cards.find((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy');
+    await sleep(45000); const duringSched = schedRow(id);
+    const restoredAt = Date.now(); await setFault('normal');
+    const c = await waitForCard(id, 'decom_confirm_destroy', 120000);
+    const after = schedRow(id);
+    const acts = q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${id} AND (message LIKE '%Confirm Destroy card%') ORDER BY id`).map((x) => x.message);
     const soak = q(`SELECT count(*)::int AS n FROM scheduled_actions WHERE change_id=${id} AND status IN ('pending','executed') AND run_at <= '${utc(Date.now())}'`)[0].n;
-    out.push({ case: '4d', title: 'Receiver unreachable at the moment the timer fires, restored 45 s later', statusWhileDown: duringSched, statusAfterRestore: schedRow(id).status, cardEverArrived: !!c, ndChangeStatus: changeRow(id).status, soakCheckStillPasses: soak > 0 }); }
+    out.push({ case: '4d', title: 'Receiver unreachable at the moment the timer fires, restored 45 s later', statusWhileDown: duringSched.status, attemptsWhileDown: duringSched.attempts, statusAfterRestore: after.status, attemptsAfterRestore: after.attempts, cardArrived: !!c, secAfterRestore: c ? sec(c.createdAt - restoredAt) : null, cardCopies: (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy').length, ndChangeStatus: changeRow(id).status, soakCheckStillPasses: soak > 0, activity: acts }); }
+
+  say('  4e only one of two targets fails when the timer fires');
+  { const id = await prepareApproved('S4E', { conversationId: 7 }); await setFault('failtarget', { target: 'dm:7' }); const due = Date.now() + 5000; insertDestroy(id, due);
+    // wait until the channel copy has landed while the DM copy is still failing
+    const chan = await waitForCard(id, 'decom_confirm_destroy', 90000);
+    await sleep(35000); // at least one more poll with the DM still failing
+    const mid = (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy');
+    const midSched = schedRow(id);
+    await setFault('normal');
+    const w0 = Date.now(); let dm = null;
+    while (Date.now() - w0 < 120000 && !dm) { dm = (await stubState()).cards.find((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy' && x.targetKind === 'dm'); if (!dm) await sleep(1000); }
+    const fin = (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy');
+    const after = schedRow(id);
+    out.push({ case: '4e', title: 'Card reaches the channel, fails for the DM, DM restored', channelCopyArrived: !!chan, copiesWhileDmFailing: mid.length, statusWhileDmFailing: midSched.status, dmArrivedAfterRestore: !!dm, channelCopiesAtEnd: fin.filter((x) => x.targetKind === 'channel').length, dmCopiesAtEnd: fin.filter((x) => x.targetKind === 'dm').length, statusAtEnd: after.status, attemptsAtEnd: after.attempts }); }
 
   save('e4.json', out);
   md('## E4. Soak-period scheduler'); md();
@@ -369,7 +385,8 @@ async function e4() {
     if (o.case === '4a') res = `card ${o.arrived ? 'arrived' : 'NEVER arrived'}${o.delaySec ? `, ${o.delaySec} s after due` : ''}; action status "${o.sched}"`;
     if (o.case === '4b') res = `restart took ${o.restartHealthySec} s to be healthy; card ${o.arrived ? 'arrived' : 'NEVER arrived'}${o.delaySec ? `, ${o.delaySec} s after due` : ''}; action status "${o.sched}"`;
     if (o.case === '4c') res = `boot took ${o.bootSec} s; card ${o.arrived ? `arrived ${o.secAfterHealthy} s after healthy` : 'NEVER arrived'}; action status "${o.sched}"`;
-    if (o.case === '4d') res = `action "${o.statusWhileDown}" while down, "${o.statusAfterRestore}" after restore; card ${o.cardEverArrived ? 'arrived' : '**NEVER arrived**'}; Change still "${o.ndChangeStatus}"; NovaDesk-side soak check still passes: ${o.soakCheckStillPasses}`;
+    if (o.case === '4d') res = `action "${o.statusWhileDown}" (${o.attemptsWhileDown} attempts) while down, "${o.statusAfterRestore}" (${o.attemptsAfterRestore} attempts) after restore; card ${o.cardArrived ? `arrived ${o.secAfterRestore} s after restore, ${o.cardCopies} copy` : '**NEVER arrived**'}; Change "${o.ndChangeStatus}"; NovaDesk-side soak check passes: ${o.soakCheckStillPasses}; activity log: ${o.activity.length ? o.activity.map((a) => `"${a}"`).join(' / ') : 'none'}`;
+    if (o.case === '4e') res = `channel copy ${o.channelCopyArrived ? 'arrived' : 'missing'}; while the DM failed: ${o.copiesWhileDmFailing} copy in total, action "${o.statusWhileDmFailing}"; after restore the DM copy ${o.dmArrivedAfterRestore ? 'arrived' : '**never arrived**'}; final copies: channel ${o.channelCopiesAtEnd}, DM ${o.dmCopiesAtEnd}; action "${o.statusAtEnd}" after ${o.attemptsAtEnd} attempts`;
     md(`| ${o.case} | ${o.title} | ${res} |`);
   }
   md();
