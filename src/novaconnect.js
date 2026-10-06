@@ -18,10 +18,13 @@ if (!NOVACONNECT_BASE_URL) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
-// Retries a short while when the request fails or the answer isn't JSON (NovaConnect's integration
-// endpoints always answer JSON, so anything else means another app answered). ~24 s budget.
-const MAX_ATTEMPTS = 24;
-const RETRY_DELAY_MS = 1000;
+// Retries briefly when the request fails or the answer isn't JSON (NovaConnect's integration
+// endpoints always answer JSON, so anything else means another app answered). Kept to ~1 s: the
+// long retry budget (24 x 1 s) existed for the 2026-09-29/30 one-NIC pasta hairpin, which is gone
+// since the three-card layout was restored, and it only added delay when a callback failed for a
+// real reason (wrong URL, NovaConnect down).
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 500;
 async function postToNovaConnect(path, payload) {
   if (!NOVACONNECT_BASE_URL) throw new Error('NOVACONNECT_BASE_URL is not set, so nothing was sent');
   let lastError;
