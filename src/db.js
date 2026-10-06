@@ -201,7 +201,6 @@ ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_channel_id INTEGER;
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS novaconnect_conversation_id INTEGER;
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS assignment_group TEXT;
 ALTER TABLE problems ADD COLUMN IF NOT EXISTS assignment_group TEXT;
-ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS assignment_group TEXT;
 
 CREATE TABLE IF NOT EXISTS change_comments (
   id SERIAL PRIMARY KEY,
@@ -269,6 +268,11 @@ CREATE TABLE IF NOT EXISTS service_requests (
   updated_at TEXT NOT NULL ${TS_DEFAULT},
   fulfilled_at TEXT
 );
+
+-- Must come AFTER the CREATE TABLE above: on a fresh database the table does not exist yet, and
+-- an ALTER placed earlier in this script aborts the whole schema transaction (NovaDesk then
+-- cannot start). Found by the fault-injection rig's first start against an empty database.
+ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS assignment_group TEXT;
 
 CREATE TABLE IF NOT EXISTS kb_articles (
   id SERIAL PRIMARY KEY,
