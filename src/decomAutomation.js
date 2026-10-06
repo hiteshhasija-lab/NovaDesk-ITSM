@@ -349,6 +349,41 @@ async function destroySoakOver(changeId) {
   return !!row;
 }
 
+// The server-side gate in front of the irreversible ESXi destroy. Until this existed the only
+// check was "the Change is in progress", which is true the moment it is approved, so the
+// soak period was enforced only by WHEN the chat card appeared, not by the API: a direct
+// confirm-destroy call right after approval would have gone straight to the ESXi calls (found by
+// the fault-injection probe P12, 2026-10-06). The destroy now requires all of: the Change is
+// approved, this workflow actually powered the VM off, and the soak period has run out. The
+// scheduled destroy_vm row only ever exists after a successful power-off, so it also keeps the
+// destroy away from any Change that never went through the decommission flow. Called from
+// runConfirmedDestroy, the one place both doors (NovaConnect's Confirm Destroy and NovaDesk's
+// Change Tasks button) go through.
+async function assertDestroyAllowed(change) {
+  const row = await db.prepare('SELECT approval_status FROM changes WHERE id = ?').get(change.id);
+  if (!row || row.approval_status !== 'approved') {
+    throw decomError(409, `${change.number} is not approved, so its VM cannot be destroyed.`);
+  }
+
+  const powerOff = await db.prepare(`
+    SELECT status FROM change_tasks WHERE change_id = ? AND description = 'Power off — soak period'
+  `).get(change.id);
+  if (!powerOff || powerOff.status !== 'done') {
+    throw decomError(409, `${change.number}: the VM has not been powered off yet. Destroy is only allowed after the power-off and the soak period.`);
+  }
+
+  if (!(await destroySoakOver(change.id))) {
+    const timer = await db.prepare(`
+      SELECT run_at FROM scheduled_actions
+      WHERE change_id = ? AND action_type = 'destroy_vm' AND status = 'pending'
+      ORDER BY run_at DESC LIMIT 1
+    `).get(change.id);
+    throw decomError(409, timer
+      ? `${change.number}: the soak period is not over yet (it ends ${timer.run_at} UTC). Destroy is only allowed after that.`
+      : `${change.number}: no soak period is recorded for this Change, so destroy is not allowed.`);
+  }
+}
+
 // A VM's size as ESXi reports it (govc vm.info -json, the `raw` that esxi.findVm returns), in the
 // CMDB's own style: "1 vCPU", "512 MB", "1 GB". Used for the summary's "Reclaimed" line when the
 // CI's CPU/RAM/Disk fields are empty — the batch of test CIs created on 2026-09-24 (DECOM-TEST-19
@@ -426,6 +461,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
     if (!current || current.status !== 'in_progress') {
       throw decomError(409, `${change.number} is no longer awaiting a destroy decision (current status: ${current ? current.status : 'deleted'}) — this was likely already actioned from another window.`);
     }
+    await assertDestroyAllowed(change);
     const esxiHost = await resolveEsxiHost(ci.id);
     if (!esxiHost) throw decomError(422, `"${ci.name}" has no resolvable ESXi host.`);
 

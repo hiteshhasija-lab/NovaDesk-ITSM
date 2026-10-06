@@ -416,8 +416,20 @@ async function e5() {
     add('P10', 'Complete the same precheck twice', 'second call refused or no-op: no extra cards', `second status=${r2.status}; precheck cards ${before.precheck}->${after.precheck}`, after.precheck === before.precheck); }
   { await resetStub(); const { changeId } = await newChange('P11'); const t1 = tasksOf(changeId).find((x) => x.description === MANUAL[0]); const r = await precheck(changeId, t1.id); const c = changeRow(changeId); const t = tasksOf(changeId).find((x) => x.id === t1.id);
     add('P11', 'Complete a precheck before the Change is approved', 'refused (4xx), task stays pending', `status=${r.status}; task now ${t.status}; approval=${c.approval_status}`, r.status >= 400 && t.status === 'pending'); }
-  { await resetStub(); const { changeId } = await newChange('P12'); await approve(changeId); const r = await nd('POST', `${REQ}/${changeId}/confirm-destroy`, { confirmed_by_username: 'admin' }, { timeoutMs: 60000 }); const c = changeRow(changeId);
-    add('P12', 'Confirm destroy before power-off and soak', 'refused (4xx), Change not closed', `status=${r.status}; Change now ${c.status}`, r.status >= 400 && c.status !== 'closed'); }
+  // Confirm-destroy guard: approved + VM powered off by this workflow + soak period over. In the
+  // rig there are no ESXi credentials, so a request that passes the guard fails later, at the ESXi
+  // step (HTTP 500); a request the guard refuses is a 409 and never reaches ESXi.
+  const confirmDestroy = (id) => nd('POST', `${REQ}/${id}/confirm-destroy`, { confirmed_by_username: 'admin' }, { timeoutMs: 60000 });
+  const markPoweredOff = (id) => psql(`UPDATE change_tasks SET status='done', completed_at='${utc(Date.now())}' WHERE change_id=${id} AND description='Power off — soak period'`);
+  const msg = (r) => (r.json && r.json.error) ? r.json.error : (r.error || '');
+  { await resetStub(); const { changeId } = await newChange('P12'); await approve(changeId); const r = await confirmDestroy(changeId); const c = changeRow(changeId);
+    add('P12', 'Confirm destroy right after approval (no power-off, no soak)', '409 from the guard, Change not closed', `status=${r.status}; Change ${c.status}; "${msg(r).slice(0, 70)}"`, r.status === 409 && c.status !== 'closed'); }
+  { await resetStub(); const { changeId } = await newChange('P12B'); await approve(changeId); markPoweredOff(changeId); insertDestroy(changeId, Date.now() + 3600000); const r = await confirmDestroy(changeId); const c = changeRow(changeId);
+    add('P12b', 'Confirm destroy after power-off but while the soak period is still running', '409 naming when the soak ends', `status=${r.status}; Change ${c.status}; "${msg(r).slice(0, 90)}"`, r.status === 409 && /soak period is not over/.test(msg(r)) && c.status !== 'closed'); }
+  { await resetStub(); const { changeId } = await newChange('P12C'); await approve(changeId); insertDestroy(changeId, Date.now() - 60000); const r = await confirmDestroy(changeId); const c = changeRow(changeId);
+    add('P12c', 'Confirm destroy with a due timer but the VM never recorded as powered off', '409 from the guard', `status=${r.status}; Change ${c.status}; "${msg(r).slice(0, 70)}"`, r.status === 409 && c.status !== 'closed'); }
+  { await resetStub(); const { changeId } = await newChange('P12D'); await approve(changeId); markPoweredOff(changeId); insertDestroy(changeId, Date.now() - 60000); const r = await confirmDestroy(changeId); const c = changeRow(changeId);
+    add('P12d', 'Confirm destroy with everything satisfied (approved, powered off, soak over)', 'passes the guard; rig then fails at the ESXi step (HTTP 500, no credentials), Change not closed', `status=${r.status}; Change ${c.status}; "${msg(r).slice(0, 70)}"`, r.status !== 409 && c.status !== 'closed'); }
   { await resetStub(); const { changeId } = await newChange('P13'); await reject(changeId); const r = await nd('POST', `${REQ}/${changeId}/cancel-destroy`, { cancelled_by_username: 'admin' }, { timeoutMs: 60000 });
     add('P13', 'Cancel-destroy on a rejected Change', '409', String(r.status), r.status === 409); }
 
