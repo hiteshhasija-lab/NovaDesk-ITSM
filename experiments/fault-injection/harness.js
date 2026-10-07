@@ -13,6 +13,7 @@
 //   node harness.js e5                                state-machine and idempotency probes
 //   node harness.js e6                                card ledger cases (restart, long outage, dead target)
 //   node harness.js e7                                the Change page 'chat is catching up' indicator
+//   node harness.js e8                                HTTP 5xx answers (inline retry rules)
 //   node harness.js all
 //
 // Safety: refuses to run unless the rig's NovaDesk has NO ESXi credentials, uses the rig database
@@ -600,6 +601,60 @@ async function e7() {
   return out;
 }
 
+// ---------------------------------------------------------------- E8 HTTP 5xx handling
+async function e8() {
+  say('E8: HTTP 5xx answers from NovaConnect');
+  const out = [];
+  const RES = '/api/integrations/novadesk/decom-updates/resolve';
+  const POST = '/api/integrations/novadesk/decom-updates';
+  const hits = (log, path, outcome) => log.filter((e) => e.path === path && (outcome ? e.outcome === outcome : true));
+
+  say('  8a resolve answered 500 twice, then fine (safe to repeat: retried at once)');
+  { await resetStub(); const { changeId } = await newChange('E8A'); await approve(changeId); await sleep(2500);
+    const t1 = tasksOf(changeId).find((t) => t.description === MANUAL[0]);
+    const t0 = Date.now(); await setFault('blip', { code: 500, n: 2, path: '/resolve' });
+    const pr = await precheck(changeId, t1.id, 'complete'); await sleep(4000);
+    const log = await stubLog(t0); const res = hits(log, RES);
+    const ledger = ledgerFor(changeId, 'decom_precheck_task', t1.id); const c = await waitConverged(changeId, 120);
+    out.push({ case: '8a', title: 'Resolve answered HTTP 500 twice, then fine', precheckStatus: pr.status, resolveRequests: res.length, failed: res.filter((e) => /blip/.test(e.outcome)).length, spanMs: res.length ? res[res.length - 1].t - res[0].t : 0, ledgerDone: ledger && ledger.done, ledgerAttempts: ledger && ledger.attempts, converged: c.converged, duplicates: c.d.duplicates }); }
+
+  say('  8b resolve answered 503 three times (all inline attempts fail, ledger finishes the job)');
+  { await resetStub(); const { changeId } = await newChange('E8B'); await approve(changeId); await sleep(2500);
+    const t1 = tasksOf(changeId).find((t) => t.description === MANUAL[0]);
+    const t0 = Date.now(); await setFault('blip', { code: 503, n: 3, path: '/resolve' });
+    await precheck(changeId, t1.id, 'complete'); await sleep(1500);
+    const c = await waitConverged(changeId, 120);
+    const res = hits(await stubLog(t0), RES);
+    out.push({ case: '8b', title: 'Resolve answered HTTP 503 three times', failed: res.filter((e) => /blip/.test(e.outcome)).length, requests: res.length, converged: c.converged, convergedAfterSec: c.sec, duplicates: c.d.duplicates }); }
+
+  say('  8c card post answered 500 before it was saved (not repeated inline; ledger resends)');
+  { await resetStub(); const { changeId } = await newChange('E8C'); const t0 = Date.now(); await setFault('blip', { code: 500, n: 1, path: '/decom-updates', cardType: 'decom_precheck_task' });
+    await approve(changeId); const c = await waitConverged(changeId, 120);
+    const posts = hits(await stubLog(t0), POST);     const cards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task');
+    out.push({ case: '8c', title: 'Card post answered HTTP 500 once (not saved)', failedPosts: posts.filter((e) => /blip/.test(e.outcome)).length, preCheckCardCopies: cards.length, converged: c.converged, convergedAfterSec: c.sec, duplicates: c.d.duplicates }); }
+
+  say('  8d card post saved then answered 500 (the reason posts are not repeated inline)');
+  { await resetStub(); const { changeId } = await newChange('E8D'); const t0 = Date.now(); await setFault('blip', { code: 500, n: 1, path: '/decom-updates', cardType: 'decom_precheck_task', saveFirst: true });
+    await approve(changeId); await sleep(20000);
+    const posts = hits(await stubLog(t0), POST);
+    const cards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task');
+    out.push({ case: '8d', title: 'Card post saved, then answered HTTP 500 once', failedPosts: posts.filter((e) => /blip/.test(e.outcome)).length, preCheckCardCopies: cards.length }); }
+
+  save('e8.json', out);
+  md('## E8. HTTP 5xx answers'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) {
+    let res = '';
+    if (o.case === '8a') res = `precheck ${o.precheckStatus}; resolve requests: ${o.resolveRequests} (${o.failed} failed) within ${o.spanMs} ms; ledger done=${o.ledgerDone}, failed attempts recorded=${o.ledgerAttempts} (expected done=1, 0); converged ${o.converged}; duplicates ${o.duplicates}`;
+    if (o.case === '8b') res = `${o.requests} resolve requests in total, ${o.failed} of them failed (expected 4 and 3: three inline attempts, then one ledger retry); ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}; duplicates ${o.duplicates}`;
+    if (o.case === '8c') res = `failed card posts: ${o.failedPosts} (not repeated inline); pre-check card copies: ${o.preCheckCardCopies} (expected 1); ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}; duplicates ${o.duplicates}`;
+    if (o.case === '8d') res = `failed card posts: ${o.failedPosts}; pre-check card copies: ${o.preCheckCardCopies} (a second copy is the known cost of resending a post whose first try was saved: needs an idempotency key on NovaConnect, decision #2)`;
+    md(`| ${o.case} | ${o.title} | ${res} |`);
+  }
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -614,6 +669,7 @@ async function e7() {
     if (cmd === 'e2' || cmd === 'all') await e2();
     if (cmd === 'e6' || cmd === 'all') await e6();
     if (cmd === 'e7' || cmd === 'all') await e7();
+    if (cmd === 'e8' || cmd === 'all') await e8();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

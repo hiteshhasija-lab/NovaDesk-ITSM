@@ -29,9 +29,16 @@ const RETRY_DELAY_MS = 500;
 // (the approve call, the scheduler loop); fault-injection run, 2026-10-06. Each attempt now gives up
 // after this long and counts as a failed attempt.
 const CALLBACK_TIMEOUT_MS = 15000;
-async function postToNovaConnect(path, payload) {
+// `idempotent: true` marks a call that is safe to repeat (resolve a card to a status, show/hide the
+// thinking dots): a JSON answer with a 5xx status (NovaConnect's own error handler, e.g. a database
+// hiccup) is then retried too. A card POST is NOT idempotent, because NovaConnect saves the message
+// before it builds and broadcasts it, so a 5xx can mean "saved but failed afterwards" and a retry
+// would show the card twice. Those are left to the card ledger (cardSync.js), which resends later
+// per target. When the retries run out the last response is returned so the caller sees !ok.
+async function postToNovaConnect(path, payload, { idempotent = false } = {}) {
   if (!NOVACONNECT_BASE_URL) throw new Error('NOVACONNECT_BASE_URL is not set, so nothing was sent');
   let lastError;
+  let lastResponse = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch(`${NOVACONNECT_BASE_URL}${path}`, {
@@ -41,13 +48,21 @@ async function postToNovaConnect(path, payload) {
         signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS)
       });
       const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) return res;
-      lastError = new Error(`misrouted response from ${NOVACONNECT_BASE_URL} (content-type "${contentType || 'none'}", attempt ${attempt}/${MAX_ATTEMPTS}): check NOVACONNECT_BASE_URL points at NovaConnect`);
+      if (contentType.includes('application/json')) {
+        if (!(idempotent && res.status >= 500)) return res;
+        lastResponse = res;
+        lastError = new Error(`NovaConnect answered HTTP ${res.status} (attempt ${attempt}/${MAX_ATTEMPTS})`);
+      } else {
+        lastResponse = null;
+        lastError = new Error(`misrouted response from ${NOVACONNECT_BASE_URL} (content-type "${contentType || 'none'}", attempt ${attempt}/${MAX_ATTEMPTS}): check NOVACONNECT_BASE_URL points at NovaConnect`);
+      }
     } catch (e) {
+      lastResponse = null;
       lastError = e;
     }
     if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS);
   }
+  if (lastResponse) return lastResponse;
   throw lastError;
 }
 
@@ -99,7 +114,7 @@ async function pushDecomThinking(targets, thinking) {
     try {
       const res = await postToNovaConnect('/api/integrations/novadesk/decom-thinking', {
         channel_id: target.channelId || null, conversation_id: target.conversationId || null, thinking: !!thinking
-      });
+      }, { idempotent: true });
       if (!res.ok) console.error(`NovaConnect decom-thinking push returned HTTP ${res.status}`);
     } catch (e) {
       console.error('NovaConnect decom-thinking push failed:', e.message);
@@ -127,7 +142,7 @@ async function resolveNovaConnectCard({ changeId, cardType, taskId }, status) {
   try {
     const res = await postToNovaConnect('/api/integrations/novadesk/decom-updates/resolve', {
       changeId, cardType, taskId: taskId ?? null, status
-    });
+    }, { idempotent: true });
     if (!res.ok) console.error(`NovaConnect card-resolve returned HTTP ${res.status}`);
     return res.ok;
   } catch (e) {

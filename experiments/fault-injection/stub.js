@@ -113,6 +113,15 @@ async function onRequest(req, res) {
     const key = body.channel_id ? `channel:${body.channel_id}` : `dm:${body.conversation_id}`;
     if (key === m.target) { record({ ...base, outcome: '500-target', target: key }); return send(res, 500, { error: 'injected for ' + key }); }
   }
+  // {mode:'blip', code, n, path?, cardType?, saveFirst?}: the next n matching requests answer `code` as JSON,
+  // then everything is normal again. With saveFirst the request is processed (the card is stored)
+  // and only then answered with the error, like NovaConnect failing after it saved the message.
+  if (m.name === 'blip' && m.left > 0 && (!m.path || path.endsWith(m.path)) && (!m.cardType || (body.metadata && body.metadata.cardType === m.cardType))) {
+    m.left -= 1;
+    record({ ...base, outcome: `${m.code}-blip${m.saveFirst ? '-saved' : ''}` });
+    if (m.saveFirst) handleReal(req, { writableEnded: true }, path, body, { ...base, savedBeforeError: true });
+    return send(res, m.code || 500, { error: 'injected' });
+  }
   if (m.name === 'flaky' && Math.random() < (m.p == null ? 0.5 : m.p)) { record({ ...base, outcome: '500-flaky' }); return send(res, 500, { error: 'injected' }); }
   if (m.name === 'slow') await new Promise((r) => setTimeout(r, m.ms || 5000));
   return handleReal(req, res, path, body, base);
@@ -164,7 +173,7 @@ const ctl = http.createServer(async (req, res) => {
     return send(res, 200, { now: Date.now(), log: log.filter((e) => e.t >= since) });
   }
   if (req.method === 'POST' && path === '/ctl') {
-    await setMode({ name: body.mode || 'normal', ms: body.ms, p: body.p, target: body.target });
+    await setMode({ name: body.mode || 'normal', ms: body.ms, p: body.p, target: body.target, code: body.code, left: body.n, path: body.path, saveFirst: !!body.saveFirst, cardType: body.cardType });
     return send(res, 200, { ok: true, mode });
   }
   if (req.method === 'POST' && path === '/seed') {
