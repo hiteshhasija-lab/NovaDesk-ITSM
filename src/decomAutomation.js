@@ -109,7 +109,24 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
 // site happens to be the one that resolves the last of the 3 tasks. Safe to call speculatively
 // any time a task changes state — it's a no-op unless the Change is approved, power-off hasn't
 // already run, and all 3 manual tasks are now resolved.
+// Changes whose power-down is under way in this process. Two requests resolving the last
+// pre-checks at about the same moment both used to see "all resolved, power-off still pending"
+// (the power-off task only turns done after a 10 s pacing step plus the ESXi call) and both
+// powered the VM off (fault-injection case 9b). The app runs as a single process, so a Set is a
+// sufficient claim; a crash mid-way ends the sequence anyway.
+const powerDownInProgress = new Set();
+
 async function maybeProceedWithPowerDown(changeId, actorId) {
+  if (powerDownInProgress.has(changeId)) return;
+  powerDownInProgress.add(changeId);
+  try {
+    await proceedWithPowerDownIfReady(changeId, actorId);
+  } finally {
+    powerDownInProgress.delete(changeId);
+  }
+}
+
+async function proceedWithPowerDownIfReady(changeId, actorId) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
   if (!change || change.approval_status !== 'approved') return;
 
@@ -290,10 +307,15 @@ async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newA
 // announceDecomApproval), then checks whether this was the last of the 3, in which case
 // maybeProceedWithPowerDown actually fires the power-off. Shared by NovaConnect's
 // precheck-task route AND NovaDesk's own Change Tasks Complete/Skip buttons.
+// Returns false, having changed nothing, when the task is no longer in the status the caller saw
+// (another window or request got there first): the status change is the claim, so only one of two
+// simultaneous requests goes on to log it, pace, post the next card and check the power-down gate
+// (fault-injection case 9a: both used to).
 async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel) {
-  await db.prepare(`
-    UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?
-  `).run(newStatus, newStatus === 'pending' ? null : nowStr(), task.id);
+  const claimed = await db.prepare(`
+    UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ? AND status = ? RETURNING id
+  `).get(newStatus, newStatus === 'pending' ? null : nowStr(), task.id, task.status);
+  if (!claimed) return false;
   const actionWord = newStatus === 'done' ? 'completed' : newStatus === 'skipped' ? 'skipped' : 'reset to pending';
   await logActivity('change', change.id, actorId, `Manual pre-check "${task.description}" marked ${actionWord}${actorLabel ? ` by ${actorLabel}` : ''}`);
 
@@ -315,6 +337,7 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
     await postNextPrecheckCard(change);
     await maybeProceedWithPowerDown(change.id, actorId);
   }
+  return true;
 }
 
 // The last three decom steps (Destroy VM, Retire CI, Update tracker) and the Change close used to

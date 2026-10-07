@@ -79,17 +79,33 @@ async function postToNovaConnect(path, payload, { idempotent = false } = {}) {
 // Resolves to [{ target, ok }], one entry per target, so a caller that must not lose a message
 // (the scheduler's destroy-confirm card) can tell which targets actually received it. Most callers
 // ignore the result, which keeps their behaviour exactly as before.
-async function pushDecomUpdate(targets, body, metadata) {
+//
+// `idempotencyKeyBase` (the card ledger passes one) gives every target its own key,
+// `<base>:<channel|dm>:<id>`. NovaConnect stores a message once per key, so a repeat of a post whose
+// answer was lost never shows the card twice. Once NovaConnect has answered a keyed post with
+// keyed:true (it honours keys; an older version ignores them) a 5xx on a keyed post is retried
+// inline like the idempotent calls; until then keyed posts are still sent but not retried inline,
+// so the order in which the two apps are upgraded never matters.
+let novaConnectHonoursKeys = false;
+const targetKeyOf = (t) => (t.channelId ? `channel:${t.channelId}` : `dm:${t.conversationId}`);
+
+async function pushDecomUpdate(targets, body, metadata, { idempotencyKeyBase = null } = {}) {
   const list = Array.isArray(targets) ? targets : [targets];
   const results = [];
   for (const target of list) {
     let ok = false;
     try {
+      const key = idempotencyKeyBase ? `${idempotencyKeyBase}:${targetKeyOf(target)}` : null;
       const res = await postToNovaConnect('/api/integrations/novadesk/decom-updates', {
-        channel_id: target.channelId || null, conversation_id: target.conversationId || null, body, metadata: metadata || null
-      });
+        channel_id: target.channelId || null, conversation_id: target.conversationId || null, body, metadata: metadata || null,
+        ...(key ? { idempotency_key: key } : {})
+      }, { idempotent: !!key && novaConnectHonoursKeys });
       ok = res.ok;
       if (!res.ok) console.error(`NovaConnect decom-update push returned HTTP ${res.status}`);
+      else if (key && !novaConnectHonoursKeys) {
+        const answer = await res.clone().json().catch(() => null);
+        if (answer && answer.keyed === true) novaConnectHonoursKeys = true;
+      }
     } catch (e) {
       console.error('NovaConnect decom-update push failed:', e.message);
     }

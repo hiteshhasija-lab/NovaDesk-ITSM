@@ -216,8 +216,8 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
   if (task && task.status !== 'pending') {
     return res.status(409).json({ error: `${change.number}: "${task.description}" is already ${task.status === 'done' ? 'completed' : task.status}; it was probably already actioned from another window.` });
   }
-  if (task) {
-    await resolvePrecheckTask(change, task, newStatus, actor.id, username);
+  if (task && !(await resolvePrecheckTask(change, task, newStatus, actor.id, username))) {
+    return res.status(409).json({ error: `${change.number}: "${task.description}" was just actioned from another window.` });
   }
 
   res.json({ ok: true, status: newStatus });

@@ -17,6 +17,10 @@ const RESOLVABLE = new Set(['decom_approval', 'decom_confirm_destroy', 'decom_sk
 const HTML404 = '<!DOCTYPE html><html><head><title>Not Found · NovaDesk ITSM</title></head><body><h3>Not Found</h3></body></html>';
 
 let mode = { name: 'normal' };
+// Models NovaConnect 1.0.183+: a post carrying idempotency_key is stored once. POST /config
+// {honourKeys:false} models an older NovaConnect that ignores the key.
+let honourKeys = true;
+const seenKeys = new Map();
 let main = null;
 const sockets = new Set();
 const hung = new Set();
@@ -61,7 +65,13 @@ function handleReal(req, res, path, body, base) {
 
   if (path === '/api/integrations/novadesk/decom-updates') {
     const meta = body.metadata || null;
+    const key = honourKeys && typeof body.idempotency_key === 'string' && body.idempotency_key ? body.idempotency_key : null;
+    if (key && seenKeys.has(key)) {
+      record({ ...base, outcome: 'duplicate-key', cardType: meta && meta.cardType, changeId: meta && meta.changeId, taskId: meta && meta.taskId });
+      return send(res, 200, { ok: true, keyed: true, duplicate: true, messageId: seenKeys.get(key) });
+    }
     messages += 1;
+    if (key) seenKeys.set(key, messages);
     if (meta && meta.cardType) {
       cards.push({
         id: nextId++, changeId: meta.changeId, cardType: meta.cardType, taskId: meta.taskId ?? null,
@@ -70,7 +80,7 @@ function handleReal(req, res, path, body, base) {
       });
     }
     record({ ...base, outcome: 'ok', cardType: meta && meta.cardType, changeId: meta && meta.changeId, taskId: meta && meta.taskId, bodyText: String(body.body || '').slice(0, 80) });
-    return send(res, 201, { ok: true, messageId: messages });
+    return send(res, 201, { ok: true, messageId: messages, ...(key ? { keyed: true } : {}) });
   }
 
   if (path === '/api/integrations/novadesk/decom-thinking') {
@@ -183,8 +193,12 @@ const ctl = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true });
   }
   if (req.method === 'POST' && path === '/reset') {
-    cards = []; log = []; messages = 0;
+    cards = []; log = []; messages = 0; seenKeys.clear();
     return send(res, 200, { ok: true });
+  }
+  if (req.method === 'POST' && path === '/config') {
+    if (typeof body.honourKeys === 'boolean') honourKeys = body.honourKeys;
+    return send(res, 200, { ok: true, honourKeys });
   }
   return send(res, 404, { error: 'not found' });
 });

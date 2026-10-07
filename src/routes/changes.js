@@ -416,8 +416,10 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   }
 
   const newStatus = nowDone ? 'done' : 'pending';
-  await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
-    .run(newStatus, nowDone ? nowStr() : null, task.id);
+  // Conditional on the status just read, so two simultaneous clicks cannot both act on it.
+  const claimed = await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ? AND status = ? RETURNING id')
+    .get(newStatus, nowDone ? nowStr() : null, task.id, task.status);
+  if (!claimed) return backWith(`${task.task_number} was just changed from another window; nothing was done. Check its current status below.`);
   await logActivity('change', change.id, req.session.user.id,
     `${task.task_number} (${task.description}) marked ${newStatus}`);
 
@@ -471,8 +473,9 @@ router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'
 
   const nowSkipped = task.status !== 'skipped';
   const newStatus = nowSkipped ? 'skipped' : 'pending';
-  await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ?')
-    .run(newStatus, nowSkipped ? nowStr() : null, task.id);
+  const claimed = await db.prepare('UPDATE change_tasks SET status = ?, completed_at = ? WHERE id = ? AND status = ? RETURNING id')
+    .get(newStatus, nowSkipped ? nowStr() : null, task.id, task.status);
+  if (!claimed) return res.redirect(`/changes/${change.id}?notice=${encodeURIComponent(`${task.task_number} was just changed from another window; nothing was done. Check its current status below.`)}#tasks`);
   await logActivity('change', change.id, req.session.user.id,
     `${task.task_number} (${task.description}) marked ${newStatus}`);
 

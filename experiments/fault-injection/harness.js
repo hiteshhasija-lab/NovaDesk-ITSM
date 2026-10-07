@@ -603,8 +603,9 @@ async function e7() {
 
 // ---------------------------------------------------------------- E8 HTTP 5xx handling
 async function e8() {
-  say('E8: HTTP 5xx answers from NovaConnect');
+  say('E8: HTTP 5xx answers from NovaConnect (an older NovaConnect that ignores idempotency keys; see E10 for the keyed behaviour)');
   const out = [];
+  await ctl('POST', '/config', { honourKeys: false });
   const RES = '/api/integrations/novadesk/decom-updates/resolve';
   const POST = '/api/integrations/novadesk/decom-updates';
   const hits = (log, path, outcome) => log.filter((e) => e.path === path && (outcome ? e.outcome === outcome : true));
@@ -640,6 +641,7 @@ async function e8() {
     const cards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task');
     out.push({ case: '8d', title: 'Card post saved, then answered HTTP 500 once', failedPosts: posts.filter((e) => /blip/.test(e.outcome)).length, preCheckCardCopies: cards.length }); }
 
+  await ctl('POST', '/config', { honourKeys: true });
   save('e8.json', out);
   md('## E8. HTTP 5xx answers'); md();
   md('| Case | Scenario | Result |'); md('|---|---|---|');
@@ -648,7 +650,102 @@ async function e8() {
     if (o.case === '8a') res = `precheck ${o.precheckStatus}; resolve requests: ${o.resolveRequests} (${o.failed} failed) within ${o.spanMs} ms; ledger done=${o.ledgerDone}, failed attempts recorded=${o.ledgerAttempts} (expected done=1, 0); converged ${o.converged}; duplicates ${o.duplicates}`;
     if (o.case === '8b') res = `${o.requests} resolve requests in total, ${o.failed} of them failed (expected 4 and 3: three inline attempts, then one ledger retry); ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}; duplicates ${o.duplicates}`;
     if (o.case === '8c') res = `failed card posts: ${o.failedPosts} (not repeated inline); pre-check card copies: ${o.preCheckCardCopies} (expected 1); ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}; duplicates ${o.duplicates}`;
-    if (o.case === '8d') res = `failed card posts: ${o.failedPosts}; pre-check card copies: ${o.preCheckCardCopies} (a second copy is the known cost of resending a post whose first try was saved: needs an idempotency key on NovaConnect, decision #2)`;
+    if (o.case === '8d') res = `failed card posts: ${o.failedPosts}; pre-check card copies: ${o.preCheckCardCopies} (a second copy is the cost of resending a post whose first try was saved, when NovaConnect ignores idempotency keys; with NovaConnect 1.0.183 this is 1, see E10)`;
+    md(`| ${o.case} | ${o.title} | ${res} |`);
+  }
+  md();
+  return out;
+}
+
+// ---------------------------------------------------------------- E9 concurrent pre-check completion
+async function e9() {
+  say('E9: concurrent pre-check completion');
+  const out = [];
+  const count = (changeId, like) => Number(q(`SELECT count(*) AS n FROM activity_log WHERE entity_type='change' AND entity_id=${changeId} AND message LIKE '${like}'`)[0].n);
+
+  say('  9a the same pre-check completed twice at the same moment');
+  { await resetStub(); const { changeId } = await newChange('E9A'); await approve(changeId); await sleep(2000);
+    const t1 = tasksOf(changeId).find((t) => t.description === MANUAL[0]); const t0 = Date.now();
+    const [r1, r2] = await Promise.all([precheck(changeId, t1.id, 'complete'), precheck(changeId, t1.id, 'complete')]);
+    await sleep(3000);
+    const t2 = tasksOf(changeId).find((t) => t.description === MANUAL[1]);
+    const nextCards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task' && Number(x.taskId) === t2.id);
+    const posts = (await stubLog(t0)).filter((e) => e.outcome === 'ok' && e.cardType === 'decom_precheck_task' && Number(e.taskId) === t2.id);
+    out.push({ case: '9a', title: 'Same pre-check completed twice at once', statuses: [r1.status, r2.status].sort(), completedLogLines: count(changeId, '%Verify backup completed%marked completed%'), nextCardCopies: nextCards.length, nextCardPosts: posts.length }); }
+
+  say('  9b the last two pre-checks completed at the same moment (two windows)');
+  { await resetStub(); const { changeId } = await newChange('E9B'); await approve(changeId); await sleep(2000);
+    const tasks = tasksOf(changeId); const t1 = tasks.find((t) => t.description === MANUAL[0]); const t2 = tasks.find((t) => t.description === MANUAL[1]); const t3 = tasks.find((t) => t.description === MANUAL[2]);
+    await precheck(changeId, t1.id, 'complete'); const t0 = Date.now();
+    const [r2, r3] = await Promise.all([precheck(changeId, t2.id, 'complete'), precheck(changeId, t3.id, 'complete')]);
+    await sleep(15000);
+    const powerDownMsgs = (await stubLog(t0)).filter((e) => e.outcome === 'ok' && /Proceeding with the Power Down/.test(e.bodyText || '')).length;
+    out.push({ case: '9b', title: 'The last two pre-checks completed at once', statuses: [r2.status, r3.status], powerDownStarts: powerDownMsgs, powerOffAttempts: count(changeId, 'ESXi power-off failed%') + count(changeId, 'VM powered off%') }); }
+
+  save('e9.json', out);
+  md('## E9. Concurrent pre-check completion'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) {
+    let res = '';
+    if (o.case === '9a') res = `answers ${o.statuses.join(' + ')} (expected 200 + 409); "completed" log lines ${o.completedLogLines} (expected 1); next card copies ${o.nextCardCopies} (expected 1), next-card posts ${o.nextCardPosts} (expected 1)`;
+    if (o.case === '9b') res = `answers ${o.statuses.join(' + ')}; power-down started ${o.powerDownStarts} time(s) (expected 1); power-off attempts recorded ${o.powerOffAttempts} (expected 1)`;
+    md(`| ${o.case} | ${o.title} | ${res} |`);
+  }
+  md();
+  return out;
+}
+
+// ---------------------------------------------------------------- E10 idempotency key on card posts
+async function e10() {
+  say('E10: idempotency key on card posts');
+  const out = [];
+  const POST = '/api/integrations/novadesk/decom-updates';
+  const BLIP = { code: 500, n: 1, path: '/decom-updates', cardType: 'decom_precheck_task' };
+  const cardPosts = async (t0) => (await stubLog(t0)).filter((e) => e.path === POST && (e.cardType === 'decom_precheck_task' || /blip/.test(e.outcome)));
+  // The ledger's resend comes 5-10 s after a failure on the rig; wait for it to finish before counting.
+  const waitLedgerDone = async (changeId, maxSec = 90) => {
+    const t1 = tasksOf(changeId).find((t) => t.description === MANUAL[0]); const w0 = Date.now();
+    while (Date.now() - w0 < maxSec * 1000) { const l = ledgerFor(changeId, 'decom_precheck_task', t1.id); if (l && l.done === 1) return true; await sleep(1000); }
+    return false;
+  };
+  const copies = async (changeId) => (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task').length;
+
+  say('  10a saved, then answered 500 (the case that used to show the card twice)');
+  { await resetStub(); podman('restart', 'fi-novadesk'); await waitHealthy();
+    const { changeId } = await newChange('E10A'); const t0 = Date.now(); await setFault('blip', { ...BLIP, saveFirst: true });
+    await approve(changeId); const c = await waitConverged(changeId, 120); await waitLedgerDone(changeId); await sleep(1500);
+    const posts = await cardPosts(t0);
+    out.push({ case: '10a', title: 'Card post saved, then answered HTTP 500', copies: await copies(changeId), failed: posts.filter((e) => /blip/.test(e.outcome)).length, duplicateKeyAnswers: posts.filter((e) => e.outcome === 'duplicate-key').length, converged: c.converged, duplicates: c.d.duplicates }); }
+
+  say('  10b not saved, answered 500: before NovaDesk has seen a keyed answer, then after');
+  { await resetStub(); podman('restart', 'fi-novadesk'); await waitHealthy();
+    const first = await newChange('E10B1'); let t0 = Date.now(); await setFault('blip', BLIP);
+    await approve(first.changeId); await waitConverged(first.changeId, 120);
+    let posts = await cardPosts(t0); const bad1 = posts.find((e) => /blip/.test(e.outcome)); const next1 = bad1 && posts.find((e) => e.t > bad1.t);
+    const gapBefore = bad1 && next1 ? next1.t - bad1.t : null;
+    await resetStub(); // keeps NovaDesk's learned state (it is in NovaDesk's memory)
+    const second = await newChange('E10B2'); t0 = Date.now(); await setFault('blip', BLIP);
+    await approve(second.changeId); const c2 = await waitConverged(second.changeId, 120);
+    posts = await cardPosts(t0); const bad2 = posts.find((e) => /blip/.test(e.outcome)); const next2 = bad2 && posts.find((e) => e.t > bad2.t);
+    const gapAfter = bad2 && next2 ? next2.t - bad2.t : null;
+    out.push({ case: '10b', title: 'Card post answered HTTP 500 (not saved)', gapBeforeLearningMs: gapBefore, gapAfterLearningMs: gapAfter, copies: await copies(second.changeId), converged: c2.converged, duplicates: c2.d.duplicates }); }
+
+  say('  10c an older NovaConnect that ignores the key (self-protection)');
+  { await resetStub(); await ctl('POST', '/config', { honourKeys: false }); podman('restart', 'fi-novadesk'); await waitHealthy();
+    const { changeId } = await newChange('E10C'); const t0 = Date.now(); await setFault('blip', { ...BLIP, saveFirst: true });
+    await approve(changeId); await waitConverged(changeId, 120); await waitLedgerDone(changeId); await sleep(1500);
+    const posts = await cardPosts(t0); const bad = posts.find((e) => /blip/.test(e.outcome)); const next = bad && posts.find((e) => e.t > bad.t);
+    await ctl('POST', '/config', { honourKeys: true });
+    out.push({ case: '10c', title: 'Older NovaConnect that ignores the key, card saved then HTTP 500', copies: await copies(changeId), retryGapMs: bad && next ? next.t - bad.t : null }); }
+
+  save('e10.json', out);
+  md('## E10. Idempotency key on card posts'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) {
+    let res = '';
+    if (o.case === '10a') res = `card copies: ${o.copies} (expected 1; was 2 in case 8d); failed posts ${o.failed}; resends answered "duplicate" ${o.duplicateKeyAnswers}; converged ${o.converged}; duplicates ${o.duplicates}`;
+    if (o.case === '10b') res = `time from the failed post to the next attempt: ${o.gapBeforeLearningMs} ms before NovaDesk had seen a keyed answer (ledger retry, expected a few seconds), ${o.gapAfterLearningMs} ms after (inline retry, expected under 2 s); card copies ${o.copies}; converged ${o.converged}; duplicates ${o.duplicates}`;
+    if (o.case === '10c') res = `card copies: ${o.copies} (an older NovaConnect keeps the old duplicate; expected 2); next attempt ${o.retryGapMs} ms after the failure (ledger, not inline)`;
     md(`| ${o.case} | ${o.title} | ${res} |`);
   }
   md();
@@ -670,6 +767,8 @@ async function e8() {
     if (cmd === 'e6' || cmd === 'all') await e6();
     if (cmd === 'e7' || cmd === 'all') await e7();
     if (cmd === 'e8' || cmd === 'all') await e8();
+    if (cmd === 'e9' || cmd === 'all') await e9();
+    if (cmd === 'e10' || cmd === 'all') await e10();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

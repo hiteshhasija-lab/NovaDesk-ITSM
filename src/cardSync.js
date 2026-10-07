@@ -117,7 +117,9 @@ async function deliverClaimed(row) {
   //    arrives late never offers buttons for work that has since finished.
   if (toPost.length) {
     const metadata = RESOLVABLE.has(row.card_type) ? { ...payload.metadata, status: desired } : payload.metadata;
-    const results = await pushDecomUpdate(toPost, payload.body, metadata);
+    // One key per card and target: NovaConnect stores a keyed message once, so a resend after a
+    // lost answer cannot show the card twice (NovaConnect 1.0.183 and later; see novaconnect.js).
+    const results = await pushDecomUpdate(toPost, payload.body, metadata, { idempotencyKeyBase: `novadesk-card:${row.change_id}:${row.card_type}:${row.task_id}` });
     for (const r of results) {
       const k = targetKey(r.target);
       if (r.ok) { posted.add(k); delete failCounts[k]; anySuccess = true; } else { anyFailure = true; failedKeys.push(k); lastError = 'card post failed'; }
