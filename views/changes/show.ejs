@@ -34,6 +34,21 @@
   </div>
   <% } %>
 
+  <% if (typeof chatSync !== 'undefined' && chatSync.length) { %>
+  <% const retrying = chatSync.filter(i => i.retrying); %>
+  <div class="alert <%= retrying.length ? 'alert-warning' : 'alert-secondary' %> small" role="status">
+    <strong><i class="bi bi-chat-dots me-1"></i><%= retrying.length ? 'The NovaConnect chat is catching up.' : 'Some NovaConnect chat updates were not delivered.' %></strong>
+    <% if (retrying.length) { %>NovaDesk is retrying <%= retrying.length %> update<%= retrying.length === 1 ? '' : 's' %> automatically; nothing needs doing. Refresh to see progress.<% } %>
+    <ul class="mb-0 mt-1">
+      <% chatSync.forEach(item => { %>
+        <li><%= item.text %>
+          <% if (item.retrying) { %><span class="text-muted"><% if (item.attempts) { %><%= item.attempts %> failed attempt<%= item.attempts === 1 ? '' : 's' %> so far. <% } %>Next try <%- h.fmtDate(item.nextAttemptAt) %><% if (item.error) { %> (last problem: <%= item.error %>)<% } %>.</span><% } %>
+        </li>
+      <% }) %>
+    </ul>
+  </div>
+  <% } %>
+
   <div class="row g-3">
     <div class="col-lg-8">
       <div class="card mb-3">

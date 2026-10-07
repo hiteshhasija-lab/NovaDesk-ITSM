@@ -1,6 +1,7 @@
 const { db, nowStr, offsetStr, logActivity } = require('./db');
 const esxi = require('./esxi');
-const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('./novaconnect');
+const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('./novaconnect');
+const { syncCard } = require('./cardSync');
 const { CHANGE_STATUS_LABELS } = require('./helpers');
 const { appendDecomTrackerRow } = require('./decomTracker');
 
@@ -138,19 +139,25 @@ async function postNextPrecheckCard(change) {
     .find((t) => t && t.status === 'pending');
   if (!nextTask) return;
 
-  await pushDecomUpdate(
-    decomTargets(change),
-    `Pre-decommission check: **${nextTask.description}**. Confirm when completed, or skip if not applicable.`,
-    {
-      cardType: 'decom_precheck_task',
-      changeId: change.id,
-      changeNumber: change.number,
-      taskId: nextTask.id,
-      taskNumber: nextTask.task_number,
-      taskDescription: nextTask.description,
-      status: 'pending'
+  // Through the card ledger (cardSync.js): if NovaConnect can't be reached the card is recorded
+  // and posted by the retry loop, and asking again for a card that already exists is a no-op
+  // instead of a second copy.
+  await syncCard(change, {
+    cardType: 'decom_precheck_task',
+    taskId: nextTask.id,
+    desiredStatus: 'pending',
+    post: {
+      body: `Pre-decommission check: **${nextTask.description}**. Confirm when completed, or skip if not applicable.`,
+      metadata: {
+        cardType: 'decom_precheck_task',
+        changeId: change.id,
+        changeNumber: change.number,
+        taskId: nextTask.id,
+        taskNumber: nextTask.task_number,
+        taskDescription: nextTask.description
+      }
     }
-  );
+  });
 }
 
 // Resolves the approval card + posts the "approved" confirmation + posts the FIRST precheck
@@ -160,7 +167,7 @@ async function postNextPrecheckCard(change) {
 // either way, and until this was shared, approving directly in NovaDesk's own UI left the
 // NovaConnect approval card stuck on "pending" forever, since none of this ever ran for that path.
 async function announceDecomApproval(change, approverFullName) {
-  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'approved');
+  await syncCard(change, { cardType: 'decom_approval', desiredStatus: 'approved' });
   await pushDecomUpdate(
     decomTargets(change),
     `✅ ${change.number} approved by ${approverFullName}. Scheduled for decommission.`,
@@ -182,7 +189,7 @@ async function announceDecomApproval(change, approverFullName) {
 }
 
 async function announceDecomRejection(change, rejectorFullName) {
-  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_approval' }, 'rejected');
+  await syncCard(change, { cardType: 'decom_approval', desiredStatus: 'rejected' });
   await pushDecomUpdate(
     decomTargets(change),
     `❌ ${change.number} rejected by ${rejectorFullName}.`,
@@ -258,7 +265,7 @@ async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newA
 
   if (newStatus === 'cancelled') {
     const poweredBackOn = await revertPowerOffIfNeeded(preUpdateChange, actorId);
-    await resolveNovaConnectCard({ changeId: preUpdateChange.id, cardType: 'decom_confirm_destroy' }, 'cancelled').catch(() => {});
+    await syncCard(preUpdateChange, { cardType: 'decom_confirm_destroy', desiredStatus: 'cancelled' });
     await pushDecomUpdate(
       decomTargets(preUpdateChange),
       poweredBackOn
@@ -291,7 +298,7 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
   await logActivity('change', change.id, actorId, `Manual pre-check "${task.description}" marked ${actionWord}${actorLabel ? ` by ${actorLabel}` : ''}`);
 
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
-    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+    await syncCard(change, { cardType: 'decom_precheck_task', taskId: task.id, desiredStatus: newStatus });
   }
 
   if (newStatus === 'done' || newStatus === 'skipped') {
@@ -424,21 +431,24 @@ async function postDecomSummary(change, ci, trackerRow, cmdbStatus, fromEsxi) {
     disk ? `${disk} storage` : null
   ].filter(Boolean);
   const createdAtMs = new Date(`${change.created_at.replace(' ', 'T')}Z`).getTime();
-  await pushDecomUpdate(
-    decomTargets(change),
-    `🎉 ${ci.name} decommissioned.`,
-    {
-      cardType: 'decom_summary',
-      changeId: change.id,
-      changeNumber: change.number,
-      ciName: ci.name,
-      changeStatus: 'Closed / Successful',
-      cmdbStatus,
-      reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
-      trackerRow: trackerRow || '—',
-      elapsedReal: formatElapsed(Date.now() - createdAtMs)
+  await syncCard(change, {
+    cardType: 'decom_summary',
+    desiredStatus: 'posted',
+    post: {
+      body: `🎉 ${ci.name} decommissioned.`,
+      metadata: {
+        cardType: 'decom_summary',
+        changeId: change.id,
+        changeNumber: change.number,
+        ciName: ci.name,
+        changeStatus: 'Closed / Successful',
+        cmdbStatus,
+        reclaimed: reclaimedParts.length ? reclaimedParts.join(' · ') : '—',
+        trackerRow: trackerRow || '—',
+        elapsedReal: formatElapsed(Date.now() - createdAtMs)
+      }
     }
-  );
+  });
 }
 
 // One destroy at a time per Change: the card is dual-posted in NovaConnect and NovaDesk's task list
@@ -480,7 +490,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
 
     // Resolve the confirm-destroy card whichever door was used, or it stays stuck showing
     // "Confirm Destroy" with active buttons.
-    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'destroyed');
+    await syncCard(change, { cardType: 'decom_confirm_destroy', desiredStatus: 'destroyed' });
     await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
 
     // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant.

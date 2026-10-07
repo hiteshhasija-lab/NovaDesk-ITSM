@@ -2,7 +2,8 @@ const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
-const { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets } = require('../novaconnect');
+const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('../novaconnect');
+const { syncCard } = require('../cardSync');
 const {
   DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, maybeProceedWithPowerDown, sleep,
   announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy
@@ -292,7 +293,7 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
   await logActivity('change', change.id, canceller.id, 'Change cancelled — decommission stopped before destroy');
 
   // See the matching resolve in confirm-destroy above — same reasoning, same fix.
-  await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_confirm_destroy' }, 'cancelled');
+  await syncCard(change, { cardType: 'decom_confirm_destroy', desiredStatus: 'cancelled' });
   await pushDecomUpdate(
     decomTargets(change),
     `🛑 ${change.number} cancelled — ${ci.name} powered back on, destroy did not proceed.`,

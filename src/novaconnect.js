@@ -107,14 +107,32 @@ async function pushDecomThinking(targets, thinking) {
   }
 }
 
+// Is NovaConnect itself up and answering? Its /health is public and exempt from rate limiting.
+// cardSync.js uses this to tell "NovaConnect is down" (keep retrying, never give up) from "this one
+// target keeps failing while NovaConnect is fine" (a deleted channel: eventually stop trying it).
+async function novaConnectHealthy() {
+  if (!NOVACONNECT_BASE_URL) return false;
+  try {
+    const res = await fetch(`${NOVACONNECT_BASE_URL}/health`, { signal: AbortSignal.timeout(5000) });
+    const contentType = res.headers.get('content-type') || '';
+    return res.ok && contentType.includes('application/json');
+  } catch (e) {
+    return false;
+  }
+}
+
+// Resolves to true only if NovaConnect accepted the resolve (cardSync.js relies on this to know
+// whether a card's final status has really been delivered); never throws.
 async function resolveNovaConnectCard({ changeId, cardType, taskId }, status) {
   try {
     const res = await postToNovaConnect('/api/integrations/novadesk/decom-updates/resolve', {
       changeId, cardType, taskId: taskId ?? null, status
     });
     if (!res.ok) console.error(`NovaConnect card-resolve returned HTTP ${res.status}`);
+    return res.ok;
   } catch (e) {
     console.error('NovaConnect card-resolve failed:', e.message);
+    return false;
   }
 }
 
@@ -129,4 +147,4 @@ function decomTargets(change) {
   return targets;
 }
 
-module.exports = { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, decomTargets };
+module.exports = { pushDecomUpdate, pushDecomThinking, resolveNovaConnectCard, novaConnectHealthy, decomTargets };

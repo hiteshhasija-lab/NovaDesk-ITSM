@@ -11,6 +11,8 @@
 //   node harness.js e2 [--faults refuse,html404,...] [--windows approve,prechecks,all] [--reps 1] [--grace 30]
 //   node harness.js e4                                scheduler / soak persistence and lost-card cases
 //   node harness.js e5                                state-machine and idempotency probes
+//   node harness.js e6                                card ledger cases (restart, long outage, dead target)
+//   node harness.js e7                                the Change page 'chat is catching up' indicator
 //   node harness.js all
 //
 // Safety: refuses to run unless the rig's NovaDesk has NO ESXi credentials, uses the rig database
@@ -128,6 +130,11 @@ const reject = (id, o) => nd('POST', `${REQ}/${id}/reject`, { rejected_by_userna
 const precheck = (id, taskId, action = 'complete', who = 'admin', o) => nd('POST', `${REQ}/${id}/precheck-task`, { action, task_id: taskId, actor_username: who }, o);
 
 // What the chat should show, given NovaDesk's own records, versus what the receiver actually holds.
+// What the chat should show, given NovaDesk's own records, versus what the receiver holds.
+// "strict" counts every card whose status differs or that never arrived. "actionable" counts what
+// matters to an operator: a card that still offers buttons for finished work (stale), or a card
+// that is still needed (pending) but never arrived. A card for work that already finished and
+// never arrived is "missing historical": the design deliberately does not post those late.
 function divergence(changeId, st) {
   const c = changeRow(changeId);
   const tasks = tasksOf(changeId).filter((t) => MANUAL.includes(t.description));
@@ -142,9 +149,20 @@ function divergence(changeId, st) {
   const rows = expected.map((e) => {
     const m = mine.filter((x) => x.cardType === e.cardType && (e.taskId === null ? x.taskId === null : Number(x.taskId) === Number(e.taskId)));
     const got = m.length ? m[m.length - 1].status : 'MISSING';
-    return { ...e, receiver: got, copies: m.length, diverged: got !== e.expect };
+    return {
+      ...e, receiver: got, copies: m.length, diverged: got !== e.expect,
+      stale: m.length > 0 && got !== e.expect,
+      missingActionable: m.length === 0 && e.expect === 'pending',
+      missingHistorical: m.length === 0 && e.expect !== 'pending'
+    };
   });
-  return { rows, diverged: rows.filter((r) => r.diverged).length, duplicates: rows.filter((r) => r.copies > 1).length };
+  return {
+    rows,
+    diverged: rows.filter((r) => r.diverged).length,
+    actionable: rows.filter((r) => r.stale || r.missingActionable).length,
+    missingHistorical: rows.filter((r) => r.missingHistorical).length,
+    duplicates: rows.filter((r) => r.copies > 1).length
+  };
 }
 
 function stats(a) {
@@ -158,7 +176,7 @@ const sec = (ms) => (ms / 1000).toFixed(1);
 // One complete decommission up to (and including) the power-down attempt.
 // opts: { fault, faultArgs, window: 'approve'|'prechecks'|'all'|'none', graceSec, hang }
 async function runFlow(opts = {}) {
-  const { fault = 'normal', faultArgs = {}, window = 'none', graceSec = 0, hang = false } = opts;
+  const { fault = 'normal', faultArgs = {}, window = 'none', graceSec = 0, hang = false, holdSec = 0 } = opts;
   await resetStub();
   const t0 = Date.now();
   const { changeId, vm } = await newChange('FLOW');
@@ -190,6 +208,8 @@ async function runFlow(opts = {}) {
     const r = await precheck(changeId, t.id, 'complete');
     rec.steps[`precheck${idx + 1}`] = { ms: r.ms, status: r.status, cardVisibleBeforeAction: visible };
   }
+  if (holdSec > 0) { await sleep(holdSec * 1000); rec.faultHeldExtraSec = holdSec; }
+  const tClear = Date.now();
   await setFault('normal');
   rec.totalMs = Date.now() - t0;
 
@@ -197,9 +217,16 @@ async function runFlow(opts = {}) {
   const st0 = await stubState();
   rec.divergenceAtEnd = divergence(changeId, st0);
   if (graceSec > 0) {
-    await sleep(graceSec * 1000);
-    const st1 = await stubState();
-    rec.divergenceAfterGrace = divergence(changeId, st1);
+    // No operator action from here: measure how long the chat takes to catch up on its own, up to graceSec.
+    rec.convergedAfterSec = null;
+    let last = rec.divergenceAtEnd;
+    while (true) {
+      if (last.actionable === 0) { rec.convergedAfterSec = Number(((Date.now() - tClear) / 1000).toFixed(1)); break; }
+      if (Date.now() - tClear >= graceSec * 1000) break;
+      await sleep(3000);
+      last = divergence(changeId, await stubState());
+    }
+    rec.divergenceAfterGrace = last;
     rec.graceSec = graceSec;
   }
   const log = await stubLog(t0);
@@ -273,7 +300,7 @@ async function e2() {
   const faults = opt('faults', 'none,refuse,html404,status500,slow,flaky').split(',');
   const windows = opt('windows', 'approve,prechecks,all').split(',');
   const reps = Number(opt('reps', 1));
-  const grace = Number(opt('grace', 30));
+  const grace = Number(opt('grace', 120));
   const doHang = opt('hang', 'yes') === 'yes';
   say(`E2: faults=${faults} windows=${windows} reps=${reps} grace=${grace}s hang=${doHang}`);
   const runs = [];
@@ -284,7 +311,7 @@ async function e2() {
         const r = await runFlow({ fault: FAULTS[f].mode, faultArgs: FAULTS[f].args, window: w, graceSec: grace });
         r.faultLabel = f;
         runs.push(r);
-        say(`  ${f}/${w} #${k}: approve=${r.steps.approve.status} diverged end=${r.divergenceAtEnd.diverged} after ${grace}s=${r.divergenceAfterGrace.diverged} blocked=${r.blocked} hits=${r.callbackHits}`);
+        say(`  ${f}/${w} #${k}: approve=${r.steps.approve.status} actionable end=${r.divergenceAtEnd.actionable} converged=${r.convergedAfterSec === null ? 'NEVER (' + r.divergenceAfterGrace.actionable + ' left)' : r.convergedAfterSec + 's'} strict-after=${r.divergenceAfterGrace.diverged} dup=${r.divergenceAfterGrace.duplicates} blocked=${r.blocked}`);
         save('e2.json', runs);
       }
     }
@@ -293,21 +320,23 @@ async function e2() {
     const r = await runFlow({ fault: 'hang', window: 'approve', graceSec: grace, hang: true });
     r.faultLabel = 'hang';
     runs.push(r);
-    say(`  hang/approve: approve client wait ${sec(r.steps.approve.ms)}s (${r.steps.approve.error || r.steps.approve.status}), diverged after ${grace}s=${r.divergenceAfterGrace.diverged}`);
+    say(`  hang/approve: approve client wait ${sec(r.steps.approve.ms)}s (${r.steps.approve.error || r.steps.approve.status}), actionable after=${r.divergenceAfterGrace.actionable}`);
     save('e2.json', runs);
   }
 
-  md('## E2. Callback loss and misrouting (NovaDesk to receiver)'); md();
-  md(`Fault active during the named window. "Diverged" counts chat cards whose status differs from what NovaDesk's records say they should be (a card that never arrived counts). "After ${grace}s" is measured with the fault cleared and no operator action, to see whether anything repairs itself. "Blocked" is the number of precheck steps where the card an operator would need to click was not in the chat.`); md();
-  md(`| Fault | Window | Approve HTTP (s) | Diverged at end | Diverged after ${grace}s | Blocked | Callback hits (attempts) |`);
-  md('|---|---|---|---|---|---|---|');
+  md('## E2. Callback faults (NovaDesk to receiver)'); md();
+  md(`Fault active during the named window, then cleared with no operator action; the harness then waits up to ${grace} s for the chat to catch up. "Actionable" counts what matters to an operator: a card still offering buttons for finished work, or a card still needed that never arrived. "Strict" also counts cards for finished work that never arrived (the design deliberately does not post those late). "Blocked" is the number of pre-check steps where the card the operator needed was not in the chat when they acted.`); md();
+  md('| Fault | Window | Approve HTTP (s) | Actionable at end | Converged in (s) | Actionable left | Strict left | Duplicate cards | Blocked |');
+  md('|---|---|---|---|---|---|---|---|---|');
   for (const r of runs) {
-    md(`| ${r.faultLabel} | ${r.window} | ${r.steps.approve.status || r.steps.approve.error} (${sec(r.steps.approve.ms)}) | ${r.divergenceAtEnd.diverged} | ${r.divergenceAfterGrace ? r.divergenceAfterGrace.diverged : '-'} | ${r.blocked} | ${r.callbackHits} |`);
+    const d1 = r.divergenceAfterGrace;
+    md(`| ${r.faultLabel} | ${r.window} | ${r.steps.approve.status || r.steps.approve.error} (${sec(r.steps.approve.ms)}) | ${r.divergenceAtEnd.actionable} | ${r.convergedAfterSec === null || r.convergedAfterSec === undefined ? 'never' : r.convergedAfterSec} | ${d1 ? d1.actionable : '-'} | ${d1 ? d1.diverged : '-'} | ${d1 ? d1.duplicates : '-'} | ${r.blocked} |`);
   }
   md();
-  const damaged = runs.filter((r) => r.faultLabel !== 'none' && r.divergenceAfterGrace && r.divergenceAfterGrace.diverged > 0);
-  const nd_ok = runs.filter((r) => r.nd && r.nd.approval_status === 'approved').length;
-  md(`NovaDesk reached "approved" in **${nd_ok} of ${runs.length}** runs regardless of callback faults. Faulted runs still divergent after the grace period with no operator action: **${damaged.length} of ${runs.filter((r) => r.faultLabel !== 'none').length}**.`); md();
+  const faulted = runs.filter((r) => r.faultLabel !== 'none');
+  const conv = faulted.filter((r) => r.convergedAfterSec !== null && r.convergedAfterSec !== undefined);
+  const times = conv.map((r) => r.convergedAfterSec).sort((a, b) => a - b);
+  md(`NovaDesk reached "approved" in **${runs.filter((r) => r.nd && r.nd.approval_status === 'approved').length} of ${runs.length}** runs. Faulted runs that converged on their own: **${conv.length} of ${faulted.length}**${times.length ? ` (median ${times[Math.floor(times.length / 2)]} s, max ${times[times.length - 1]} s after the fault cleared)` : ''}. Duplicate card copies seen after waiting: **${runs.reduce((n, r) => n + (r.divergenceAfterGrace ? r.divergenceAfterGrace.duplicates : 0), 0)}**.`); md();
   return runs;
 }
 
@@ -321,6 +350,7 @@ async function prepareApproved(label, opts) {
 }
 const insertDestroy = (changeId, runAtMs) => psql(`INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (${changeId}, 'destroy_vm', '${utc(runAtMs)}') RETURNING id`, { firstLine: true });
 const schedRow = (changeId) => q(`SELECT id, status, run_at, executed_at, attempts, delivered_targets FROM scheduled_actions WHERE change_id=${changeId} ORDER BY id DESC LIMIT 1`)[0];
+const ledgerFor = (changeId, cardType, taskId = 0) => q(`SELECT done, attempts, delivered_status, posted_targets, dead_targets, fail_counts, last_error FROM decom_card_sync WHERE change_id=${changeId} AND card_type='${cardType}' AND task_id=${taskId}`)[0] || null;
 async function waitForCard(changeId, cardType, timeoutMs) {
   const w0 = Date.now();
   while (Date.now() - w0 < timeoutMs) {
@@ -355,27 +385,27 @@ async function e4() {
 
   say('  4d receiver down when the timer fires, then restored');
   { const id = await prepareApproved('S4D'); await setFault('refuse'); const due = Date.now() + 5000; insertDestroy(id, due);
-    await sleep(45000); const duringSched = schedRow(id);
+    await sleep(45000); const down = ledgerFor(id, 'decom_confirm_destroy'); const timerWhileDown = schedRow(id).status;
     const restoredAt = Date.now(); await setFault('normal');
-    const c = await waitForCard(id, 'decom_confirm_destroy', 120000);
-    const after = schedRow(id);
+    const c = await waitForCard(id, 'decom_confirm_destroy', 150000);
+    const after = ledgerFor(id, 'decom_confirm_destroy');
     const acts = q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${id} AND (message LIKE '%Confirm Destroy card%') ORDER BY id`).map((x) => x.message);
     const soak = q(`SELECT count(*)::int AS n FROM scheduled_actions WHERE change_id=${id} AND status IN ('pending','executed') AND run_at <= '${utc(Date.now())}'`)[0].n;
-    out.push({ case: '4d', title: 'Receiver unreachable at the moment the timer fires, restored 45 s later', statusWhileDown: duringSched.status, attemptsWhileDown: duringSched.attempts, statusAfterRestore: after.status, attemptsAfterRestore: after.attempts, cardArrived: !!c, secAfterRestore: c ? sec(c.createdAt - restoredAt) : null, cardCopies: (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy').length, ndChangeStatus: changeRow(id).status, soakCheckStillPasses: soak > 0, activity: acts }); }
+    out.push({ case: '4d', title: 'Receiver unreachable at the moment the timer fires, restored 45 s later', timerWhileDown, ledgerWhileDown: down, ledgerAfter: after, cardArrived: !!c, secAfterRestore: c ? sec(c.createdAt - restoredAt) : null, cardCopies: (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy').length, ndChangeStatus: changeRow(id).status, soakCheckStillPasses: soak > 0, activity: acts }); }
 
   say('  4e only one of two targets fails when the timer fires');
   { const id = await prepareApproved('S4E', { conversationId: 7 }); await setFault('failtarget', { target: 'dm:7' }); const due = Date.now() + 5000; insertDestroy(id, due);
-    // wait until the channel copy has landed while the DM copy is still failing
     const chan = await waitForCard(id, 'decom_confirm_destroy', 90000);
-    await sleep(35000); // at least one more poll with the DM still failing
+    // The rig gives up on a target after 3 failures (CARD_SYNC_DEAD_AFTER=3, the production default is 30),
+    // so restore the DM before the third failed attempt; abandoning a target is E6 case 6c's job.
+    await sleep(7000);
     const mid = (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy');
-    const midSched = schedRow(id);
+    const midLedger = ledgerFor(id, 'decom_confirm_destroy');
     await setFault('normal');
     const w0 = Date.now(); let dm = null;
     while (Date.now() - w0 < 120000 && !dm) { dm = (await stubState()).cards.find((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy' && x.targetKind === 'dm'); if (!dm) await sleep(1000); }
     const fin = (await stubState()).cards.filter((x) => Number(x.changeId) === id && x.cardType === 'decom_confirm_destroy');
-    const after = schedRow(id);
-    out.push({ case: '4e', title: 'Card reaches the channel, fails for the DM, DM restored', channelCopyArrived: !!chan, copiesWhileDmFailing: mid.length, statusWhileDmFailing: midSched.status, dmArrivedAfterRestore: !!dm, channelCopiesAtEnd: fin.filter((x) => x.targetKind === 'channel').length, dmCopiesAtEnd: fin.filter((x) => x.targetKind === 'dm').length, statusAtEnd: after.status, attemptsAtEnd: after.attempts }); }
+    out.push({ case: '4e', title: 'Card reaches the channel, fails for the DM, DM restored', channelCopyArrived: !!chan, copiesWhileDmFailing: mid.length, ledgerWhileDmFailing: midLedger, dmArrivedAfterRestore: !!dm, channelCopiesAtEnd: fin.filter((x) => x.targetKind === 'channel').length, dmCopiesAtEnd: fin.filter((x) => x.targetKind === 'dm').length, ledgerAtEnd: ledgerFor(id, 'decom_confirm_destroy') }); }
 
   save('e4.json', out);
   md('## E4. Soak-period scheduler'); md();
@@ -385,8 +415,9 @@ async function e4() {
     if (o.case === '4a') res = `card ${o.arrived ? 'arrived' : 'NEVER arrived'}${o.delaySec ? `, ${o.delaySec} s after due` : ''}; action status "${o.sched}"`;
     if (o.case === '4b') res = `restart took ${o.restartHealthySec} s to be healthy; card ${o.arrived ? 'arrived' : 'NEVER arrived'}${o.delaySec ? `, ${o.delaySec} s after due` : ''}; action status "${o.sched}"`;
     if (o.case === '4c') res = `boot took ${o.bootSec} s; card ${o.arrived ? `arrived ${o.secAfterHealthy} s after healthy` : 'NEVER arrived'}; action status "${o.sched}"`;
-    if (o.case === '4d') res = `action "${o.statusWhileDown}" (${o.attemptsWhileDown} attempts) while down, "${o.statusAfterRestore}" (${o.attemptsAfterRestore} attempts) after restore; card ${o.cardArrived ? `arrived ${o.secAfterRestore} s after restore, ${o.cardCopies} copy` : '**NEVER arrived**'}; Change "${o.ndChangeStatus}"; NovaDesk-side soak check passes: ${o.soakCheckStillPasses}; activity log: ${o.activity.length ? o.activity.map((a) => `"${a}"`).join(' / ') : 'none'}`;
-    if (o.case === '4e') res = `channel copy ${o.channelCopyArrived ? 'arrived' : 'missing'}; while the DM failed: ${o.copiesWhileDmFailing} copy in total, action "${o.statusWhileDmFailing}"; after restore the DM copy ${o.dmArrivedAfterRestore ? 'arrived' : '**never arrived**'}; final copies: channel ${o.channelCopiesAtEnd}, DM ${o.dmCopiesAtEnd}; action "${o.statusAtEnd}" after ${o.attemptsAtEnd} attempts`;
+    const L = (x) => (x ? `done=${x.done}, ${x.attempts} failed attempt(s)` : 'no ledger row');
+    if (o.case === '4d') res = `timer "${o.timerWhileDown}" (card handed to the ledger); while down: ${L(o.ledgerWhileDown)}; after restore: ${L(o.ledgerAfter)}; card ${o.cardArrived ? `arrived ${o.secAfterRestore} s after restore, ${o.cardCopies} copy` : '**NEVER arrived**'}; Change "${o.ndChangeStatus}"; NovaDesk-side soak check passes: ${o.soakCheckStillPasses}; activity log: ${o.activity.length ? o.activity.map((a) => `"${a}"`).join(' / ') : 'none'}`;
+    if (o.case === '4e') res = `channel copy ${o.channelCopyArrived ? 'arrived' : 'missing'}; while the DM failed: ${o.copiesWhileDmFailing} copy in total, ledger ${L(o.ledgerWhileDmFailing)}; after restore the DM copy ${o.dmArrivedAfterRestore ? 'arrived' : '**never arrived**'}; final copies: channel ${o.channelCopiesAtEnd}, DM ${o.dmCopiesAtEnd}; ledger ${L(o.ledgerAtEnd)}`;
     md(`| ${o.case} | ${o.title} | ${res} |`);
   }
   md();
@@ -461,6 +492,114 @@ async function e5() {
   return P;
 }
 
+// ---------------------------------------------------------------- E6 card ledger
+async function waitConverged(changeId, maxSec) {
+  const t0 = Date.now();
+  while (true) {
+    const d = divergence(changeId, await stubState());
+    if (d.actionable === 0 || Date.now() - t0 > maxSec * 1000) return { sec: Number(((Date.now() - t0) / 1000).toFixed(1)), d, converged: d.actionable === 0 };
+    await sleep(3000);
+  }
+}
+async function e6() {
+  say('E6: card ledger cases');
+  const out = [];
+
+  say('  6a NovaDesk restarts while cards are undelivered');
+  { await resetStub(); const { changeId } = await newChange('L6A'); await setFault('refuse'); const ap = await approve(changeId);
+    const atFault = divergence(changeId, await stubState());
+    const rowsBefore = q(`SELECT card_type, desired_status, done, attempts FROM decom_card_sync WHERE change_id=${changeId} ORDER BY id`);
+    podman('restart', 'fi-novadesk'); await waitHealthy();
+    await setFault('normal'); const c = await waitConverged(changeId, 180);
+    out.push({ case: '6a', title: 'NovaDesk restarted while its cards were undelivered, receiver then restored', approveStatus: ap.status, actionableWhileDown: atFault.actionable, ledgerRowsBeforeRestart: rowsBefore, converged: c.converged, convergedAfterSec: c.sec, actionableLeft: c.d.actionable, duplicates: c.d.duplicates }); }
+
+  say('  6b long outage across the whole flow');
+  { const r = await runFlow({ fault: 'refuse', window: 'all', holdSec: 120, graceSec: 180 });
+    out.push({ case: '6b', title: 'Receiver down for the whole flow plus 2 more minutes, then restored', outageSec: Math.round((r.totalMs / 1000) + 120), actionableAtEnd: r.divergenceAtEnd.actionable, converged: r.convergedAfterSec !== null, convergedAfterSec: r.convergedAfterSec, actionableLeft: r.divergenceAfterGrace.actionable, duplicates: r.divergenceAfterGrace.duplicates }); }
+
+  say('  6c a target that keeps failing while NovaConnect is healthy');
+  { await resetStub(); const { changeId } = await newChange('L6C', { conversationId: 7 }); await setFault('failtarget', { target: 'dm:7' }); await approve(changeId);
+    const w0 = Date.now(); let ledger = null;
+    while (Date.now() - w0 < 180000) { ledger = ledgerFor(changeId, 'decom_precheck_task', tasksOf(changeId).find((t) => t.description === MANUAL[0]).id); if (ledger && JSON.parse(ledger.dead_targets).includes('dm:7')) break; await sleep(3000); }
+    const failHits1 = (await stubLog(0)).filter((e) => e.outcome === '500-target').length;
+    await sleep(40000);
+    const failHits2 = (await stubLog(0)).filter((e) => e.outcome === '500-target').length;
+    const acts = q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${changeId} AND message LIKE '%giving up on that target%'`).map((x) => x.message);
+    const copies = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task');
+    out.push({ case: '6c', title: 'DM target fails repeatedly while the channel and NovaConnect are healthy', markedDead: !!ledger && JSON.parse(ledger.dead_targets).includes('dm:7'), ledger, failedPostsAtGiveUp: failHits1, failedPostsAfterWaiting40s: failHits2, channelCopies: copies.filter((x) => x.targetKind === 'channel').length, dmCopies: copies.filter((x) => x.targetKind === 'dm').length, activity: acts }); }
+
+  say('  6d outage with an operator finishing a step meanwhile');
+  { await resetStub(); const { changeId } = await newChange('L6D'); await setFault('refuse'); await approve(changeId);
+    const t1 = tasksOf(changeId).find((t) => t.description === MANUAL[0]);
+    const pr = await precheck(changeId, t1.id, 'complete'); // done in NovaDesk while its card was never delivered
+    await setFault('normal'); const c = await waitConverged(changeId, 180);
+    const cards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId && x.cardType === 'decom_precheck_task');
+    const t2 = tasksOf(changeId).find((t) => t.description === MANUAL[1]);
+    out.push({ case: '6d', title: 'Pre-check 1 completed in NovaDesk while its card was never delivered; receiver restored', precheckStatus: pr.status, converged: c.converged, convergedAfterSec: c.sec, lateCardForFinishedTask: cards.filter((x) => Number(x.taskId) === t1.id).length, nextCardPendingPresent: cards.some((x) => Number(x.taskId) === t2.id && x.status === 'pending'), duplicates: c.d.duplicates }); }
+
+  save('e6.json', out);
+  md('## E6. Card ledger cases'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) {
+    let res = '';
+    if (o.case === '6a') res = `approve ${o.approveStatus}; ${o.actionableWhileDown} card(s) wrong while down; ledger rows before restart: ${o.ledgerRowsBeforeRestart.map((r) => `${r.card_type}->${r.desired_status} (done=${r.done})`).join(', ')}; after restart + restore: ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}, ${o.actionableLeft} wrong left, ${o.duplicates} duplicate card(s)`;
+    if (o.case === '6b') res = `outage about ${o.outageSec} s; ${o.actionableAtEnd} card(s) wrong at the end of the outage; after restore: ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}, ${o.actionableLeft} wrong left, ${o.duplicates} duplicate card(s)`;
+    if (o.case === '6c') res = `target ${o.markedDead ? 'marked dead' : '**never marked dead**'} (failed posts at give-up: ${o.failedPostsAtGiveUp}, 40 s later: ${o.failedPostsAfterWaiting40s}, so ${o.failedPostsAfterWaiting40s === o.failedPostsAtGiveUp ? 'no further attempts' : '**still retrying**'}); copies: channel ${o.channelCopies}, DM ${o.dmCopies}; activity log: ${o.activity.length ? o.activity.map((a) => `"${a}"`).join(' / ') : 'none'}`;
+    if (o.case === '6d') res = `precheck ${o.precheckStatus}; after restore ${o.converged ? `converged in ${o.convergedAfterSec} s` : '**did not converge**'}; late card for the finished task: ${o.lateCardForFinishedTask} (expected 0); next pre-check card pending and present: ${o.nextCardPendingPresent}; duplicates ${o.duplicates}`;
+    md(`| ${o.case} | ${o.title} | ${res} |`);
+  }
+  md();
+  return out;
+}
+
+// ---------------------------------------------------------------- E7 Change page indicator
+async function staffCookie() {
+  const r = await fetch(ND + '/login', { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'username=admin&password=admin123' });
+  const set = r.headers.getSetCookie ? r.headers.getSetCookie() : [r.headers.get('set-cookie')].filter(Boolean);
+  const cookie = set.map((c) => c.split(';')[0]).join('; ');
+  if (!cookie) throw new Error(`login failed (${r.status})`);
+  return cookie;
+}
+async function changePage(cookie, id) {
+  const r = await fetch(`${ND}/changes/${id}`, { headers: { Cookie: cookie } });
+  const html = await r.text();
+  return { status: r.status, html, catchingUp: /The NovaConnect chat is catching up/.test(html), notDelivered: /Some NovaConnect chat updates were not delivered/.test(html), text: (html.match(/<div class="alert alert-(?:warning|secondary) small"[\s\S]*?<\/ul>/) || [''])[0].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() };
+}
+async function e7() {
+  say('E7: the "chat is catching up" indicator on the Change page');
+  const cookie = await staffCookie();
+  const out = [];
+
+  { await resetStub(); const { changeId } = await newChange('I7A'); await approve(changeId); const p = await changePage(cookie, changeId);
+    out.push({ case: '7a', title: 'Everything delivered', pageStatus: p.status, showsIndicator: p.catchingUp || p.notDelivered, text: p.text }); }
+
+  { await resetStub(); const { changeId } = await newChange('I7B'); await setFault('refuse'); await approve(changeId);
+    const during = await changePage(cookie, changeId);
+    await setFault('normal'); const c = await waitConverged(changeId, 180);
+    // the ledger finishes shortly after the chat does; give the page a moment to reflect it
+    let after = await changePage(cookie, changeId); const w0 = Date.now();
+    while ((after.catchingUp || after.notDelivered) && Date.now() - w0 < 60000) { await sleep(3000); after = await changePage(cookie, changeId); }
+    out.push({ case: '7b', title: 'Receiver down during approval, then restored', pageStatusDuring: during.status, indicatorDuringOutage: during.catchingUp, textDuringOutage: during.text, converged: c.converged, indicatorAfterRecovery: after.catchingUp || after.notDelivered }); }
+
+  { await resetStub(); const { changeId } = await newChange('I7C', { conversationId: 7 }); await setFault('failtarget', { target: 'dm:7' }); await approve(changeId);
+    const w0 = Date.now(); let p = await changePage(cookie, changeId);
+    while (!p.notDelivered && Date.now() - w0 < 120000) { await sleep(3000); p = await changePage(cookie, changeId); }
+    out.push({ case: '7c', title: 'One target keeps failing until the ledger gives up on it', indicatorShowsGaveUp: p.notDelivered, stillSaysCatchingUp: p.catchingUp, text: p.text }); }
+
+  save('e7.json', out);
+  md('## E7. Change page indicator'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) {
+    let res = '';
+    if (o.case === '7a') res = `page ${o.pageStatus}; indicator shown: ${o.showsIndicator} (expected false)`;
+    if (o.case === '7b') res = `during the outage the page ${o.indicatorDuringOutage ? 'showed' : '**did not show**'} "catching up"${o.textDuringOutage ? ` (${o.textDuringOutage.slice(0, 220)})` : ''}; chat converged: ${o.converged}; indicator after recovery: ${o.indicatorAfterRecovery} (expected false)`;
+    if (o.case === '7c') res = `gave-up notice shown: ${o.indicatorShowsGaveUp}; text: ${o.text.slice(0, 260)}`;
+    md(`| ${o.case} | ${o.title} | ${res} |`);
+  }
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -473,6 +612,8 @@ async function e5() {
     if (cmd === 'e5' || cmd === 'all') await e5();
     if (cmd === 'e4' || cmd === 'all') await e4();
     if (cmd === 'e2' || cmd === 'all') await e2();
+    if (cmd === 'e6' || cmd === 'all') await e6();
+    if (cmd === 'e7' || cmd === 'all') await e7();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

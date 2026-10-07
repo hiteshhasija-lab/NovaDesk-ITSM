@@ -244,6 +244,34 @@ CREATE TABLE IF NOT EXISTS scheduled_actions (
 ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS delivered_targets TEXT;
 ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
 
+-- The chat cards NovaConnect shows for a decommission are a copy of NovaDesk's own records. This
+-- ledger says what each card should show (desired_status) and what has been delivered, so a
+-- failed callback is repaired by a background loop instead of leaving the chat wrong (see
+-- cardSync.js). One row per Change + card type + task (task_id 0 = a Change-level card).
+-- posted_targets / dead_targets are JSON arrays of target keys ("channel:6", "dm:7"); fail_counts
+-- is a JSON object of consecutive failures per target while the receiver was otherwise reachable.
+CREATE TABLE IF NOT EXISTS decom_card_sync (
+  id SERIAL PRIMARY KEY,
+  change_id INTEGER NOT NULL REFERENCES changes(id) ON DELETE CASCADE,
+  card_type TEXT NOT NULL,
+  task_id INTEGER NOT NULL DEFAULT 0,
+  post_payload TEXT,
+  desired_status TEXT NOT NULL,
+  delivered_status TEXT,
+  posted_targets TEXT NOT NULL DEFAULT '[]',
+  dead_targets TEXT NOT NULL DEFAULT '[]',
+  fail_counts TEXT NOT NULL DEFAULT '{}',
+  done INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL,
+  inflight_until TEXT,
+  created_at TEXT NOT NULL ${TS_DEFAULT},
+  updated_at TEXT NOT NULL ${TS_DEFAULT},
+  UNIQUE (change_id, card_type, task_id)
+);
+CREATE INDEX IF NOT EXISTS decom_card_sync_pending ON decom_card_sync (done, next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,

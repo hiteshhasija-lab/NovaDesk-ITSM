@@ -4,7 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
-const { resolveNovaConnectCard, pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
+const { pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
+const { syncCard, describePendingCards } = require('../cardSync');
 const {
   maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep,
   DESTROY_TASK, RETIRE_TASK, TRACKER_TASK, destroySoakOver, resolveEsxiHost, runConfirmedDestroy, announceManualFinalTask
@@ -371,7 +372,10 @@ router.get('/:id', requireAuth, async (req, res) => {
   const watchers = await getWatchers('change', change.id);
   const watching = await isWatching('change', change.id, req.session.user.id);
   const notice = typeof req.query.notice === 'string' ? req.query.notice.slice(0, 300) : null;
-  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice });
+  // Decommission Changes only, and only for staff: which chat cards NovaDesk is still retrying.
+  const isDecom = !!(change.novaconnect_channel_id || change.novaconnect_conversation_id);
+  const chatSync = isDecom && req.session.user.role !== 'user' ? await describePendingCards(change.id) : [];
+  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice, chatSync });
 });
 
 router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -424,7 +428,7 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   // pushed as a card (e.g. the automated "Power off"/"Destroy VM" steps) — NovaConnect just
   // finds nothing to resolve.
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
-    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+    await syncCard(change, { cardType: 'decom_precheck_task', taskId: task.id, desiredStatus: newStatus });
     if (newStatus === 'done') {
       // Same pacing as every other decom step, after a Complete action specifically.
       await pushDecomThinking(decomTargets(change), true).catch(() => {});
@@ -473,7 +477,7 @@ router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'
     `${task.task_number} (${task.description}) marked ${newStatus}`);
 
   if (change.novaconnect_channel_id || change.novaconnect_conversation_id) {
-    await resolveNovaConnectCard({ changeId: change.id, cardType: 'decom_precheck_task', taskId: task.id }, newStatus).catch(() => {});
+    await syncCard(change, { cardType: 'decom_precheck_task', taskId: task.id, desiredStatus: newStatus });
     if (newStatus === 'skipped') {
       // Same pacing as every other decom step, after a Skip action specifically.
       await pushDecomThinking(decomTargets(change), true).catch(() => {});

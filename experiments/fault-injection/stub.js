@@ -50,6 +50,9 @@ function sameTaskId(a, b) {
 }
 
 function handleReal(req, res, path, body, base) {
+  // NovaConnect's real /health is public; the card ledger probes it to tell "NovaConnect is down"
+  // from "one target keeps failing". Fault modes that disturb every request disturb it too.
+  if (path === '/health') { record({ ...base, outcome: 'health' }); return send(res, 200, { status: 'healthy', database: 'connected' }); }
   const provided = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!provided || provided !== KEY) {
     record({ ...base, outcome: '401' });

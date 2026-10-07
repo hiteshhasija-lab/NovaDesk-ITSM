@@ -51,6 +51,8 @@ up() {
     -e SESSION_SECRET=fi-session-secret -e SYNC_API_KEY="$KEY" \
     -e NOVACONNECT_BASE_URL=http://127.0.0.1:18081 \
     -e DECOM_SOAK_PERIOD_HOURS=0.01 \
+    -e CARD_SYNC_POLL_S="${CARD_SYNC_POLL_S:-5}" -e CARD_SYNC_BACKOFF_BASE_S="${CARD_SYNC_BACKOFF_BASE_S:-5}" \
+    -e CARD_SYNC_BACKOFF_MAX_S="${CARD_SYNC_BACKOFF_MAX_S:-20}" -e CARD_SYNC_DEAD_AFTER="${CARD_SYNC_DEAD_AFTER:-3}" \
     "$IMAGE" >/dev/null
 
   for _ in $(seq 1 60); do
