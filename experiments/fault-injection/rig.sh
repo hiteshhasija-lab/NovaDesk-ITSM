@@ -5,8 +5,12 @@
 #     127.0.0.1:18080 -> NovaDesk and 127.0.0.1:18082 -> stub control are published, loopback only)
 #   - fi-postgres  : a throwaway postgres:16 with its own database and credentials
 #   - fi-novadesk  : the SAME image that is deployed in production, pointed at the throwaway DB
-#                    and at the stub receiver, with NO ESXi credentials (so it cannot touch a VM)
-#   - fi-stub      : stand-in for NovaConnect's three integration endpoints, with fault modes
+#                    and at the stub receiver. ESXi is the stub too: bin/govc (first on PATH) is a
+#                    shim that forwards to the stub's ESXi model on the pod's loopback and never
+#                    opens a network connection, and the ESXi credentials are dummies, so the rig
+#                    cannot touch a real host or VM
+#   - fi-stub      : stand-in for NovaConnect's three integration endpoints and for ESXi (govc),
+#                    with fault modes
 #
 # Usage: rig.sh up [image] | down | status | restart-novadesk | logs [container]
 set -Eeuo pipefail
@@ -40,8 +44,9 @@ up() {
   done
   [ "$ok" -ge 4 ] || { echo "Postgres did not become ready"; exit 1; }
 
+  chmod +x "$DIR/bin/govc"
   podman run -d --pod "$POD" --name fi-stub \
-    -v "$DIR/stub.js:/fi/stub.js:ro,Z" \
+    -v "$DIR:/fi:ro,Z" \
     -e SYNC_API_KEY="$KEY" \
     "$IMAGE" node /fi/stub.js >/dev/null
 
@@ -51,6 +56,8 @@ up() {
     -e SESSION_SECRET=fi-session-secret -e SYNC_API_KEY="$KEY" \
     -e NOVACONNECT_BASE_URL=http://127.0.0.1:18081 \
     -e DECOM_SOAK_PERIOD_HOURS=0.01 \
+    -v "$DIR/bin:/fi/bin:ro,Z" -e PATH=/fi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    -e ESXI_USER=fi-stub-user -e ESXI_PASSWORD=fi-stub-password \
     -e CARD_SYNC_POLL_S="${CARD_SYNC_POLL_S:-5}" -e CARD_SYNC_BACKOFF_BASE_S="${CARD_SYNC_BACKOFF_BASE_S:-5}" \
     -e CARD_SYNC_BACKOFF_MAX_S="${CARD_SYNC_BACKOFF_MAX_S:-20}" -e CARD_SYNC_DEAD_AFTER="${CARD_SYNC_DEAD_AFTER:-3}" \
     "$IMAGE" >/dev/null
@@ -61,7 +68,10 @@ up() {
   done
   curl -fsS http://127.0.0.1:18080/health && echo
   curl -fsS http://127.0.0.1:18082/state >/dev/null && echo "stub control OK"
-  echo "Rig up. ESXI_USER set in rig NovaDesk? -> '$(podman exec fi-novadesk printenv ESXI_USER || true)' (must be empty)"
+  govc_path="$(podman exec fi-novadesk sh -c 'command -v govc' || true)"
+  [ "$govc_path" = "/fi/bin/govc" ] || { echo "SAFETY: govc in the rig resolves to '$govc_path', not the stub shim; tearing down"; podman pod rm -f "$POD" >/dev/null; exit 1; }
+  podman exec fi-novadesk govc about | head -1 | grep -q "VMware ESXi" || { echo "SAFETY: the govc shim did not answer from the stub model; tearing down"; podman pod rm -f "$POD" >/dev/null; exit 1; }
+  echo "Rig up. govc -> $govc_path (stub shim); ESXI_USER='$(podman exec fi-novadesk printenv ESXI_USER)' (dummy)"
 }
 
 down() {

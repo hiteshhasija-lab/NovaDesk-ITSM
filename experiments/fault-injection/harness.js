@@ -13,6 +13,7 @@
 //   node harness.js e5                                state-machine and idempotency probes
 //   node harness.js e6                                card ledger cases (restart, long outage, dead target)
 //   node harness.js e7                                the Change page 'chat is catching up' indicator
+//   node harness.js e11                               ESXi (govc) faults against the stubbed host
 //   node harness.js e8                                HTTP 5xx answers (inline retry rules)
 //   node harness.js all
 //
@@ -251,13 +252,16 @@ async function check() {
       env[k] = (() => { try { return podman('exec', 'fi-novadesk', 'printenv', k); } catch { return ''; } })();
     }
   } catch (e) { problems.push(`cannot inspect fi-novadesk: ${e.message}`); }
-  if (env.ESXI_USER || env.ESXI_PASSWORD) problems.push('rig NovaDesk has ESXi credentials set; refusing to run');
+  // ESXi in the rig is the stub: dummy credentials only, and govc must resolve to the shim.
+  if (env.ESXI_USER !== 'fi-stub-user' || env.ESXI_PASSWORD !== 'fi-stub-password') problems.push('rig NovaDesk has ESXi credentials other than the dummy stub ones; refusing to run');
+  const govcPath = (() => { try { return podman('exec', 'fi-novadesk', 'sh', '-c', 'command -v govc'); } catch { return ''; } })();
+  if (govcPath !== '/fi/bin/govc') problems.push(`govc in the rig resolves to "${govcPath}", expected the stub shim /fi/bin/govc; refusing to run`);
   if (env.PGDATABASE !== 'fi') problems.push(`rig NovaDesk uses database "${env.PGDATABASE}", expected "fi"`);
   if (env.NOVACONNECT_BASE_URL !== 'http://127.0.0.1:18081') problems.push(`rig NovaDesk callback URL is ${env.NOVACONNECT_BASE_URL}, expected the stub`);
   const img = (() => { try { return podman('inspect', 'fi-novadesk', '--format', '{{.ImageName}}'); } catch { return '?'; } })();
   say('rig image:', img, '| release env:', env.NOVADESK_RELEASE_VERSION);
   if (problems.length) { problems.forEach((p) => say('PROBLEM:', p)); throw new Error('safety check failed'); }
-  say('rig OK: isolated DB, stub receiver, no ESXi credentials');
+  say('rig OK: isolated DB, stub receiver, ESXi = stub shim with dummy credentials');
   return env;
 }
 
@@ -752,6 +756,108 @@ async function e10() {
   return out;
 }
 
+// ---------------------------------------------------------------- E11 ESXi (govc) faults
+const govcState = async (since = 0) => (await ctl('GET', `/govc-state?since=${since}`)).json;
+const govcFault = (f) => ctl('POST', '/govc-fault', f);
+const govcClear = () => ctl('POST', '/govc-fault', { clear: true });
+const actsOf = (changeId, like) => q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${changeId} AND message LIKE '${like}' ORDER BY id`).map((x) => x.message);
+const taskStatusOf = (changeId, desc) => (tasksOf(changeId).find((t) => t.description === desc) || {}).status;
+const ciStatusOf = (ciId) => q(`SELECT status FROM cmdb_ci WHERE id=${ciId}`)[0].status;
+const POWER_TASK = 'Power off — soak period';
+const DESTROY_TASK_NAME = 'Destroy VM & release storage';
+const confirmDestroy = (id, o) => nd('POST', `${REQ}/${id}/confirm-destroy`, { confirmed_by_username: 'admin' }, { timeoutMs: 120000, ...(o || {}) });
+const cancelDestroy = (id, o) => nd('POST', `${REQ}/${id}/cancel-destroy`, { cancelled_by_username: 'admin' }, { timeoutMs: 120000, ...(o || {}) });
+
+// Creates a Change, approves it and completes the three pre-checks, which makes NovaDesk power the
+// VM off through (stubbed) govc. `faultBeforeLast` is injected just before the last pre-check, so
+// it hits the power-off. Returns once that last call has come back.
+async function toPowerDown(label, { faultBeforeLast = null } = {}) {
+  await resetStub();
+  const { changeId, vm } = await newChange(label);
+  await approve(changeId);
+  const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+  for (const [idx, t] of manual.entries()) {
+    if (idx === manual.length - 1 && faultBeforeLast) await govcFault(faultBeforeLast);
+    await precheck(changeId, t.id, 'complete');
+  }
+  return { changeId, vm };
+}
+const waitSoak = async (changeId, sec = 150) => { const c = await waitForCard(changeId, 'decom_confirm_destroy', sec * 1000); return !!c; };
+
+async function e11() {
+  say('E11: ESXi (govc) faults against the stubbed host');
+  const out = [];
+  const chatWarnings = async (t0) => (await stubLog(t0)).filter((e) => e.path === '/api/integrations/novadesk/decom-updates' && /⚠️/.test(e.bodyText || '')).map((e) => e.bodyText);
+
+  say('  11a the whole flow with a healthy host');
+  { const t0 = Date.now(); const { changeId, vm } = await toPowerDown('E11A'); const g1 = await govcState(t0);
+    const vmAfterOff = (await govcState()).vms[vm.name];
+    const card = await waitSoak(changeId); const d = await confirmDestroy(changeId); const g = await govcState(t0);
+    const cards = (await stubState()).cards.filter((x) => Number(x.changeId) === changeId);
+    out.push({ case: '11a', title: 'Healthy host, whole flow', vmStateAfterPowerOff: vmAfterOff && vmAfterOff.powerState, powerTask: taskStatusOf(changeId, POWER_TASK), confirmCardArrived: card, destroyStatus: d.status, vmInventoryAfter: Object.keys(g.vms).includes(vm.name) ? 'still there' : 'gone', ciStatus: ciStatusOf(vm.id), change: changeRow(changeId).status, tasks: tasksOf(changeId).map((t) => `${t.status}`).join(','), summaryCard: cards.some((c) => c.cardType === 'decom_summary'), govcCalls: g.calls.map((c) => c.cmd).join(' > ') }); }
+
+  const failedPowerOff = async (id, label, fault) => {
+    const t0 = Date.now(); const { changeId, vm } = await toPowerDown(label, { faultBeforeLast: fault });
+    return { changeId, vm, t0, powerTask: taskStatusOf(changeId, POWER_TASK), timer: schedRow(changeId) ? schedRow(changeId).status : 'none', activity: actsOf(changeId, '%power-off failed%'), warnings: await chatWarnings(t0), vmState: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' };
+  };
+
+  say('  11b power-off fails once, then the host is fine: what can the operator do?');
+  { const r = await failedPowerOff('11b', 'E11B', { cmd: 'vm.power -off', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+    const cookie = await staffCookie(); const manual = tasksOf(r.changeId).filter((x) => MANUAL.includes(x.description)); const last = manual[manual.length - 1];
+    const again = await precheck(r.changeId, last.id, 'complete'); // second completion of the same pre-check
+    // the NovaDesk Change Tasks list: un-complete the last pre-check and complete it again
+    const tog = (taskId) => fetch(`${ND}/changes/${r.changeId}/tasks/${taskId}/toggle`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie } }).then((x) => x.status);
+    const t1 = await tog(last.id); const t2 = await tog(last.id);
+    await sleep(2000);
+    out.push({ case: '11b', title: 'Power-off fails once, host healthy afterwards', before: { powerTask: r.powerTask, timer: r.timer, activity: r.activity, chatWarnings: r.warnings, vm: r.vmState }, rePostPrecheck: again.status, toggleStatuses: [t1, t2], afterRetry: { powerTask: taskStatusOf(r.changeId, POWER_TASK), timer: schedRow(r.changeId) ? schedRow(r.changeId).status : 'none', vm: ((await govcState()).vms[r.vm.name] || {}).powerState || 'gone' } }); }
+
+  say('  11c power-off done by the host but the answer is lost (govc timeout)');
+  { const r = await failedPowerOff('11c', 'E11C', { cmd: 'vm.power -off', kind: 'hang', n: 1, applied: true });
+    const cookie = await staffCookie(); const manual = tasksOf(r.changeId).filter((x) => MANUAL.includes(x.description)); const last = manual[manual.length - 1];
+    const tog = (taskId) => fetch(`${ND}/changes/${r.changeId}/tasks/${taskId}/toggle`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie } }).then((x) => x.status);
+    await tog(last.id); await tog(last.id); await sleep(2000);
+    out.push({ case: '11c', title: 'Power-off applied on the host, caller timed out', before: { powerTask: r.powerTask, timer: r.timer, activity: r.activity, chatWarnings: r.warnings, vm: r.vmState }, afterRetry: { powerTask: taskStatusOf(r.changeId, POWER_TASK), timer: schedRow(r.changeId) ? schedRow(r.changeId).status : 'none', vm: ((await govcState()).vms[r.vm.name] || {}).powerState || 'gone', activity: actsOf(r.changeId, '%power-off failed%') } }); }
+
+  say('  11d the VM cannot be found at power-off time');
+  { await resetStub(); await ctl('POST', '/govc-config', { autoRegister: false });
+    const { changeId } = await newChange('E11D'); await approve(changeId);
+    for (const t of tasksOf(changeId).filter((x) => MANUAL.includes(x.description))) await precheck(changeId, t.id, 'complete');
+    await ctl('POST', '/govc-config', { autoRegister: true });
+    out.push({ case: '11d', title: 'VM not present on the host', powerTask: taskStatusOf(changeId, POWER_TASK), activity: actsOf(changeId, '%power-off failed%') }); }
+
+  say('  11e host unreachable at power-off (about fails), then back');
+  { const r = await failedPowerOff('11e', 'E11E', { cmd: 'about', kind: 'fail', n: 1, stderr: 'govc: Post "https://127.0.0.1/sdk": dial tcp 127.0.0.1:443: connect: connection refused\n' });
+    out.push({ case: '11e', title: 'Host unreachable at power-off', powerTask: r.powerTask, timer: r.timer, activity: r.activity, chatWarnings: r.warnings, vm: r.vmState }); }
+
+  const toConfirm = async (label) => { const x = await toPowerDown(label); const card = await waitSoak(x.changeId); return { ...x, card }; };
+
+  say('  11f destroy fails once, then fine');
+  { const { changeId, vm, card } = await toConfirm('E11F'); await govcFault({ cmd: 'vm.destroy', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+    const d1 = await confirmDestroy(changeId); const mid = { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', cardStatus: ((await stubState()).cards.find((x) => Number(x.changeId) === changeId && x.cardType === 'decom_confirm_destroy') || {}).status, activity: actsOf(changeId, '%destroy%') };
+    const d2 = await confirmDestroy(changeId);
+    out.push({ case: '11f', title: 'Destroy fails once, retried by the operator', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, secondAnswer: d2.status, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
+
+  say('  11g destroy done by the host but the answer is lost (govc timeout)');
+  { const { changeId, vm, card } = await toConfirm('E11G'); await govcFault({ cmd: 'vm.destroy', kind: 'hang', n: 1, applied: true });
+    const d1 = await confirmDestroy(changeId); const mid = { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', tasks: tasksOf(changeId).map((t) => t.status).join(',') };
+    const d2 = await confirmDestroy(changeId);
+    out.push({ case: '11g', title: 'Destroy applied on the host, caller timed out, operator retries', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, secondAnswer: d2.status, secondError: d2.json && d2.json.error, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), tasks: tasksOf(changeId).map((t) => t.status).join(',') } }); }
+
+  say('  11h cancel at the confirm step while the host cannot power the VM back on');
+  { const { changeId, vm, card } = await toConfirm('E11H'); await govcFault({ cmd: 'vm.power -on', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+    const c1 = await cancelDestroy(changeId); const mid = { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', powerTask: taskStatusOf(changeId, POWER_TASK) };
+    const c2 = await cancelDestroy(changeId);
+    out.push({ case: '11h', title: 'Cancel with the host failing to power the VM back on', card, firstAnswer: c1.status, afterFirst: mid, secondAnswer: c2.status, final: { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
+
+  await govcClear();
+  save('e11.json', out);
+  md('## E11. ESXi (govc) faults'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -769,6 +875,7 @@ async function e10() {
     if (cmd === 'e8' || cmd === 'all') await e8();
     if (cmd === 'e9' || cmd === 'all') await e9();
     if (cmd === 'e10' || cmd === 'all') await e10();
+    if (cmd === 'e11' || cmd === 'all') await e11();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

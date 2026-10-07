@@ -137,6 +137,84 @@ async function onRequest(req, res) {
   return handleReal(req, res, path, body, base);
 }
 
+
+// ---------------------------------------------------------------- govc model (src/esxi.js shells out to govc)
+// A small ESXi inventory plus fault rules, answering the commands NovaDesk uses: about,
+// vm.info -json, vm.power -off/-on, vm.destroy, find. bin/govc forwards here. Error texts follow
+// what the real tool prints. Rules: {cmd, kind: fail|hang|slow, n (calls affected, default all),
+// applied (the change HAPPENS on the host but the caller is told it failed / never hears back),
+// stderr, ms}. cmd is the command ("about", "vm.info", "vm.power -off", "vm.power -on",
+// "vm.destroy", "find") or "*".
+const vms = new Map();
+const vmsEverSeen = new Set(); // a VM that was destroyed must not reappear on the next lookup
+let autoRegister = true;
+let govcFaults = [];
+let govcCalls = [];
+const STATE_ERR = (state) => `govc: The attempted operation cannot be performed in the current state (${state}).\n`;
+
+function vmJson(name, v) {
+  return { name, runtime: { powerState: v.powerState }, config: { hardware: { numCPU: v.cpu, memoryMB: v.memoryMB, device: [{ capacityInKB: v.diskKB }] } } };
+}
+function getVm(name, { create } = {}) {
+  if (!vms.has(name) && create && autoRegister && !vmsEverSeen.has(name)) vms.set(name, { powerState: 'poweredOn', cpu: 2, memoryMB: 4096, diskKB: 20 * 1024 * 1024 });
+  if (vms.has(name)) vmsEverSeen.add(name);
+  return vms.get(name);
+}
+function govcCmd(args) {
+  if (args[0] === 'vm.power') return `vm.power ${args.includes('-off') ? '-off' : '-on'}`;
+  return args[0];
+}
+// What the command does on a healthy host. Returns { code, stdout, stderr }.
+function govcApply(args) {
+  const cmd = args[0];
+  const name = args[args.length - 1];
+  if (cmd === 'about') return { code: 0, stdout: 'Name:         VMware ESXi\nVersion:      7.0.3\n', stderr: '' };
+  if (cmd === 'find') return { code: 0, stdout: [...vms.keys()].map((n) => `/ha-datacenter/vm/${n}\n`).join(''), stderr: '' };
+  if (cmd === 'vm.info') {
+    const v = getVm(name, { create: true });
+    return { code: 0, stdout: JSON.stringify({ virtualMachines: v ? [vmJson(name, v)] : null }), stderr: '' };
+  }
+  if (cmd === 'vm.power' || cmd === 'vm.destroy') {
+    const v = getVm(name, { create: true });
+    if (!v) return { code: 1, stdout: '', stderr: `govc: vm '${name}' not found\n` };
+    if (cmd === 'vm.destroy') {
+      if (v.powerState !== 'poweredOff') return { code: 1, stdout: '', stderr: STATE_ERR('Powered on') };
+      vms.delete(name);
+      return { code: 0, stdout: `Destroying VirtualMachine:${name}... OK\n`, stderr: '' };
+    }
+    const off = args.includes('-off');
+    if (off && v.powerState === 'poweredOff') return { code: 1, stdout: '', stderr: STATE_ERR('Powered off') };
+    if (!off && v.powerState === 'poweredOn') return { code: 1, stdout: '', stderr: STATE_ERR('Powered on') };
+    v.powerState = off ? 'poweredOff' : 'poweredOn';
+    return { code: 0, stdout: `${off ? 'Powering off' : 'Powering on'} VirtualMachine:${name}... OK\n`, stderr: '' };
+  }
+  return { code: 1, stdout: '', stderr: `govc: unsupported command in the test model: ${cmd}\n` };
+}
+// Answers one forwarded call, applying the first matching fault rule. `closed` resolves when the
+// caller gave up (govc killed by NovaDesk's 20 s timeout), which ends a hung call.
+async function govcHandle(args, url, closed) {
+  const cmd = govcCmd(args);
+  const name = args[args.length - 1];
+  const rule = govcFaults.find((r) => (r.cmd === '*' || r.cmd === cmd) && r.left !== 0);
+  const call = { t: Date.now(), cmd, name, host: url, fault: rule ? `${rule.kind}${rule.applied ? '+applied' : ''}` : null };
+  govcCalls.push(call);
+  if (!rule) { const r = govcApply(args); call.outcome = r.code ? 'error' : 'ok'; return r; }
+  if (rule.left > 0) rule.left -= 1;
+  if (rule.kind === 'slow') {
+    await new Promise((res) => setTimeout(res, rule.ms || 5000));
+    const r = govcApply(args); call.outcome = r.code ? 'error' : 'ok'; return r;
+  }
+  if (rule.applied) govcApply(args); // the host really does it...
+  if (rule.kind === 'hang') {
+    call.outcome = 'hung';
+    await closed; // ...but the caller never hears back until it gives up
+    call.outcome = 'hung-caller-gave-up';
+    return { code: 1, stdout: '', stderr: '' };
+  }
+  call.outcome = 'fault';
+  return { code: 1, stdout: '', stderr: rule.stderr || 'govc: injected failure\n' };
+}
+
 function startMain() {
   return new Promise((resolve) => {
     main = http.createServer(onRequest);
@@ -192,8 +270,32 @@ const ctl = http.createServer(async (req, res) => {
     cards.push({ id: nextId++, changeId: body.changeId, cardType: body.cardType, taskId: body.taskId ?? null, status: body.status || 'pending', createdAt: Date.now(), updatedAt: Date.now(), source: 'seed' });
     return send(res, 200, { ok: true });
   }
+  if (req.method === 'POST' && path === '/govc') {
+    let gone; const closed = new Promise((r) => { gone = r; });
+    res.on('close', gone);
+    const r = await govcHandle(body.args || [], body.url || '', closed);
+    return send(res, 200, r);
+  }
+  if (req.method === 'POST' && path === '/govc-fault') {
+    if (body.clear) { govcFaults = []; return send(res, 200, { ok: true, faults: 0 }); }
+    govcFaults.push({ cmd: body.cmd || '*', kind: body.kind || 'fail', left: body.n == null ? -1 : body.n, applied: !!body.applied, stderr: body.stderr, ms: body.ms });
+    return send(res, 200, { ok: true, faults: govcFaults.length });
+  }
+  if (req.method === 'POST' && path === '/govc-vm') {
+    if (body.remove) vms.delete(body.name);
+    else vms.set(body.name, { powerState: body.powerState || 'poweredOn', cpu: body.cpu || 2, memoryMB: body.memoryMB || 4096, diskKB: body.diskKB || 20 * 1024 * 1024 });
+    return send(res, 200, { ok: true });
+  }
+  if (req.method === 'POST' && path === '/govc-config') {
+    if (typeof body.autoRegister === 'boolean') autoRegister = body.autoRegister;
+    return send(res, 200, { ok: true, autoRegister });
+  }
+  if (req.method === 'GET' && path === '/govc-state') {
+    const since = Number((req.url.split('since=')[1] || '0'));
+    return send(res, 200, { vms: Object.fromEntries(vms), faults: govcFaults, calls: govcCalls.filter((c) => c.t >= since) });
+  }
   if (req.method === 'POST' && path === '/reset') {
-    cards = []; log = []; messages = 0; seenKeys.clear();
+    cards = []; log = []; messages = 0; seenKeys.clear(); vms.clear(); vmsEverSeen.clear(); govcFaults = []; govcCalls = []; autoRegister = true;
     return send(res, 200, { ok: true });
   }
   if (req.method === 'POST' && path === '/config') {

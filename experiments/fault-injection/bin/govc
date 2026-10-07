@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+'use strict';
+// Stand-in for the govc binary, used ONLY inside the isolated fault-injection pod (rig.sh puts
+// this directory first on fi-novadesk's PATH). It never opens a connection to an ESXi host: it
+// forwards the command line to the stub's control port on the pod's loopback (127.0.0.1:18082),
+// which models a small ESXi inventory and its faults (stub.js), and prints whatever the model
+// answers with the same exit code, so src/esxi.js sees what it would see from the real tool.
+const http = require('http');
+
+const payload = JSON.stringify({ args: process.argv.slice(2), url: process.env.GOVC_URL || '', user: process.env.GOVC_USERNAME || '' });
+const req = http.request({
+  host: '127.0.0.1', port: Number(process.env.STUB_CTL_PORT || 18082), path: '/govc', method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+}, (res) => {
+  let body = '';
+  res.on('data', (d) => { body += d; });
+  res.on('end', () => {
+    try {
+      const r = JSON.parse(body);
+      if (r.stdout) process.stdout.write(r.stdout);
+      if (r.stderr) process.stderr.write(r.stderr);
+      process.exitCode = r.code || 0;
+    } catch (e) {
+      process.stderr.write(`govc stub: unreadable answer: ${e.message}\n`);
+      process.exitCode = 2;
+    }
+  });
+});
+req.on('error', (e) => { process.stderr.write(`govc stub: model unreachable: ${e.message}\n`); process.exitCode = 2; });
+req.end(payload);
