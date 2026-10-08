@@ -869,6 +869,78 @@ async function e11() {
   return out;
 }
 
+// ---------------------------------------------------------------- E12 Notifications tab entries
+// The notice row is written after the SMTP send finishes (a few seconds), so every wait here is for
+// specific kinds of notice, not for a count.
+const notifRows = (changeId, afterId = 0) => q(`SELECT id, recipient_email AS "to", subject, status FROM notifications WHERE related_type='change' AND related_id=${changeId} AND id > ${afterId} ORDER BY id`);
+const maxNotifId = () => Number(q(`SELECT COALESCE(max(id),0) AS m FROM notifications`)[0].m);
+const KIND_RE = [['requested', /Decommission requested:/], ['assigned', /Assigned to you:/], ['approved', /Change approved:/], ['rejected', /Change rejected:/], ['cancelled', /Change cancelled:/], ['completed', /Decommission complete:/], ['attention', /Needs attention:/]];
+const kindOf = (subject) => (KIND_RE.find(([, re]) => re.test(subject)) || ['other'])[0];
+// Waits until every wanted kind has appeared (or maxSec), then 5 s more for anything unexpected.
+async function waitKinds(changeId, wanted, { maxSec = 60, afterId = 0 } = {}) {
+  const w0 = Date.now(); let rows = notifRows(changeId, afterId);
+  while (!wanted.every((k) => rows.some((r) => kindOf(r.subject) === k)) && Date.now() - w0 < maxSec * 1000) { await sleep(2000); rows = notifRows(changeId, afterId); }
+  await sleep(5000);
+  return notifRows(changeId, afterId);
+}
+const byKind = (rows, who) => { const m = {}; for (const r of rows) { const k = kindOf(r.subject); (m[k] = m[k] || []).push(who(r.to)); } return m; };
+async function e12() {
+  say('E12: Notifications tab entries for the decommission workflow');
+  const out = [];
+  const users = q(`SELECT id, username, email FROM users WHERE email IS NOT NULL AND email <> '' ORDER BY id`);
+  if (users.length < 2) throw new Error('need two users with an email in the rig database');
+  const [uA, uB] = users;
+  const who = (to) => (to === uA.email ? 'A' : to === uB.email ? 'B' : to);
+  const setUsers = (changeId, requestedBy, assignedTo) => psql(`UPDATE changes SET requested_by=${requestedBy === null ? 'NULL' : requestedBy}, assigned_to=${assignedTo} WHERE id=${changeId}`);
+  // A new Change: its "requested" notice goes to the default requester/assignee and lands a few seconds later; wait for it, then switch the people.
+  const fresh = async (label, requestedBy, assignedTo) => { const c = await newChange(label); await waitKinds(c.changeId, ['requested'], { maxSec: 40 }); setUsers(c.changeId, requestedBy, assignedTo); return { ...c, base: maxNotifId() }; };
+  const flowToConfirm = async (changeId) => { await approve(changeId); for (const t of tasksOf(changeId).filter((x) => MANUAL.includes(x.description))) await precheck(changeId, t.id, 'complete'); await waitSoak(changeId); };
+
+  say('  12a requester (A) and assignee (B) are different people; whole flow');
+  { await resetStub(); const { changeId, base } = await fresh('E12A', uA.id, uB.id);
+    await flowToConfirm(changeId); const d = await confirmDestroy(changeId);
+    const rows = await waitKinds(changeId, ['approved', 'completed'], { afterId: base });
+    out.push({ case: '12a', title: 'Different requester and assignee, full flow', destroy: d.status, change: changeRow(changeId).status, expected: 'approved: A+B, completed: A+B', got: byKind(rows, who), delivery: [...new Set(rows.map((r) => r.status))] }); }
+
+  say('  12b same person (A); power-off fails');
+  { await resetStub(); const { changeId, base } = await fresh('E12B', uA.id, uA.id);
+    await approve(changeId); const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    for (const [i, t] of manual.entries()) { if (i === manual.length - 1) await govcFault({ cmd: 'vm.power -off', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' }); await precheck(changeId, t.id, 'complete'); }
+    const rows = await waitKinds(changeId, ['approved', 'attention'], { afterId: base });
+    out.push({ case: '12b', title: 'Same person, power-off fails', expected: 'approved: A, attention: A (one notice each: no duplicate for one person)', got: byKind(rows, who) }); }
+
+  say('  12c destroy fails once, then succeeds');
+  { await resetStub(); const { changeId, base } = await fresh('E12C', uA.id, uA.id);
+    await flowToConfirm(changeId); await govcFault({ cmd: 'vm.destroy', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+    const d1 = await confirmDestroy(changeId); const d2 = await confirmDestroy(changeId);
+    const rows = await waitKinds(changeId, ['approved', 'attention', 'completed'], { afterId: base });
+    out.push({ case: '12c', title: 'Destroy fails once, retried', firstAnswer: d1.status, secondAnswer: d2.status, expected: 'approved: A, attention: A, completed: A', got: byKind(rows, who) }); }
+
+  say('  12d reject; requester (A) has notifications switched off');
+  { await resetStub(); const { changeId, base } = await fresh('E12D', uA.id, uB.id);
+    psql(`UPDATE users SET email_notifications=0 WHERE id=${uA.id}`);
+    try { await reject(changeId); const rows = await waitKinds(changeId, ['rejected'], { afterId: base });
+      out.push({ case: '12d', title: 'Reject; requester opted out', expected: 'rejected: B only', got: byKind(rows, who) }); }
+    finally { psql(`UPDATE users SET email_notifications=1 WHERE id=${uA.id}`); } }
+
+  say('  12e cancel at the confirm step; the Change has no requester');
+  { await resetStub(); const { changeId, base } = await fresh('E12E', null, uB.id);
+    await flowToConfirm(changeId); const c = await cancelDestroy(changeId);
+    const rows = await waitKinds(changeId, ['approved', 'cancelled'], { afterId: base });
+    out.push({ case: '12e', title: 'Cancel, Change without a requester', cancelAnswer: c.status, expected: 'approved: B, cancelled: B', got: byKind(rows, who) }); }
+
+  say('  12f the request itself, default requester and assignee (one person)');
+  { await resetStub(); const { changeId } = await newChange('E12F'); const rows = await waitKinds(changeId, ['requested'], { maxSec: 40 });
+    out.push({ case: '12f', title: 'Request created via NovaConnect', expected: 'requested: one notice', got: byKind(rows, (to) => to) }); }
+
+  save('e12.json', out);
+  md('## E12. Notifications tab entries'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -887,6 +959,7 @@ async function e11() {
     if (cmd === 'e9' || cmd === 'all') await e9();
     if (cmd === 'e10' || cmd === 'all') await e10();
     if (cmd === 'e11' || cmd === 'all') await e11();
+    if (cmd === 'e12' || cmd === 'all') await e12();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

@@ -1,5 +1,6 @@
 const { db, nowStr, offsetStr, logActivity } = require('./db');
 const esxi = require('./esxi');
+const { notifyDecom } = require('./decomNotify');
 const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('./novaconnect');
 const { syncCard } = require('./cardSync');
 const { CHANGE_STATUS_LABELS } = require('./helpers');
@@ -109,6 +110,7 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
     `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
   } catch (e) {
     await logActivity('change', change.id, actorId, `ESXi power-off failed: ${sentence(e.message)} To try again, un-complete and re-complete the last pre-check in this Change's task list.`);
+    notifyDecom(change.id, 'attention', `Power-off on ${esxiHost.name} failed: ${sentence(e.message)} To try again, un-complete and re-complete the last pre-check in the Change's task list.`);
     await pushDecomUpdate(decomTargets(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${sentence(e.message)} The soak-period timer was not started. To try again: in NovaDesk, open ${change.number}, un-complete the last pre-check in the task list and complete it again.`);
   }
 }
@@ -536,6 +538,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
     } catch (e) {
       await logActivity('change', change.id, confirmer.id, `Destroy of ${ci.name} failed: ${sentence(e.message)} ${change.number} is still waiting for a destroy decision, so Confirm Destroy can be tried again.`).catch(() => {});
       await pushDecomUpdate(decomTargets(change), `⚠️ Destroy of ${ci.name} failed: ${sentence(e.message)} ${change.number} is still waiting for a destroy decision, so Confirm Destroy can be tried again.`).catch(() => {});
+      notifyDecom(change.id, 'attention', `Destroy of ${ci.name} failed: ${sentence(e.message)} The Change is still waiting for a destroy decision, so Confirm Destroy can be tried again.`);
       e.reported = true;
       throw e;
     }
@@ -585,6 +588,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
       UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
     `).get(nowStr(), nowStr(), change.id);
     await logActivity('change', change.id, confirmer.id, 'Change closed — decommission complete');
+    notifyDecom(change.id, 'completed', `Confirmed by ${confirmer.username}.`);
     await postDecomSummary(change, ci, trackerRow, 'CI retired, audit-frozen', fromEsxi);
     return closed;
   } finally {
@@ -603,6 +607,7 @@ async function announceManualFinalTask(change, task, actor) {
   if (!fresh || fresh.status === 'closed' || fresh.status === 'cancelled' || fresh.status === 'rejected') return;
   await db.prepare(`UPDATE changes SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ?`).run(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, actor.id, 'Change closed — all decommission tasks resolved');
+  notifyDecom(change.id, 'completed', `All tasks were resolved in NovaDesk by ${actor.fullName}.`);
   const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
   if (!ci) return;
   const cmdbStatus = ci.status === 'retired' ? 'CI retired, audit-frozen' : `CI status unchanged (${ci.status}) — final tasks marked complete in NovaDesk`;

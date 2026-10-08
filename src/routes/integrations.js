@@ -4,6 +4,7 @@ const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
 const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('../novaconnect');
 const { syncCard } = require('../cardSync');
+const { notifyDecom } = require('../decomNotify');
 const {
   DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, maybeProceedWithPowerDown, sleep,
   announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy
@@ -93,6 +94,7 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
   }
 
   await logActivity('change', change.id, requester ? requester.id : null, 'Change request created (via NovaConnect decommission request)');
+  notifyDecom(change.id, 'requested');
 
   const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
   res.status(201).json({ change, ci, esxiHost, tasks });
@@ -139,6 +141,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
     return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
   }
   await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
+  notifyDecom(change.id, 'approved', `Approved by ${approver.full_name} in NovaConnect.`);
 
   // announceDecomApproval resolves the approval card + posts "approved" FIRST, before the
   // precheck cards — see its own comment in decomAutomation.js for why order matters here.
@@ -298,6 +301,7 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
     UPDATE changes SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
   `).get(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, canceller.id, 'Change cancelled — decommission stopped before destroy');
+  notifyDecom(change.id, 'cancelled', `Cancelled by ${req.body.cancelled_by_username} in NovaConnect; the VM was powered back on.`);
 
   // See the matching resolve in confirm-destroy above — same reasoning, same fix.
   await syncCard(change, { cardType: 'decom_confirm_destroy', desiredStatus: 'cancelled' });
@@ -337,6 +341,7 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
     return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
   }
   await logActivity('change', change.id, rejector.id, 'Decommission rejected (via NovaConnect)');
+  notifyDecom(change.id, 'rejected', `Rejected by ${rejector.full_name} in NovaConnect.`);
 
   await announceDecomRejection(change, rejector.full_name);
 
