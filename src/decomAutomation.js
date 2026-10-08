@@ -27,6 +27,9 @@ function formatSoakDuration(hours) {
   return `${Number.isInteger(days) ? days : days.toFixed(1)} day${days === 1 ? '' : 's'}`;
 }
 
+// A message as a finished sentence: exactly one full stop at the end.
+const sentence = (m) => `${String(m).trim().replace(/[.\s]+$/, '')}.`;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -89,7 +92,14 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
     const sessionId = await esxi.login(esxiHost.ip_address);
     const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
     if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}.`);
-    await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
+    // A VM that is already off counts as done: an earlier power-off may have completed on the host
+    // although NovaDesk never heard back (govc timeout) or was told it failed, and powering off an
+    // off VM is an error on ESXi, which used to make every retry fail (fault-injection E11c).
+    if (esxi.powerStateOf(vm.raw) === 'poweredOff') {
+      await logActivity('change', change.id, actorId, `${ci.name} was already powered off on ${esxiHost.name}; continuing`);
+    } else {
+      await esxi.powerOff(esxiHost.ip_address, sessionId, vm.vm);
+    }
     await markTaskDone(change.id, 'Power off — soak period');
     await logActivity('change', change.id, actorId, `VM powered off on ${esxiHost.name}, entering ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period`);
     await pushDecomUpdate(decomTargets(change), `✅ Power off complete — ${ci.name} is now off on ${esxiHost.name}. Entering a ${formatSoakDuration(SOAK_PERIOD_HOURS)} soak period before the destroy confirmation.`);
@@ -98,8 +108,8 @@ async function proceedWithPowerDown(change, ci, esxiHost, actorId) {
       INSERT INTO scheduled_actions (change_id, action_type, run_at) VALUES (?, 'destroy_vm', ?)
     `).run(change.id, offsetStr(0, SOAK_PERIOD_HOURS));
   } catch (e) {
-    await logActivity('change', change.id, actorId, `ESXi power-off failed: ${e.message}`);
-    await pushDecomUpdate(decomTargets(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${e.message}. The soak-period timer was not started — this needs manual attention.`);
+    await logActivity('change', change.id, actorId, `ESXi power-off failed: ${sentence(e.message)} To try again, un-complete and re-complete the last pre-check in this Change's task list.`);
+    await pushDecomUpdate(decomTargets(change), `⚠️ ${change.number} approved, but power-off on ${esxiHost.name} failed: ${sentence(e.message)} The soak-period timer was not started. To try again: in NovaDesk, open ${change.number}, un-complete the last pre-check in the task list and complete it again.`);
   }
 }
 
@@ -245,7 +255,7 @@ async function revertPowerOffIfNeeded(change, actorId) {
       await logActivity('change', change.id, actorId, `Could not power ${ci.name} back on after cancellation — no VM found on ${esxiHost.name}.`);
       return false;
     }
-    await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
+    if (esxi.powerStateOf(vm.raw) !== 'poweredOn') await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
     await db.prepare(`
       UPDATE change_tasks SET status = 'pending', completed_at = NULL WHERE change_id = ? AND description = 'Power off — soak period'
     `).run(change.id);
@@ -503,11 +513,32 @@ async function runConfirmedDestroy(change, ci, confirmer) {
     await sleep(10000);
     await pushDecomThinking(decomTargets(change), false);
 
-    const sessionId = await esxi.login(esxiHost.ip_address);
-    const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
-    if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
-    const fromEsxi = hardwareFromVm(vm.raw); // read before it's gone, for the summary
-    await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
+    // The ESXi part. A failure is logged on the Change and announced in NovaConnect here, for both
+    // doors (NovaConnect's button and NovaDesk's task list), then rethrown flagged as reported;
+    // until 0.0.72 a failure through NovaConnect's button left nothing on the Change (E11f).
+    let fromEsxi = null; // the VM's size, read before it's gone, for the summary
+    try {
+      const sessionId = await esxi.login(esxiHost.ip_address);
+      const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+      if (!vm) {
+        // No VM on the host. If NovaDesk already issued the destroy for this Change, the host most
+        // likely finished it although the answer was lost (govc timeout, E11g): carry on with the
+        // rest of the sequence. With no earlier destroy this is still an error: the name or the
+        // host may be wrong.
+        const issued = await db.prepare('SELECT vm_destroy_issued_at FROM changes WHERE id = ?').get(change.id);
+        if (!issued || !issued.vm_destroy_issued_at) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name}: it may already be gone, but NovaDesk has not destroyed it, so nothing was changed.`);
+        await logActivity('change', change.id, confirmer.id, `No VM named "${ci.name}" on ${esxiHost.name}; the destroy NovaDesk issued at ${issued.vm_destroy_issued_at} UTC evidently completed. Continuing with the remaining steps.`);
+      } else {
+        fromEsxi = hardwareFromVm(vm.raw);
+        await db.prepare('UPDATE changes SET vm_destroy_issued_at = ? WHERE id = ?').run(nowStr(), change.id);
+        await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
+      }
+    } catch (e) {
+      await logActivity('change', change.id, confirmer.id, `Destroy of ${ci.name} failed: ${sentence(e.message)} ${change.number} is still waiting for a destroy decision, so Confirm Destroy can be tried again.`).catch(() => {});
+      await pushDecomUpdate(decomTargets(change), `⚠️ Destroy of ${ci.name} failed: ${sentence(e.message)} ${change.number} is still waiting for a destroy decision, so Confirm Destroy can be tried again.`).catch(() => {});
+      e.reported = true;
+      throw e;
+    }
     await markTaskDone(change.id, DESTROY_TASK);
     await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${confirmer.username})`);
 

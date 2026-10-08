@@ -278,10 +278,17 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
   await sleep(10000);
   await pushDecomThinking(decomTargets(change), false);
 
-  const sessionId = await esxi.login(esxiHost.ip_address);
-  const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
-  if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
-  await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
+  try {
+    const sessionId = await esxi.login(esxiHost.ip_address);
+    const vm = await esxi.findVm(esxiHost.ip_address, sessionId, ci.name);
+    if (!vm) throw new Error(`No VM named "${ci.name}" found on ${esxiHost.name} — it may already be gone.`);
+    // Already on counts as done: an earlier power-on may have completed without NovaDesk hearing back.
+    if (esxi.powerStateOf(vm.raw) !== 'poweredOn') await esxi.powerOn(esxiHost.ip_address, sessionId, vm.vm);
+  } catch (e) {
+    await logActivity('change', change.id, canceller.id, `Cancelling the destroy failed: ${String(e.message).trim().replace(/[.\s]+$/, '')}. ${change.number} is still waiting for a destroy decision; Cancel can be tried again.`).catch(() => {});
+    await pushDecomUpdate(decomTargets(change), `⚠️ Cancelling the destroy of ${ci.name} failed: ${String(e.message).trim().replace(/[.\s]+$/, '')}. ${change.number} is still waiting for a destroy decision; Cancel can be tried again.`).catch(() => {});
+    return res.status(502).json({ error: `Cancelling failed: ${e.message}` });
+  }
   await db.prepare(`
     UPDATE change_tasks SET status = 'pending', completed_at = NULL WHERE change_id = ? AND description = 'Power off — soak period'
   `).run(change.id);

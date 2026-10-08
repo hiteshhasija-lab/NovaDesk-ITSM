@@ -832,22 +832,33 @@ async function e11() {
   const toConfirm = async (label) => { const x = await toPowerDown(label); const card = await waitSoak(x.changeId); return { ...x, card }; };
 
   say('  11f destroy fails once, then fine');
-  { const { changeId, vm, card } = await toConfirm('E11F'); await govcFault({ cmd: 'vm.destroy', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+  { const { changeId, vm, card } = await toConfirm('E11F'); const t0f = Date.now(); await govcFault({ cmd: 'vm.destroy', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
     const d1 = await confirmDestroy(changeId); const mid = { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', cardStatus: ((await stubState()).cards.find((x) => Number(x.changeId) === changeId && x.cardType === 'decom_confirm_destroy') || {}).status, activity: actsOf(changeId, '%destroy%') };
     const d2 = await confirmDestroy(changeId);
-    out.push({ case: '11f', title: 'Destroy fails once, retried by the operator', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, secondAnswer: d2.status, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
+    out.push({ case: '11f', title: 'Destroy fails once, retried by the operator', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, chatWarnings: await chatWarnings(t0f), secondAnswer: d2.status, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
 
   say('  11g destroy done by the host but the answer is lost (govc timeout)');
-  { const { changeId, vm, card } = await toConfirm('E11G'); await govcFault({ cmd: 'vm.destroy', kind: 'hang', n: 1, applied: true });
+  { const { changeId, vm, card } = await toConfirm('E11G'); const t0g = Date.now(); await govcFault({ cmd: 'vm.destroy', kind: 'hang', n: 1, applied: true });
     const d1 = await confirmDestroy(changeId); const mid = { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', tasks: tasksOf(changeId).map((t) => t.status).join(',') };
     const d2 = await confirmDestroy(changeId);
-    out.push({ case: '11g', title: 'Destroy applied on the host, caller timed out, operator retries', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, secondAnswer: d2.status, secondError: d2.json && d2.json.error, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), tasks: tasksOf(changeId).map((t) => t.status).join(',') } }); }
+    out.push({ case: '11g', title: 'Destroy applied on the host, caller timed out, operator retries', card, firstAnswer: d1.status, firstError: d1.json && d1.json.error, afterFirst: mid, chatWarnings: await chatWarnings(t0g), secondAnswer: d2.status, secondError: d2.json && d2.json.error, final: { change: changeRow(changeId).status, ci: ciStatusOf(vm.id), tasks: tasksOf(changeId).map((t) => t.status).join(','), summaryCard: (await stubState()).cards.some((c) => Number(c.changeId) === changeId && c.cardType === 'decom_summary'), activity: actsOf(changeId, '%No VM named%') } }); }
 
   say('  11h cancel at the confirm step while the host cannot power the VM back on');
-  { const { changeId, vm, card } = await toConfirm('E11H'); await govcFault({ cmd: 'vm.power -on', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+  { const { changeId, vm, card } = await toConfirm('E11H'); const t0h = Date.now(); await govcFault({ cmd: 'vm.power -on', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
     const c1 = await cancelDestroy(changeId); const mid = { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', powerTask: taskStatusOf(changeId, POWER_TASK) };
     const c2 = await cancelDestroy(changeId);
-    out.push({ case: '11h', title: 'Cancel with the host failing to power the VM back on', card, firstAnswer: c1.status, afterFirst: mid, secondAnswer: c2.status, final: { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
+    out.push({ case: '11h', title: 'Cancel with the host failing to power the VM back on', card, firstAnswer: c1.status, afterFirst: { ...mid, activity: actsOf(changeId, '%Cancelling the destroy failed%'), chatWarnings: await chatWarnings(t0h) }, secondAnswer: c2.status, final: { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone' } }); }
+
+  say('  11i destroy that takes longer than the old 20 s limit');
+  { const { changeId, vm } = await toConfirm('E11I'); await govcFault({ cmd: 'vm.destroy', kind: 'slow', n: 1, ms: 30000 });
+    const d = await confirmDestroy(changeId);
+    out.push({ case: '11i', title: 'Destroy takes 30 s on the host (rig limit 45 s, old limit 20 s)', answer: d.status, change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', ci: ciStatusOf(vm.id) }); }
+
+  say('  11j power-on done by the host but the answer is lost, then cancel again');
+  { const { changeId, vm } = await toConfirm('E11J'); await govcFault({ cmd: 'vm.power -on', kind: 'hang', n: 1, applied: true });
+    const c1 = await cancelDestroy(changeId); const mid = { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState };
+    const c2 = await cancelDestroy(changeId);
+    out.push({ case: '11j', title: 'Power-on applied on the host, caller timed out, operator cancels again', firstAnswer: c1.status, afterFirst: mid, secondAnswer: c2.status, final: { change: changeRow(changeId).status, vm: ((await govcState()).vms[vm.name] || {}).powerState } }); }
 
   await govcClear();
   save('e11.json', out);

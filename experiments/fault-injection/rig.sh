@@ -58,6 +58,7 @@ up() {
     -e DECOM_SOAK_PERIOD_HOURS=0.01 \
     -v "$DIR/bin:/fi/bin:ro,Z" -e PATH=/fi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e ESXI_USER=fi-stub-user -e ESXI_PASSWORD=fi-stub-password \
+    -e ESXI_POWER_TIMEOUT_S="${ESXI_POWER_TIMEOUT_S:-15}" -e ESXI_DESTROY_TIMEOUT_S="${ESXI_DESTROY_TIMEOUT_S:-45}" \
     -e CARD_SYNC_POLL_S="${CARD_SYNC_POLL_S:-5}" -e CARD_SYNC_BACKOFF_BASE_S="${CARD_SYNC_BACKOFF_BASE_S:-5}" \
     -e CARD_SYNC_BACKOFF_MAX_S="${CARD_SYNC_BACKOFF_MAX_S:-20}" -e CARD_SYNC_DEAD_AFTER="${CARD_SYNC_DEAD_AFTER:-3}" \
     "$IMAGE" >/dev/null

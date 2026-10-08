@@ -409,6 +409,7 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
     await logActivity('change', change.id, me.id, `${task.task_number} (${task.description}) completed in NovaDesk: destroy confirmed by ${me.username}`);
     runConfirmedDestroy(change, ci, { id: me.id, username: me.username }).catch(async (e) => {
       console.error(`Destroy of ${ci.name} (${change.number}) from NovaDesk failed:`, e.message);
+      if (e.reported) return; // runConfirmedDestroy already logged it and told NovaConnect
       await logActivity('change', change.id, me.id, `Destroy failed: ${e.message}`).catch(() => {});
       await pushDecomUpdate(decomTargets(change), `⚠️ Destroy of ${ci.name} (confirmed in NovaDesk by ${me.full_name}) failed: ${e.message}`).catch(() => {});
     });

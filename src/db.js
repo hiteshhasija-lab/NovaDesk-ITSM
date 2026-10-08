@@ -272,6 +272,11 @@ CREATE TABLE IF NOT EXISTS decom_card_sync (
 );
 CREATE INDEX IF NOT EXISTS decom_card_sync_pending ON decom_card_sync (done, next_attempt_at);
 
+-- When NovaDesk issued the ESXi destroy for a decommission. If the answer is lost (govc timeout)
+-- the host may still have destroyed the VM; a retry that finds no VM can then continue the
+-- sequence instead of failing for ever (decomAutomation.runConfirmedDestroy).
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_issued_at TEXT;
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
