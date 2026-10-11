@@ -7,7 +7,7 @@ const { syncCard } = require('../cardSync');
 const { notifyDecom } = require('../decomNotify');
 const {
   DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, maybeProceedWithPowerDown, sleep,
-  announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy
+  announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy, restoreCiFromMaintenance
 } = require('../decomAutomation');
 
 const router = createAsyncRouter();
@@ -100,6 +100,84 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
   res.status(201).json({ change, ci, esxiHost, tasks });
 });
 
+// POST /api/integrations/novaconnect/decommission-status
+// body: { query } where query is a server name (or CI number) or a Change number. Answers a
+// "status <server|CHG...>" message typed in a decommission DM or #server-decom: for a server, its
+// decommission Changes newest first (up to 5); for a Change number, that Change. Read only.
+const STATUS_MATCH_LIMIT = 5;
+router.post('/novaconnect/decommission-status', async (req, res) => {
+  const raw = String(req.body.query || '').trim().slice(0, 120);
+  if (!raw) return res.status(400).json({ error: 'query is required.' });
+
+  const num = raw.match(/^chg0*(\d+)$/i);
+  let ci = null;
+  let changes = [];
+  if (num) {
+    const c = await db.prepare('SELECT * FROM changes WHERE number = ?').get(`CHG${String(Number(num[1])).padStart(7, '0')}`);
+    if (c) changes = [c];
+  } else {
+    ci = await db.prepare('SELECT id, name, ci_number, status FROM cmdb_ci WHERE lower(name) = lower(?) OR lower(ci_number) = lower(?) ORDER BY id LIMIT 1').get(raw, raw);
+    if (ci) {
+      changes = await db.prepare(`
+        SELECT * FROM changes WHERE affected_ci_id = ? AND (novaconnect_channel_id IS NOT NULL OR novaconnect_conversation_id IS NOT NULL)
+        ORDER BY id DESC LIMIT ?
+      `).all(ci.id, STATUS_MATCH_LIMIT);
+    }
+  }
+
+  const nameOf = async (id) => (id ? ((await db.prepare('SELECT full_name FROM users WHERE id = ?').get(id)) || {}).full_name || null : null);
+  const matches = [];
+  for (const c of changes) {
+    const isDecom = !!(c.novaconnect_channel_id || c.novaconnect_conversation_id);
+    const cci = await db.prepare('SELECT name, ci_number, status FROM cmdb_ci WHERE id = ?').get(c.affected_ci_id);
+    const tasks = await db.prepare('SELECT description, status, completed_at FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(c.id);
+    const task = (d) => tasks.find((t) => t.description === d);
+    const manualDone = tasks.filter((t) => MANUAL_TASKS.includes(t.description) && (t.status === 'done' || t.status === 'skipped')).length;
+    const powerTask = task('Power off — soak period');
+    const destroyTask = task('Destroy VM & release storage');
+    const timer = await db.prepare(`
+      SELECT run_at, status FROM scheduled_actions WHERE change_id = ? AND action_type = 'destroy_vm' ORDER BY id DESC LIMIT 1
+    `).get(c.id);
+    const approvedRow = await db.prepare(`
+      SELECT created_at FROM activity_log WHERE entity_type = 'change' AND entity_id = ?
+        AND (message LIKE 'Decommission approved%' OR message LIKE 'Change approved%') ORDER BY id LIMIT 1
+    `).get(c.id);
+
+    let step;
+    if (c.status === 'cancelled') step = 'Cancelled';
+    else if (c.status === 'rejected' || c.approval_status === 'rejected') step = 'Rejected';
+    else if (c.status === 'closed') step = destroyTask && destroyTask.status === 'done' ? 'Completed: VM destroyed and CI retired' : 'Closed';
+    else if (c.approval_status !== 'approved') step = 'Waiting for approval';
+    else if (manualDone < MANUAL_TASKS.length) step = `Pre-checks in progress (${manualDone} of ${MANUAL_TASKS.length} done)`;
+    else if (!powerTask || powerTask.status !== 'done') step = 'Pre-checks complete; power-off not done yet (needs attention)';
+    else if (destroyTask && destroyTask.status === 'done') step = 'VM destroyed; finishing the last steps';
+    else if (timer && timer.status === 'pending' && timer.run_at > nowStr()) step = 'VM powered off; soak period running';
+    else step = 'Soak period over; waiting for Confirm Destroy';
+
+    matches.push({
+      id: c.id, number: c.number, isDecommission: isDecom, status: c.status, approvalStatus: c.approval_status, step,
+      shortDescription: c.short_description,
+      ci: cci ? { name: cci.name, ciNumber: cci.ci_number, status: cci.status } : null,
+      requestedBy: await nameOf(c.requested_by), assignedTo: await nameOf(c.assigned_to), approvedBy: c.approval_status === 'approved' ? await nameOf(c.approved_by) : null,
+      assignmentGroup: c.assignment_group || null,
+      submittedAt: c.created_at, approvedAt: approvedRow ? approvedRow.created_at : null,
+      poweredOffAt: powerTask && powerTask.status === 'done' ? powerTask.completed_at : null,
+      soakEndsAt: timer ? timer.run_at : null,
+      destroyedAt: destroyTask && destroyTask.status === 'done' ? destroyTask.completed_at : null,
+      completedAt: c.status === 'closed' ? c.closed_at : null,
+      cancelledAt: c.status === 'cancelled' ? c.closed_at : null,
+      tasksDone: tasks.filter((t) => t.status === 'done' || t.status === 'skipped').length, tasksTotal: tasks.length
+    });
+  }
+
+  res.json({
+    query: raw,
+    kind: num ? 'change' : 'server',
+    ci: ci ? { name: ci.name, ciNumber: ci.ci_number, status: ci.status } : null,
+    matches
+  });
+});
+
 async function loadDecomContext(changeId) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
   if (!change) return { error: 404, message: 'Change not found.' };
@@ -149,7 +227,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   // being resolved (Completed or Skipped). Whichever route ends up resolving the last of the 3
   // (precheck-task or skip-manual-tasks below, or NovaDesk's own Change Tasks Complete/Skip
   // buttons in routes/changes.js) is what actually triggers it, via maybeProceedWithPowerDown.
-  await announceDecomApproval(change, approver.full_name);
+  await announceDecomApproval(change, approver.full_name, approver.id);
 
   res.json({ change: await db.prepare('SELECT * FROM changes WHERE id = ?').get(change.id), ci, tasks });
 });
@@ -301,6 +379,7 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
     UPDATE changes SET status = 'cancelled', updated_at = ?, closed_at = ? WHERE id = ? RETURNING *
   `).get(nowStr(), nowStr(), change.id);
   await logActivity('change', change.id, canceller.id, 'Change cancelled — decommission stopped before destroy');
+  await restoreCiFromMaintenance(change, canceller.id).catch((e) => console.error('restoreCiFromMaintenance failed:', e.message));
   notifyDecom(change.id, 'cancelled', `Cancelled by ${req.body.cancelled_by_username} in NovaConnect; the VM was powered back on.`);
 
   // See the matching resolve in confirm-destroy above — same reasoning, same fix.

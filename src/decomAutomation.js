@@ -195,11 +195,50 @@ async function postNextPrecheckCard(change) {
 // route AND NovaDesk's own Change approve action (routes/changes.js) — a Change can be approved
 // either way, and until this was shared, approving directly in NovaDesk's own UI left the
 // NovaConnect approval card stuck on "pending" forever, since none of this ever ran for that path.
-async function announceDecomApproval(change, approverFullName) {
+// Approving a decommission puts the server in maintenance mode: the CI's status in the CMDB goes
+// to "Maintenance" (its status before is kept so a cancelled decommission can put it back). Returns
+// true when the CI is in maintenance afterwards, false when there is no CI to change or it is
+// already retired. Before 0.0.74 nothing touched the CI until the destroy retired it.
+async function putCiInMaintenance(change) {
+  const ci = change.affected_ci_id ? await db.prepare('SELECT id, status FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id) : null;
+  if (!ci || ci.status === 'retired') return false;
+  if (ci.status === 'maintenance') return true;
+  await db.prepare('UPDATE cmdb_ci SET status = ?, updated_at = ? WHERE id = ?').run('maintenance', nowStr(), ci.id);
+  await db.prepare('UPDATE changes SET ci_status_before_decom = ? WHERE id = ?').run(ci.status, change.id);
+  return true;
+}
+
+// The inverse, for a decommission that is cancelled or rejected after approval: back to the status
+// the CI had before. Only acts when this Change put it in maintenance (it recorded a prior status)
+// and the CI is still in maintenance. Returns the status it was restored to, or null.
+async function restoreCiFromMaintenance(change, actorId) {
+  const row = await db.prepare('SELECT ci_status_before_decom FROM changes WHERE id = ?').get(change.id);
+  if (!row || !row.ci_status_before_decom) return null;
+  const ci = change.affected_ci_id ? await db.prepare('SELECT id, name, status FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id) : null;
+  if (!ci || ci.status !== 'maintenance') return null;
+  await db.prepare('UPDATE cmdb_ci SET status = ?, updated_at = ? WHERE id = ?').run(row.ci_status_before_decom, nowStr(), ci.id);
+  await db.prepare('UPDATE changes SET ci_status_before_decom = NULL WHERE id = ?').run(change.id);
+  await logActivity('change', change.id, actorId || null, `Server has been taken out of maintenance mode (back to ${row.ci_status_before_decom}).`);
+  return row.ci_status_before_decom;
+}
+
+async function announceDecomApproval(change, approverFullName, actorId) {
+  // First, so the activity log reads "approved" then "maintenance mode", and the chat line below
+  // only claims it when it is true.
+  let inMaintenance = false;
+  try {
+    inMaintenance = await putCiInMaintenance(change);
+    if (inMaintenance) await logActivity('change', change.id, actorId || null, 'Server has been added in maintenance mode.');
+  } catch (e) {
+    console.error(`Putting the CI of change ${change.id} in maintenance mode failed:`, e.message);
+  }
+
   await syncCard(change, { cardType: 'decom_approval', desiredStatus: 'approved' });
   await pushDecomUpdate(
     decomTargets(change),
-    `✅ ${change.number} approved by ${approverFullName}. Scheduled for decommission.`,
+    inMaintenance
+      ? `✅ ${change.number} approved by ${approverFullName}. Added server in maintenance mode and scheduled for decommission.`
+      : `✅ ${change.number} approved by ${approverFullName}. Scheduled for decommission.`,
     { cardType: 'decom_status', changeId: change.id, changeNumber: change.number, status: 'approved' }
   );
 
@@ -284,16 +323,18 @@ async function announceGenericDecomStatusChange(preUpdateChange, newStatus, newA
   if (newStatus === preUpdateChange.status && newApprovalStatus === preUpdateChange.approval_status) return;
 
   if (newApprovalStatus === 'approved' && preUpdateChange.approval_status !== 'approved') {
-    await announceDecomApproval({ ...preUpdateChange, approval_status: newApprovalStatus, status: newStatus }, actorFullName);
+    await announceDecomApproval({ ...preUpdateChange, approval_status: newApprovalStatus, status: newStatus }, actorFullName, actorId);
     return;
   }
   if (newApprovalStatus === 'rejected' && preUpdateChange.approval_status !== 'rejected') {
+    await restoreCiFromMaintenance(preUpdateChange, actorId).catch(() => {});
     await announceDecomRejection(preUpdateChange, actorFullName);
     return;
   }
 
   if (newStatus === 'cancelled') {
     const poweredBackOn = await revertPowerOffIfNeeded(preUpdateChange, actorId);
+    await restoreCiFromMaintenance(preUpdateChange, actorId).catch((e) => console.error('restoreCiFromMaintenance failed:', e.message));
     await syncCard(preUpdateChange, { cardType: 'decom_confirm_destroy', desiredStatus: 'cancelled' });
     await pushDecomUpdate(
       decomTargets(preUpdateChange),
@@ -615,6 +656,8 @@ async function announceManualFinalTask(change, task, actor) {
 }
 
 module.exports = {
+  putCiInMaintenance,
+  restoreCiFromMaintenance,
   DESTROY_TASK,
   RETIRE_TASK,
   TRACKER_TASK,

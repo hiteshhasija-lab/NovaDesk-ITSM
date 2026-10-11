@@ -941,6 +941,68 @@ async function e12() {
   return out;
 }
 
+// ---------------------------------------------------------------- E14 maintenance mode + status lookup
+const statusQuery = (query) => nd('POST', '/api/integrations/novaconnect/decommission-status', { query });
+async function e14() {
+  say('E14: maintenance mode on approval, and the status lookup');
+  const out = [];
+  const ciOf = (vmName) => q(`SELECT id, status FROM cmdb_ci WHERE name='${esc(vmName)}'`)[0];
+  const actLines = (changeId) => q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${changeId} ORDER BY id`).map((r) => r.message);
+  const chatLines = async (t0) => (await stubLog(t0)).filter((e) => e.path === '/api/integrations/novadesk/decom-updates' && /approved by/.test(e.bodyText || '')).map((e) => e.bodyText);
+
+  say('  14a approve from NovaConnect: server goes to maintenance, wording and log line');
+  { await resetStub(); const { changeId, vm } = await newChange('E14A'); const before = ciOf(vm.name).status; const t0 = Date.now();
+    const s0 = (await statusQuery(vm.name)).json;
+    await approve(changeId); await sleep(1500);
+    const lines = actLines(changeId); const iApproved = lines.findIndex((l) => /Decommission approved/.test(l)); const iMaint = lines.findIndex((l) => l === 'Server has been added in maintenance mode.');
+    out.push({ case: '14a', title: 'Approve via NovaConnect', ciBefore: before, ciAfter: ciOf(vm.name).status, maintenanceLineRightAfterApproval: iMaint === iApproved + 1 && iApproved >= 0, activity: lines.slice(0, 4), chat: await chatLines(t0), statusBeforeApproval: s0.matches[0] && s0.matches[0].step }); }
+
+  say('  14b cancel after power-off: server comes back out of maintenance');
+  { await resetStub(); const { changeId, vm } = await newChange('E14B'); const before = ciOf(vm.name).status;
+    await approve(changeId); for (const t of tasksOf(changeId).filter((x) => MANUAL.includes(x.description))) await precheck(changeId, t.id, 'complete');
+    await waitSoak(changeId); const mid = ciOf(vm.name).status; const sMid = (await statusQuery(String(changeRow(changeId).number))).json.matches[0];
+    const c = await cancelDestroy(changeId);
+    out.push({ case: '14b', title: 'Cancel at the confirm step', ciBefore: before, ciWhileWaiting: mid, stepWhileWaiting: sMid && sMid.step, cancelAnswer: c.status, ciAfter: ciOf(vm.name).status, restoredLine: actLines(changeId).filter((l) => /maintenance mode/.test(l)), statusAfter: ((await statusQuery(vm.name)).json.matches[0] || {}).step }); }
+
+  say('  14c whole flow: status at each step, CI ends retired');
+  { await resetStub(); const { changeId, vm } = await newChange('E14C'); const steps = [];
+    const snap = async (label) => { const m = ((await statusQuery(String(changeRow(changeId).number))).json.matches || [])[0] || {}; steps.push({ at: label, status: m.status, step: m.step, tasks: `${m.tasksDone}/${m.tasksTotal}`, ci: m.ci && m.ci.status }); };
+    await snap('requested'); await approve(changeId); await snap('approved');
+    const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    await precheck(changeId, manual[0].id, 'complete'); await snap('1 pre-check done');
+    await precheck(changeId, manual[1].id, 'complete'); await precheck(changeId, manual[2].id, 'complete'); await snap('powered off');
+    await waitSoak(changeId); await snap('soak over');
+    const d = await confirmDestroy(changeId); await snap('destroyed');
+    const fin = (await statusQuery(vm.name)).json;
+    out.push({ case: '14c', title: 'Whole flow', destroy: d.status, steps, final: { ci: ciOf(vm.name).status, kind: fin.kind, match: fin.matches[0] && { number: fin.matches[0].number, step: fin.matches[0].step, requestedBy: fin.matches[0].requestedBy, submittedAt: fin.matches[0].submittedAt, approvedAt: fin.matches[0].approvedAt, completedAt: fin.matches[0].completedAt, destroyedAt: fin.matches[0].destroyedAt } } }); }
+
+  say('  14d approve from the NovaDesk UI: same behaviour');
+  { await resetStub(); const { changeId, vm } = await newChange('E14D'); const cookie = await staffCookie();
+    const r = await fetch(`${ND}/changes/${changeId}/approve`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'decision=approve' });
+    await sleep(2500); const lines = actLines(changeId);
+    out.push({ case: '14d', title: 'Approve via the NovaDesk Change page', httpStatus: r.status, ciAfter: ciOf(vm.name).status, maintenanceLine: lines.filter((l) => /maintenance mode/.test(l)) }); }
+
+  say('  14e lookups: number forms, name forms, unknown, no decommission, several Changes');
+  { await resetStub(); const { changeId, vm } = await newChange('E14E'); await approve(changeId);
+    const num = changeRow(changeId).number; const digits = String(Number(num.replace(/\D/g, '')));
+    const plain = psql(`INSERT INTO cmdb_ci (ci_number,name,ci_type,environment,status) VALUES ('FI-PLAIN-1','FI-PLAIN-SERVER','server','development','in_use') RETURNING id`, { firstLine: true });
+    const forms = {};
+    for (const [k, qv] of [['exact', num], ['lowercase', num.toLowerCase()], ['short', `CHG${digits}`], ['serverUpper', vm.name.toUpperCase()], ['serverLower', vm.name.toLowerCase()], ['ciNumber', q(`SELECT ci_number FROM cmdb_ci WHERE id=${ciOf(vm.name).id}`)[0].ci_number], ['unknown', 'NO-SUCH-SERVER'], ['unknownChange', 'CHG9999999'], ['noDecomForServer', 'FI-PLAIN-SERVER']]) {
+      const r = (await statusQuery(qv)); const j = r.json || {};
+      forms[k] = { http: r.status, kind: j.kind, ci: j.ci && j.ci.name, matches: (j.matches || []).map((m) => m.number) };
+    }
+    const empty = await nd('POST', '/api/integrations/novaconnect/decommission-status', { query: '   ' });
+    const noAuth = await nd('POST', '/api/integrations/novaconnect/decommission-status', { query: num }, { auth: null });
+    out.push({ case: '14e', title: 'Lookups', expectedChange: num, forms, blankQuery: empty.status, withoutKey: noAuth.status }); }
+
+  save('e14.json', out);
+  md('## E14. Maintenance mode and status lookup'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -960,6 +1022,7 @@ async function e12() {
     if (cmd === 'e10' || cmd === 'all') await e10();
     if (cmd === 'e11' || cmd === 'all') await e11();
     if (cmd === 'e12' || cmd === 'all') await e12();
+    if (cmd === 'e14' || cmd === 'all') await e14();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {

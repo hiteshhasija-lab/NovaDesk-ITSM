@@ -621,7 +621,7 @@ router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (r
     if ((existing.novaconnect_channel_id || existing.novaconnect_conversation_id) && existing.approval_status !== decision) {
       const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(req.session.user.id);
       if (decision === 'approved') {
-        await announceDecomApproval({ ...existing, approval_status: decision, status: newStatus }, actor.full_name)
+        await announceDecomApproval({ ...existing, approval_status: decision, status: newStatus }, actor.full_name, req.session.user.id)
           .catch((e) => console.error('announceDecomApproval failed:', e.message));
       } else {
         await announceDecomRejection(existing, actor.full_name)

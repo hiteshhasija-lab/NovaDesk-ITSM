@@ -277,6 +277,10 @@ CREATE INDEX IF NOT EXISTS decom_card_sync_pending ON decom_card_sync (done, nex
 -- sequence instead of failing for ever (decomAutomation.runConfirmedDestroy).
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_issued_at TEXT;
 
+-- The CI's status before a decommission put it in maintenance mode on approval, so a cancelled
+-- decommission can put it back (decomAutomation.putCiInMaintenance / restoreCiFromMaintenance).
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS ci_status_before_decom TEXT;
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
