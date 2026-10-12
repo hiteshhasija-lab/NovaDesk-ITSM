@@ -35,10 +35,12 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// `description` may be one task name or a list of names (a task whose wording changed over time).
 async function markTaskDone(changeId, description) {
+  const names = Array.isArray(description) ? description : [description];
   await db.prepare(`
-    UPDATE change_tasks SET status = 'done', completed_at = ? WHERE change_id = ? AND description = ?
-  `).run(nowStr(), changeId, description);
+    UPDATE change_tasks SET status = 'done', completed_at = ? WHERE change_id = ? AND description IN (${names.map(() => '?').join(', ')})
+  `).run(nowStr(), changeId, ...names);
 }
 
 const DECOM_TASKS = [
@@ -46,7 +48,7 @@ const DECOM_TASKS = [
   'Remove from monitoring',
   'DNS / firewall cleanup',
   'Power off — soak period',
-  'Destroy VM & release storage',
+  'Destroy VM & release resources',
   'Retire CI in CMDB',
   'Update tracker & reclaim licenses'
 ];
@@ -395,10 +397,12 @@ async function resolvePrecheckTask(change, task, newStatus, actorId, actorLabel)
 
 // The last three decom steps (Destroy VM, Retire CI, Update tracker) and the Change close used to
 // live only inside integrations.js's confirm-destroy route, so they only ever ran from NovaConnect's
-// Confirm Destroy button. Completing "Destroy VM & release storage" in NovaDesk's own Change Tasks
+// Confirm Destroy button. Completing "Destroy VM & release resources" in NovaDesk's own Change Tasks
 // list now runs the very same sequence (pending-list enhancement, 2026-10-04), so it lives here and
 // both doors call it.
-const DESTROY_TASK = 'Destroy VM & release storage';
+const DESTROY_TASK = 'Destroy VM & release resources';
+// Changes created before 0.0.80 carry the old wording in their task list; every match accepts both.
+const DESTROY_TASK_NAMES = [DESTROY_TASK, 'Destroy VM & release storage'];
 const RETIRE_TASK = 'Retire CI in CMDB';
 const TRACKER_TASK = 'Update tracker & reclaim licenses';
 
@@ -588,7 +592,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
       e.reported = true;
       throw e;
     }
-    await markTaskDone(change.id, DESTROY_TASK);
+    await markTaskDone(change.id, DESTROY_TASK_NAMES);
     await logActivity('change', change.id, confirmer.id, `VM destroyed on ${esxiHost.name} (confirmed by ${confirmer.username})`);
 
     // Resolve the confirm-destroy card whichever door was used, or it stays stuck showing
@@ -697,7 +701,7 @@ async function resumeInterruptedDecoms() {
 
         // A destroy that was issued but not carried through: the VM step itself, or the steps after
         // it (retire the CI, update the tracker, close, summary) that follow it in one sequence.
-        const afterDestroy = [DESTROY_TASK, RETIRE_TASK, TRACKER_TASK].map((d) => task(d)).filter(Boolean);
+        const afterDestroy = [...DESTROY_TASK_NAMES, RETIRE_TASK, TRACKER_TASK].map((d) => task(d)).filter(Boolean);
         const unfinished = afterDestroy.some((t) => t.status !== 'done' && t.status !== 'skipped');
         if (unfinished && change.vm_destroy_issued_at && change.vm_destroy_confirmed_by) {
           const failed = await db.prepare(`
@@ -744,6 +748,7 @@ module.exports = {
   putCiInMaintenance,
   restoreCiFromMaintenance,
   DESTROY_TASK,
+  DESTROY_TASK_NAMES,
   RETIRE_TASK,
   TRACKER_TASK,
   formatElapsed,

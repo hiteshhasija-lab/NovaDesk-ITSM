@@ -764,7 +764,7 @@ const actsOf = (changeId, like) => q(`SELECT message FROM activity_log WHERE ent
 const taskStatusOf = (changeId, desc) => (tasksOf(changeId).find((t) => t.description === desc) || {}).status;
 const ciStatusOf = (ciId) => q(`SELECT status FROM cmdb_ci WHERE id=${ciId}`)[0].status;
 const POWER_TASK = 'Power off — soak period';
-const DESTROY_TASK_NAME = 'Destroy VM & release storage';
+const DESTROY_TASK_NAME = 'Destroy VM & release resources';
 const confirmDestroy = (id, o) => nd('POST', `${REQ}/${id}/confirm-destroy`, { confirmed_by_username: 'admin' }, { timeoutMs: 120000, ...(o || {}) });
 const cancelDestroy = (id, o) => nd('POST', `${REQ}/${id}/cancel-destroy`, { cancelled_by_username: 'admin' }, { timeoutMs: 120000, ...(o || {}) });
 
@@ -1384,6 +1384,40 @@ async function e19() {
   return out;
 }
 
+// ---------------------------------------------------------------- E20 destroy task wording: new Changes use the new text, old ones keep working
+async function e20() {
+  say('E20: "Destroy VM & release resources" for new Changes; Changes with the old wording still run');
+  const out = [];
+  const NEW = 'Destroy VM & release resources', OLD = 'Destroy VM & release storage';
+  const flow = async (label, rename) => {
+    await resetStub(); const { changeId } = await newChange(label); const t0 = Date.now();
+    if (rename) psql(`UPDATE change_tasks SET description='${rename}' WHERE change_id=${changeId} AND description='${NEW}'`);
+    const names = tasksOf(changeId).map((t) => t.description);
+    await approve(changeId);
+    for (const t of tasksOf(changeId).filter((x) => MANUAL.includes(x.description))) await precheck(changeId, t.id, 'complete');
+    await waitSoak(changeId);
+    const midStatus = await statusQuery(changeRow(changeId).number);
+    const d = await nd('POST', `${REQ}/${changeId}/confirm-destroy`, { confirmed_by_username: 'admin' }, { timeoutMs: 120000 });
+    const finalRow = changeRow(changeId);
+    const destroyTask = tasksOf(changeId).find((t) => t.description === NEW || t.description === OLD);
+    const bodies = (await stubLog(t0)).map((e) => e.bodyText || '');
+    return { names, soakStep: midStatus.json && midStatus.json.matches && midStatus.json.matches[0] && midStatus.json.matches[0].step, destroy: d.status,
+      changeStatus: finalRow.status, destroyTaskStatus: destroyTask && destroyTask.status, destroyTaskName: destroyTask && destroyTask.description,
+      soakCardWording: bodies.filter((b) => /Soak period elapsed/.test(b)).map((b) => (b.match(/release its \w+/) || [''])[0]),
+      destroyedLine: bodies.filter((b) => /destroyed on/.test(b)).map((b) => (b.match(/— [\w ]+\.$/) || [''])[0]) };
+  };
+  say('  20a a new Change');
+  out.push({ case: '20a', title: 'New Change', ...(await flow('E20A', null)) });
+  say('  20b a Change whose destroy task still has the old wording');
+  out.push({ case: '20b', title: 'Old wording', ...(await flow('E20B', OLD)) });
+  save('e20.json', out);
+  md('## E20. Destroy task wording'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1408,6 +1442,7 @@ async function e19() {
     if (cmd === 'e17' || cmd === 'all') await e17();
     if (cmd === 'e18' || cmd === 'all') await e18();
     if (cmd === 'e19' || cmd === 'all') await e19();
+    if (cmd === 'e20' || cmd === 'all') await e20();
     if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');

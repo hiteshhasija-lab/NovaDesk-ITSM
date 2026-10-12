@@ -7,7 +7,7 @@ const { syncCard } = require('../cardSync');
 const { notifyDecom } = require('../decomNotify');
 const {
   DECOM_TASKS, MANUAL_TASKS, resolveEsxiHost, maybeProceedWithPowerDown, sleep,
-  announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy, restoreCiFromMaintenance
+  announceDecomApproval, announceDecomRejection, resolvePrecheckTask, runConfirmedDestroy, restoreCiFromMaintenance, DESTROY_TASK_NAMES
 } = require('../decomAutomation');
 
 const router = createAsyncRouter();
@@ -137,7 +137,7 @@ router.post('/novaconnect/decommission-status', async (req, res) => {
     const task = (d) => tasks.find((t) => t.description === d);
     const manualDone = tasks.filter((t) => MANUAL_TASKS.includes(t.description) && (t.status === 'done' || t.status === 'skipped')).length;
     const powerTask = task('Power off — soak period');
-    const destroyTask = task('Destroy VM & release storage');
+    const destroyTask = tasks.find((t) => DESTROY_TASK_NAMES.includes(t.description));
     const timer = await db.prepare(`
       SELECT run_at, status FROM scheduled_actions WHERE change_id = ? AND action_type = 'destroy_vm' ORDER BY id DESC LIMIT 1
     `).get(c.id);
@@ -345,7 +345,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   if (!confirmer) return res.status(403).json({ error: NOT_ALLOWED('confirm a VM destroy') });
 
   // The whole sequence (destroy, retire, tracker, close, summary) is shared with NovaDesk's own
-  // Change Tasks list, where completing "Destroy VM & release storage" runs the same thing.
+  // Change Tasks list, where completing "Destroy VM & release resources" runs the same thing.
   try {
     const closed = await runConfirmedDestroy(change, ci, { id: confirmer.id, username: req.body.confirmed_by_username, displayName: confirmer.displayName });
     res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });

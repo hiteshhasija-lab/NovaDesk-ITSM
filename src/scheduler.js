@@ -59,7 +59,7 @@ async function processDueAction(action) {
       cardType: 'decom_confirm_destroy',
       desiredStatus: 'pending',
       post: {
-        body: `⏳ Soak period elapsed for ${change.number} (${ci ? ci.name : 'unknown CI'}). Confirm to permanently destroy the VM and release its storage — this cannot be undone.`,
+        body: `⏳ Soak period elapsed for ${change.number} (${ci ? ci.name : 'unknown CI'}). Confirm to permanently destroy the VM and release its resources — this cannot be undone.`,
         metadata: { cardType: 'decom_confirm_destroy', changeId: change.id, changeNumber: change.number, ciName: ci ? ci.name : null }
       }
     });

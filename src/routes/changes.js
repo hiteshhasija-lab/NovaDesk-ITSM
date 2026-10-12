@@ -9,7 +9,7 @@ const { syncCard, describePendingCards } = require('../cardSync');
 const { mayDecideApproval, isDecomChange: isDecomChangeRow, NOT_ALLOWED_MESSAGE } = require('../approvalAccess');
 const {
   maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep,
-  DESTROY_TASK, RETIRE_TASK, TRACKER_TASK, destroySoakOver, resolveEsxiHost, runConfirmedDestroy, announceManualFinalTask
+  DESTROY_TASK_NAMES, RETIRE_TASK, TRACKER_TASK, destroySoakOver, resolveEsxiHost, runConfirmedDestroy, announceManualFinalTask
 } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
@@ -397,13 +397,13 @@ router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agen
   const isDecom = !!(change.novaconnect_channel_id || change.novaconnect_conversation_id);
   const backWith = (notice) => res.redirect(`/changes/${change.id}?notice=${encodeURIComponent(notice)}#tasks`);
 
-  // On a decommission Change, completing "Destroy VM & release storage" here is the same as Confirm
+  // On a decommission Change, completing "Destroy VM & release resources" here is the same as Confirm
   // Destroy in NovaConnect: it destroys the VM on ESXi, retires the CI, updates the tracker, closes
   // the Change and posts every step plus the summary in NovaConnect (runConfirmedDestroy). Same
   // gates as NovaConnect: admin only, and only once the soak period is over. The sequence takes
   // ~30 s, so it runs in the background and the page comes straight back; the task is marked done
   // by the sequence itself, only once the VM is actually destroyed.
-  if (isDecom && nowDone && task.description === DESTROY_TASK) {
+  if (isDecom && nowDone && DESTROY_TASK_NAMES.includes(task.description)) {
     if (req.session.user.role !== 'admin') {
       return backWith('Only an admin can complete the destroy step: it permanently destroys the VM.');
     }
