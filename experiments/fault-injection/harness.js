@@ -1158,6 +1158,58 @@ async function e13() {
   return out;
 }
 
+// ---------------------------------------------------------------- E16 actions by a NovaConnect team admin without a NovaDesk account
+async function e16() {
+  say('E16: decommission actions by a NovaConnect team admin who has no NovaDesk account');
+  const out = [];
+  const EVA = { username: 'fi-eva', full_name: 'Eva Hasija' };
+  const vouch = (extra = {}) => ({ acting_user: { ...EVA, novaconnect_admin: true, ...extra } });
+  const act = (changeId, route, body) => nd('POST', `${REQ}/${changeId}/${route}`, body, { timeoutMs: 120000 });
+  const lines = (changeId, like) => actsOf(changeId, like);
+  const adminId = Number(q(`SELECT id FROM users WHERE username='admin'`)[0].id);
+
+  say('  16a approve: refused without a voucher, with a false voucher, with a voucher for someone else');
+  { await resetStub(); const { changeId } = await newChange('E16A');
+    const noVouch = await act(changeId, 'approve', { approved_by_username: EVA.username });
+    const falseVouch = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch({ novaconnect_admin: false }) });
+    const wrongName = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch({ username: 'someone-else' }) });
+    const stringTrue = await act(changeId, 'approve', { approved_by_username: EVA.username, acting_user: { ...EVA, novaconnect_admin: 'true' } });
+    out.push({ case: '16a', title: 'Refusals', noVoucher: noVouch.status, voucherFalse: falseVouch.status, voucherForSomeoneElse: wrongName.status, voucherAsString: stringTrue.status, message: noVouch.json && noVouch.json.error, stillPending: changeRow(changeId).approval_status }); }
+
+  say('  16b approve, pre-checks and confirm destroy by the vouched team admin');
+  { await resetStub(); const { changeId, vm } = await newChange('E16B'); const t0 = Date.now();
+    const ap = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch() });
+    const row = q(`SELECT approved_by FROM changes WHERE id=${changeId}`)[0];
+    const approvalLines = lines(changeId, 'Decommission approved%');
+    const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    const pre = [];
+    for (const t of manual) pre.push((await act(changeId, 'precheck-task', { actor_username: EVA.username, action: 'complete', task_id: t.id, ...vouch() })).status);
+    await waitSoak(changeId);
+    const d = await act(changeId, 'confirm-destroy', { confirmed_by_username: EVA.username, ...vouch() });
+    const chat = (await stubLog(t0)).filter((e) => /approved by/.test(e.bodyText || '')).map((e) => e.bodyText);
+    out.push({ case: '16b', title: 'Whole flow by the vouched admin', approve: ap.status, approvedByIsDefaultAdmin: Number(row.approved_by) === adminId, approvalLine: approvalLines, precheckAnswers: pre, destroy: d.status, change: changeRow(changeId).status, ci: q(`SELECT status FROM cmdb_ci WHERE id=${vm.id}`)[0].status, destroyLine: lines(changeId, 'VM destroyed%'), confirmedBy: q(`SELECT vm_destroy_confirmed_by AS c FROM changes WHERE id=${changeId}`)[0].c, chatApprovalLine: chat[0] }); }
+
+  say('  16c reject and cancel-destroy by the vouched admin');
+  { await resetStub(); const a = await newChange('E16C1'); const rj = await act(a.changeId, 'reject', { rejected_by_username: EVA.username, ...vouch() });
+    const b = await newChange('E16C2'); await approve(b.changeId); for (const t of tasksOf(b.changeId).filter((x) => MANUAL.includes(x.description))) await precheck(b.changeId, t.id, 'complete');
+    await waitSoak(b.changeId); const cx = await act(b.changeId, 'cancel-destroy', { cancelled_by_username: EVA.username, ...vouch() });
+    out.push({ case: '16c', title: 'Reject and cancel', reject: rj.status, rejectedLine: lines(a.changeId, 'Decommission rejected%'), cancel: cx.status, changeAfterCancel: changeRow(b.changeId).status, ciAfterCancel: q(`SELECT status FROM cmdb_ci WHERE id=${b.vm.id}`)[0].status }); }
+
+  say('  16d skip-manual-tasks by the vouched admin; existing NovaDesk admin unchanged');
+  { await resetStub(); const { changeId } = await newChange('E16D'); await approve(changeId);
+    const sk = await act(changeId, 'skip-manual-tasks', { skipped_by_username: EVA.username, ...vouch() });
+    await sleep(2000);
+    const e = await newChange('E16D2'); const adminOnly = await act(e.changeId, 'approve', { approved_by_username: 'admin' });
+    out.push({ case: '16d', title: 'Skip, and an existing admin without any voucher', skip: sk.status, tasks: tasksOf(changeId).map((t) => t.status[0]).join(''), existingAdminApprove: adminOnly.status }); }
+
+  save('e16.json', out);
+  md('## E16. Actions by a vouched NovaConnect team admin'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1178,6 +1230,7 @@ async function e13() {
     if (cmd === 'e11' || cmd === 'all') await e11();
     if (cmd === 'e12' || cmd === 'all') await e12();
     if (cmd === 'e14' || cmd === 'all') await e14();
+    if (cmd === 'e16' || cmd === 'all') await e16();
     if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');

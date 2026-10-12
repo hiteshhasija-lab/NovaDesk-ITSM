@@ -178,6 +178,36 @@ router.post('/novaconnect/decommission-status', async (req, res) => {
   });
 });
 
+// Who is acting on a decommission from NovaConnect, and may they? Two ways in:
+//  1. the username is a NovaDesk user with the admin role (the original rule), or
+//  2. NovaConnect vouches for them: it sends acting_user { username, full_name, novaconnect_admin }
+//     with novaconnect_admin true only for an owner/admin of the team that owns #server-decom, or
+//     of the channel itself. NovaConnect is the app that knows its own teams, the request is
+//     authenticated with the shared service key (the same trust that already lets it name any
+//     username), and before this a team admin without a NovaDesk account of the same name was
+//     refused with "Only a NovaDesk admin can ...".
+// An attested actor is recorded under NovaDesk's default admin account (the one decommission
+// Changes are assigned to), because the Change's approved_by / activity columns need a NovaDesk user
+// id; their own name goes into the activity text and the notices.
+// Returns { id, role, full_name, username, viaNovaConnect } or null.
+async function resolveDecomActor(req, username) {
+  if (!username || typeof username !== 'string') return null;
+  const user = await db.prepare('SELECT id, role, full_name FROM users WHERE username = ?').get(username);
+  if (user && user.role === 'admin') return { id: user.id, role: 'admin', full_name: user.full_name, username, viaNovaConnect: false };
+
+  const vouch = req.body && req.body.acting_user;
+  if (vouch && vouch.novaconnect_admin === true && vouch.username === username) {
+    const fallback = await db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
+    if (fallback) {
+      const name = typeof vouch.full_name === 'string' && vouch.full_name.trim() ? vouch.full_name.trim().slice(0, 100) : username;
+      return { id: fallback.id, role: 'admin', full_name: name, username, viaNovaConnect: true };
+    }
+  }
+  return null;
+}
+const VIA_NC = (a) => (a.viaNovaConnect ? ` by ${a.full_name} (admin of the server-decom team in NovaConnect)` : '');
+const NOT_ALLOWED = (what) => `Only a NovaDesk admin, or an owner or admin of the server-decom team in NovaConnect, can ${what}.`;
+
 async function loadDecomContext(changeId) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);
   if (!change) return { error: 404, message: 'Change not found.' };
@@ -192,12 +222,8 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   const { change, ci, tasks, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
-  const approver = req.body.approved_by_username
-    ? await db.prepare("SELECT id, role, full_name FROM users WHERE username = ?").get(req.body.approved_by_username)
-    : null;
-  if (!approver || approver.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can approve a decommission request.' });
-  }
+  const approver = await resolveDecomActor(req, req.body.approved_by_username);
+  if (!approver) return res.status(403).json({ error: NOT_ALLOWED('approve a decommission request') });
   // One-shot decision: only a still-pending, still-open Change can be approved. Without this a
   // second click (the card exists in the DM and in the channel), a stale window, or a direct call
   // re-approved a rejected or closed Change, reopened it as in progress, and re-posted the
@@ -218,7 +244,7 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   if (!claimed) {
     return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
   }
-  await logActivity('change', change.id, approver.id, 'Decommission approved (via NovaConnect)');
+  await logActivity('change', change.id, approver.id, `Decommission approved (via NovaConnect)${VIA_NC(approver)}`);
   notifyDecom(change.id, 'approved', `Approved by ${approver.full_name} in NovaConnect.`);
 
   // announceDecomApproval resolves the approval card + posts "approved" FIRST, before the
@@ -238,12 +264,8 @@ router.post('/novaconnect/decommission-requests/:id/skip-manual-tasks', async (r
   const { change, tasks, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
-  const actor = req.body.skipped_by_username
-    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.skipped_by_username)
-    : null;
-  if (!actor || actor.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can skip these tasks.' });
-  }
+  const actor = await resolveDecomActor(req, req.body.skipped_by_username);
+  if (!actor) return res.status(403).json({ error: NOT_ALLOWED('skip these tasks') });
   if (change.approval_status !== 'approved' || CLOSED_STATUSES.includes(change.status)) {
     return res.status(409).json({ error: `${change.number}: the pre-checks can only be skipped while the Change is approved and open (status: ${change.status}, approval: ${change.approval_status}).` });
   }
@@ -269,12 +291,8 @@ router.post('/novaconnect/decommission-requests/:id/precheck-task', async (req, 
   if (error) return res.status(error).json({ error: message });
 
   const username = req.body.actor_username || req.body.skipped_by_username || req.body.completed_by_username;
-  const actor = username
-    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(username)
-    : null;
-  if (!actor || actor.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can update these tasks.' });
-  }
+  const actor = await resolveDecomActor(req, username);
+  if (!actor) return res.status(403).json({ error: NOT_ALLOWED('update these tasks') });
   // Pre-checks belong to an approved, open Change, and each can be resolved once. Without this a
   // pre-check could be completed before approval, and a repeat click re-ran the pacing step and
   // posted another copy of the next card (probes P10, P11).
@@ -313,12 +331,8 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   const { change, ci, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
-  const confirmer = req.body.confirmed_by_username
-    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.confirmed_by_username)
-    : null;
-  if (!confirmer || confirmer.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can confirm a VM destroy.' });
-  }
+  const confirmer = await resolveDecomActor(req, req.body.confirmed_by_username);
+  if (!confirmer) return res.status(403).json({ error: NOT_ALLOWED('confirm a VM destroy') });
 
   // The whole sequence (destroy, retire, tracker, close, summary) is shared with NovaDesk's own
   // Change Tasks list, where completing "Destroy VM & release storage" runs the same thing.
@@ -339,12 +353,8 @@ router.post('/novaconnect/decommission-requests/:id/cancel-destroy', async (req,
   const { change, ci, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
-  const canceller = req.body.cancelled_by_username
-    ? await db.prepare("SELECT id, role FROM users WHERE username = ?").get(req.body.cancelled_by_username)
-    : null;
-  if (!canceller || canceller.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can cancel a VM destroy.' });
-  }
+  const canceller = await resolveDecomActor(req, req.body.cancelled_by_username);
+  if (!canceller) return res.status(403).json({ error: NOT_ALLOWED('cancel a VM destroy') });
 
   // See the matching guard in confirm-destroy above — same dual-posted-card race, same fix.
   if (change.status !== 'in_progress') {
@@ -398,12 +408,8 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
   const { change, error, message } = await loadDecomContext(req.params.id);
   if (error) return res.status(error).json({ error: message });
 
-  const rejector = req.body.rejected_by_username
-    ? await db.prepare('SELECT id, role, full_name FROM users WHERE username = ?').get(req.body.rejected_by_username)
-    : null;
-  if (!rejector || rejector.role !== 'admin') {
-    return res.status(403).json({ error: 'Only a NovaDesk admin can reject a decommission request.' });
-  }
+  const rejector = await resolveDecomActor(req, req.body.rejected_by_username);
+  if (!rejector) return res.status(403).json({ error: NOT_ALLOWED('reject a decommission request') });
   // Same one-shot rule as approve. Once approved, work has started (prechecks, power-off), so
   // stopping it goes through the Cancel path, not a late "reject" that left tasks and cards behind
   // (probe P8).
@@ -419,7 +425,7 @@ router.post('/novaconnect/decommission-requests/:id/reject', async (req, res) =>
   if (!claimed) {
     return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
   }
-  await logActivity('change', change.id, rejector.id, 'Decommission rejected (via NovaConnect)');
+  await logActivity('change', change.id, rejector.id, `Decommission rejected (via NovaConnect)${VIA_NC(rejector)}`);
   notifyDecom(change.id, 'rejected', `Rejected by ${rejector.full_name} in NovaConnect.`);
 
   await announceDecomRejection(change, rejector.full_name);
