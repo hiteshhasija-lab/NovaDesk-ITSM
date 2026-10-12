@@ -178,35 +178,39 @@ router.post('/novaconnect/decommission-status', async (req, res) => {
   });
 });
 
-// Who is acting on a decommission from NovaConnect, and may they? Two ways in:
-//  1. the username is a NovaDesk user with the admin role (the original rule), or
-//  2. NovaConnect vouches for them: it sends acting_user { username, full_name, novaconnect_admin }
-//     with novaconnect_admin true only for an owner/admin of the team that owns #server-decom, or
-//     of the channel itself. NovaConnect is the app that knows its own teams, the request is
-//     authenticated with the shared service key (the same trust that already lets it name any
-//     username), and before this a team admin without a NovaDesk account of the same name was
-//     refused with "Only a NovaDesk admin can ...".
-// An attested actor is recorded under NovaDesk's default admin account (the one decommission
-// Changes are assigned to), because the Change's approved_by / activity columns need a NovaDesk user
-// id; their own name goes into the activity text and the notices.
-// Returns { id, role, full_name, username, viaNovaConnect } or null.
+// Who is acting on a decommission from NovaConnect, and may they? NovaConnect decides and says so
+// in acting_user { username, full_name, authorized, basis }: authorized is true only for the person
+// who requested this decommission (basis "requester") or an owner or admin of the team that owns
+// #server-decom or of the channel itself (basis "server-decom admin"); a NovaConnect-wide admin or a
+// NovaDesk admin who is neither is NOT authorized. NovaConnect is the app that knows its own teams
+// and who asked, and the call is authenticated with the shared service key (the same trust that
+// already lets it name any username).
+//  - acting_user present: its answer decides (it must be the boolean true and name the same
+//    username as the action). The action is attributed to the person's own NovaDesk account when
+//    they have one, otherwise to NovaDesk's default admin account (the Change columns need a
+//    NovaDesk user id) with their own name in the activity text and notices.
+//  - acting_user absent (an older NovaConnect, a direct API call): the previous rule, the username
+//    must be a NovaDesk admin.
+// Returns { id, role, full_name, username, basis } or null.
 async function resolveDecomActor(req, username) {
   if (!username || typeof username !== 'string') return null;
   const user = await db.prepare('SELECT id, role, full_name FROM users WHERE username = ?').get(username);
-  if (user && user.role === 'admin') return { id: user.id, role: 'admin', full_name: user.full_name, username, viaNovaConnect: false };
-
   const vouch = req.body && req.body.acting_user;
-  if (vouch && vouch.novaconnect_admin === true && vouch.username === username) {
+
+  if (vouch && typeof vouch === 'object') {
+    if (vouch.authorized !== true || vouch.username !== username) return null;
+    const name = (typeof vouch.full_name === 'string' && vouch.full_name.trim() ? vouch.full_name.trim() : (user && user.full_name) || username).slice(0, 100);
+    const basis = vouch.basis === 'requester' ? 'requester' : 'server-decom admin';
+    if (user) return { id: user.id, role: 'admin', full_name: name, username, basis };
     const fallback = await db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
-    if (fallback) {
-      const name = typeof vouch.full_name === 'string' && vouch.full_name.trim() ? vouch.full_name.trim().slice(0, 100) : username;
-      return { id: fallback.id, role: 'admin', full_name: name, username, viaNovaConnect: true };
-    }
+    return fallback ? { id: fallback.id, role: 'admin', full_name: name, username, basis } : null;
   }
+
+  if (user && user.role === 'admin') return { id: user.id, role: 'admin', full_name: user.full_name, username, basis: null };
   return null;
 }
-const VIA_NC = (a) => (a.viaNovaConnect ? ` by ${a.full_name} (admin of the server-decom team in NovaConnect)` : '');
-const NOT_ALLOWED = (what) => `Only a NovaDesk admin, or an owner or admin of the server-decom team in NovaConnect, can ${what}.`;
+const VIA_NC = (a) => (a.basis === 'requester' ? ` by ${a.full_name} (the requester)` : a.basis ? ` by ${a.full_name} (admin of the server-decom team)` : '');
+const NOT_ALLOWED = (what) => `Only the person who requested this decommission, or an owner or admin of the server-decom team in NovaConnect, can ${what}.`;
 
 async function loadDecomContext(changeId) {
   const change = await db.prepare('SELECT * FROM changes WHERE id = ?').get(changeId);

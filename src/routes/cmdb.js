@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { db, nextNumber, nowStr } = require('../db');
+const { db, nextNumber, nowStr, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
@@ -191,6 +191,50 @@ router.get('/:id', requireAuth, async (req, res) => {
 
   const { users, cis } = await loadFormLookups(ci.id);
   res.render('cmdb/show', { title: `${ci.ci_number} - ${ci.name}`, ci, relationships, upstream, downstream, relatedIncidents, relatedChanges, users, cis });
+});
+
+// One-click maintenance mode for a server (CI): in use or in stock -> Maintenance, and back to the
+// status it had. A retired CI is left alone. The decommission flow does the same on approval; this
+// is for doing it by hand, from the CI page or from a Change's page (change_id says which page to
+// return to). Each use is written on every open Change that affects the CI, so the audit trail shows
+// who did it.
+router.post('/:id/maintenance', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const ci = await db.prepare('SELECT id, name, status FROM cmdb_ci WHERE id = ?').get(req.params.id);
+  if (!ci) return res.status(404).render('error', { title: 'Not Found', message: 'Configuration item not found.' });
+
+  const changeId = Number(req.body.change_id) > 0 ? Number(req.body.change_id) : null;
+  const back = (notice) => res.redirect(changeId
+    ? `/changes/${changeId}?notice=${encodeURIComponent(notice)}`
+    : `/cmdb/${ci.id}`);
+
+  const turnOn = req.body.mode === 'on';
+  let updated = null;
+  if (turnOn) {
+    updated = await db.prepare(`
+      UPDATE cmdb_ci SET status_before_maintenance = status, status = 'maintenance', updated_at = ?
+      WHERE id = ? AND status IN ('in_use', 'in_stock') RETURNING status_before_maintenance AS before
+    `).get(nowStr(), ci.id);
+    if (!updated) return back(ci.status === 'maintenance' ? `${ci.name} is already in maintenance mode.` : `${ci.name} is ${ci.status} and cannot be put in maintenance mode.`);
+  } else {
+    updated = await db.prepare(`
+      UPDATE cmdb_ci SET status = COALESCE(NULLIF(status_before_maintenance, ''), 'in_use'), status_before_maintenance = NULL, updated_at = ?
+      WHERE id = ? AND status = 'maintenance' RETURNING status AS restored
+    `).get(nowStr(), ci.id);
+    if (!updated) return back(`${ci.name} is not in maintenance mode.`);
+  }
+
+  const who = req.session.user.full_name || req.session.user.username;
+  const message = turnOn
+    ? `Server ${ci.name} has been put in maintenance mode by ${who}.`
+    : `Server ${ci.name} has been taken out of maintenance mode by ${who} (back to ${updated.restored}).`;
+  const open = await db.prepare(`
+    SELECT id FROM changes WHERE affected_ci_id = ? AND status NOT IN ('closed', 'cancelled', 'rejected')
+  `).all(ci.id);
+  const ids = new Set(open.map((c) => c.id));
+  if (changeId) ids.add(changeId);
+  for (const id of ids) await logActivity('change', id, req.session.user.id, message);
+
+  return back(turnOn ? `${ci.name} is now in maintenance mode.` : `${ci.name} is out of maintenance mode.`);
 });
 
 router.get('/:id/edit', requireAuth, requireRole('admin', 'agent'), async (req, res) => {

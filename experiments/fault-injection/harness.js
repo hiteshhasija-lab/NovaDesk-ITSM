@@ -1163,7 +1163,7 @@ async function e16() {
   say('E16: decommission actions by a NovaConnect team admin who has no NovaDesk account');
   const out = [];
   const EVA = { username: 'fi-eva', full_name: 'Eva Hasija' };
-  const vouch = (extra = {}) => ({ acting_user: { ...EVA, novaconnect_admin: true, ...extra } });
+  const vouch = (extra = {}) => ({ acting_user: { ...EVA, authorized: true, basis: 'server-decom admin', ...extra } });
   const act = (changeId, route, body) => nd('POST', `${REQ}/${changeId}/${route}`, body, { timeoutMs: 120000 });
   const lines = (changeId, like) => actsOf(changeId, like);
   const adminId = Number(q(`SELECT id FROM users WHERE username='admin'`)[0].id);
@@ -1171,9 +1171,9 @@ async function e16() {
   say('  16a approve: refused without a voucher, with a false voucher, with a voucher for someone else');
   { await resetStub(); const { changeId } = await newChange('E16A');
     const noVouch = await act(changeId, 'approve', { approved_by_username: EVA.username });
-    const falseVouch = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch({ novaconnect_admin: false }) });
+    const falseVouch = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch({ authorized: false, basis: null }) });
     const wrongName = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch({ username: 'someone-else' }) });
-    const stringTrue = await act(changeId, 'approve', { approved_by_username: EVA.username, acting_user: { ...EVA, novaconnect_admin: 'true' } });
+    const stringTrue = await act(changeId, 'approve', { approved_by_username: EVA.username, acting_user: { ...EVA, authorized: 'true', basis: 'requester' } });
     out.push({ case: '16a', title: 'Refusals', noVoucher: noVouch.status, voucherFalse: falseVouch.status, voucherForSomeoneElse: wrongName.status, voucherAsString: stringTrue.status, message: noVouch.json && noVouch.json.error, stillPending: changeRow(changeId).approval_status }); }
 
   say('  16b approve, pre-checks and confirm destroy by the vouched team admin');
@@ -1202,8 +1202,62 @@ async function e16() {
     const e = await newChange('E16D2'); const adminOnly = await act(e.changeId, 'approve', { approved_by_username: 'admin' });
     out.push({ case: '16d', title: 'Skip, and an existing admin without any voucher', skip: sk.status, tasks: tasksOf(changeId).map((t) => t.status[0]).join(''), existingAdminApprove: adminOnly.status }); }
 
+  say('  16e NovaConnect is authoritative: a NovaDesk admin it does not authorize is refused; a requester is allowed');
+  { await resetStub(); const { changeId } = await newChange('E16E');
+    const adminDenied = await act(changeId, 'approve', { approved_by_username: 'admin', acting_user: { username: 'admin', full_name: 'Alex Admin', authorized: false, basis: null } });
+    const adminNoVouch = await act(changeId, 'skip-manual-tasks', { skipped_by_username: 'admin' }); // legacy callers: unchanged rule (not yet approved -> 409, not 403)
+    const existingUser = await act(changeId, 'approve', { approved_by_username: 'jdoe', acting_user: { username: 'jdoe', full_name: 'Jane Doe', authorized: true, basis: 'requester' } });
+    const row = q(`SELECT approved_by FROM changes WHERE id=${changeId}`)[0]; const jdoe = Number(q(`SELECT id FROM users WHERE username='jdoe'`)[0].id);
+    out.push({ case: '16e', title: 'NovaConnect decides', novaDeskAdminNotAuthorizedByNovaConnect: adminDenied.status, legacyNoVoucherAdmin: adminNoVouch.status, requesterWithExistingAccount: existingUser.status, approvedByTheirOwnAccount: Number(row.approved_by) === jdoe, line: lines(changeId, 'Decommission approved%') }); }
+
   save('e16.json', out);
   md('## E16. Actions by a vouched NovaConnect team admin'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
+// ---------------------------------------------------------------- E17 maintenance-mode button
+async function e17() {
+  say('E17: maintenance mode button on the CI page and the Change page');
+  const out = [];
+  const staff = await staffCookie();
+  const post = (path, form, cookie = staff) => fetch(`${ND}${path}`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() });
+  const get = async (path, cookie = staff) => (await fetch(`${ND}${path}`, { headers: { Cookie: cookie } })).text();
+  const ciRow = (id) => q(`SELECT status, COALESCE(status_before_maintenance,'-') AS before FROM cmdb_ci WHERE id=${id}`)[0];
+  const mk = (label, status) => { const v = makeVm(label); psql(`UPDATE cmdb_ci SET status='${status}' WHERE id=${v.id}`); return v; };
+
+  say('  17a CI page: on, then off, back to the status it had');
+  { const v = mk('E17A', 'in_stock');
+    const before = await get(`/cmdb/${v.id}`);
+    const on = await post(`/cmdb/${v.id}/maintenance`, { mode: 'on' });
+    const mid = ciRow(v.id); const midPage = await get(`/cmdb/${v.id}`);
+    const again = await post(`/cmdb/${v.id}/maintenance`, { mode: 'on' });
+    const off = await post(`/cmdb/${v.id}/maintenance`, { mode: 'off' });
+    out.push({ case: '17a', title: 'CI page toggle', offeredPutInMaintenance: /Put in maintenance mode/.test(before), onAnswer: on.status, whileOn: mid, offeredTakeOut: /Take out of maintenance mode/.test(midPage), repeatOn: again.status, offAnswer: off.status, after: ciRow(v.id) }); }
+
+  say('  17b Change page: status and button, log line, retired CI refused');
+  { await resetStub(); const { changeId, vm } = await newChange('E17B');
+    const page = await get(`/changes/${changeId}`);
+    const on = await post(`/cmdb/${vm.id}/maintenance`, { mode: 'on', change_id: String(changeId) });
+    const lines = q(`SELECT message FROM activity_log WHERE entity_type='change' AND entity_id=${changeId} AND message LIKE '%maintenance mode%' ORDER BY id`).map((r) => r.message);
+    const page2 = await get(`/changes/${changeId}`);
+    const ret = mk('E17B2', 'retired'); const refused = await post(`/cmdb/${ret.id}/maintenance`, { mode: 'on' });
+    const retPage = await get(`/cmdb/${ret.id}`);
+    out.push({ case: '17b', title: 'Change page and retired CI', pageShowsStatusAndButton: /Server status/.test(page) && /Put server in maintenance mode/.test(page), onAnswer: on.status, location: on.headers.get('location'), ciNow: ciRow(vm.id), logLines: lines, pageAfterShowsTakeOut: /Take out of maintenance mode/.test(page2), retiredRefusedStays: ciRow(ret.id).status, retiredPageHasNoButton: !/maintenance mode/.test(retPage.replace(/Maintenance/g, '')) }); }
+
+  say('  17c who can use it');
+  { const v = mk('E17C', 'in_use');
+    psql(`INSERT INTO users (username, full_name, email, password_hash, role) SELECT 'fi-e17-user','E17 User','e17@corp.local',password_hash,'user' FROM users WHERE username='admin' ON CONFLICT DO NOTHING`);
+    const userCookie = await loginAs('fi-e17-user', 'admin123');
+    const asUser = await post(`/cmdb/${v.id}/maintenance`, { mode: 'on' }, userCookie);
+    const anon = await fetch(`${ND}/cmdb/${v.id}/maintenance`, { method: 'POST', redirect: 'manual' });
+    const userPage = await get(`/cmdb/${v.id}`, userCookie);
+    out.push({ case: '17c', title: 'Permissions', plainUser: asUser.status, anonymous: anon.status, anonymousLocation: anon.headers.get('location'), ciUnchanged: ciRow(v.id).status, plainUserSeesButton: /Put in maintenance mode/.test(userPage) }); }
+
+  save('e17.json', out);
+  md('## E17. Maintenance-mode button'); md();
   md('| Case | Scenario | Result |'); md('|---|---|---|');
   for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
   md();
@@ -1231,6 +1285,7 @@ async function e16() {
     if (cmd === 'e12' || cmd === 'all') await e12();
     if (cmd === 'e14' || cmd === 'all') await e14();
     if (cmd === 'e16' || cmd === 'all') await e16();
+    if (cmd === 'e17' || cmd === 'all') await e17();
     if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');

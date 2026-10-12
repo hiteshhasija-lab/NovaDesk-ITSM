@@ -10,6 +10,17 @@
     </div>
     <div>
       <% if (currentUser.role !== 'user') { %>
+      <% if (ci.status === 'maintenance') { %>
+      <form method="POST" action="/cmdb/<%= ci.id %>/maintenance" class="d-inline">
+        <input type="hidden" name="mode" value="off">
+        <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-wrench-adjustable"></i> Take out of maintenance mode</button>
+      </form>
+      <% } else if (ci.status === 'in_use' || ci.status === 'in_stock') { %>
+      <form method="POST" action="/cmdb/<%= ci.id %>/maintenance" class="d-inline">
+        <input type="hidden" name="mode" value="on">
+        <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-wrench-adjustable"></i> Put in maintenance mode</button>
+      </form>
+      <% } %>
       <a href="/cmdb/<%= ci.id %>/edit" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i> Edit</a>
       <% } %>
       <a href="/cmdb" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>

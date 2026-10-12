@@ -334,7 +334,7 @@ async function notifyOnCreate(changeId) {
 
 router.get('/:id', requireAuth, async (req, res) => {
   const change = await db.prepare(`
-    SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name, ci.ci_number,
+    SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name, ci.ci_number, ci.status AS ci_status,
       ap.full_name AS approver_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by

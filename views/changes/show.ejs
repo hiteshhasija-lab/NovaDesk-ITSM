@@ -302,6 +302,21 @@
           </dl>
           <% if (change.affected_ci_id) { %>
           <hr>
+          <% if (change.ci_status) { %>
+          <div class="d-flex justify-content-between align-items-center mb-2 small">
+            <span class="text-muted">Server status</span>
+            <span class="badge bg-<%= h.CI_STATUS_BADGE[change.ci_status] %>"><%= h.CI_STATUS_LABELS[change.ci_status] %></span>
+          </div>
+          <% if (currentUser.role !== 'user' && (change.ci_status === 'in_use' || change.ci_status === 'in_stock' || change.ci_status === 'maintenance')) { %>
+          <form method="POST" action="/cmdb/<%= change.affected_ci_id %>/maintenance" class="mb-2">
+            <input type="hidden" name="change_id" value="<%= change.id %>">
+            <input type="hidden" name="mode" value="<%= change.ci_status === 'maintenance' ? 'off' : 'on' %>">
+            <button type="submit" class="btn btn-sm btn-outline-warning w-100">
+              <i class="bi bi-wrench-adjustable"></i> <%= change.ci_status === 'maintenance' ? 'Take out of maintenance mode' : 'Put server in maintenance mode' %>
+            </button>
+          </form>
+          <% } %>
+          <% } %>
           <a href="/cmdb/<%= change.affected_ci_id %>" class="btn btn-sm btn-outline-primary w-100">
             <i class="bi bi-hdd-stack"></i> View Affected CI: <%= change.ci_name %>
           </a>

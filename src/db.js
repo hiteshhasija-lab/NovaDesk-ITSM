@@ -285,6 +285,11 @@ ALTER TABLE changes ADD COLUMN IF NOT EXISTS ci_status_before_decom TEXT;
 -- resumed after a crash under the same confirmation (decomAutomation.resumeInterruptedDecoms).
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by INTEGER;
 
+-- The status a CI had before someone used the "Put in maintenance mode" button, so "Take out of
+-- maintenance mode" puts it back (cmdb routes). Not used by the decommission flow, which keeps its
+-- own record per Change (changes.ci_status_before_decom).
+ALTER TABLE cmdb_ci ADD COLUMN IF NOT EXISTS status_before_maintenance TEXT;
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
