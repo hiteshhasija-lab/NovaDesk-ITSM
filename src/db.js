@@ -294,11 +294,10 @@ ALTER TABLE cmdb_ci ADD COLUMN IF NOT EXISTS status_before_maintenance TEXT;
 -- account. Their actions are stored under NovaDesk's default admin account (the id columns need a
 -- NovaDesk user); these hold the real name so the Activity list and "Approved By" show the person
 -- who acted, not the admin account. NULL means "use the account's own name".
---  activity_log.actor_name            the name shown for that activity row
+--  activity_log.actor_name            the name shown for that activity row (added right after that table)
 --  changes.approved_by_name           the name shown as the approver (cleared when approved_by changes)
 --  changes.vm_destroy_confirmed_by_name  kept with vm_destroy_confirmed_by so a destroy resumed after
 --                                     a restart is still attributed to the person who confirmed it
-ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS actor_name TEXT;
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS approved_by_name TEXT;
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by_name TEXT;
 
@@ -388,6 +387,9 @@ CREATE TABLE IF NOT EXISTS activity_log (
   message TEXT NOT NULL,
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
+
+-- Display name for an action by someone with no NovaDesk account (see the changes.approved_by_name note).
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS actor_name TEXT;
 
 CREATE TABLE IF NOT EXISTS attachments (
   id SERIAL PRIMARY KEY,
