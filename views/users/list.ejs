@@ -9,7 +9,7 @@
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead class="table-light">
-          <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Department</th><th>Active</th><th></th></tr>
+          <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Department</th><th>Assignment groups</th><th>Active</th><th></th></tr>
         </thead>
         <tbody>
           <% users.forEach(u => { %>
@@ -19,6 +19,7 @@
             <td><%= u.email || '—' %></td>
             <td><span class="badge bg-<%= u.role === 'admin' ? 'danger' : u.role === 'agent' ? 'primary' : 'secondary' %> text-capitalize"><%= u.role %></span></td>
             <td><%= u.department || '—' %></td>
+            <td class="small"><%= ((typeof groupsByUser !== 'undefined' && groupsByUser[u.id]) || []).join(', ') || '—' %></td>
             <td><%- u.active ? '<i class="bi bi-check-circle text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>' %></td>
             <td class="text-nowrap">
               <a href="/users/<%= u.id %>/edit" class="btn btn-sm btn-outline-secondary">Edit</a>

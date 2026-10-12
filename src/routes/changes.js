@@ -6,6 +6,7 @@ const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
 const { syncCard, describePendingCards } = require('../cardSync');
+const { mayDecideApproval, isDecomChange: isDecomChangeRow, NOT_ALLOWED_MESSAGE } = require('../approvalAccess');
 const {
   maybeProceedWithPowerDown, announceDecomApproval, announceDecomRejection, announceGenericDecomStatusChange, postNextPrecheckCard, sleep,
   DESTROY_TASK, RETIRE_TASK, TRACKER_TASK, destroySoakOver, resolveEsxiHost, runConfirmedDestroy, announceManualFinalTask
@@ -250,6 +251,11 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   const { approval_status, approved_by } = deriveApprovalStatus(status, existing, req.session.user.id);
+  // Moving a decommission Change to a status that approves, rejects or resets its approval is an
+  // approval decision (requester or IRO-Build/Decom member only).
+  if (approval_status !== existing.approval_status && !(await mayDecideApproval(req.session.user, existing))) {
+    return res.status(403).json({ error: NOT_ALLOWED_MESSAGE });
+  }
 
   await db.prepare(`
     UPDATE changes SET status = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
@@ -375,7 +381,8 @@ router.get('/:id', requireAuth, async (req, res) => {
   // Decommission Changes only, and only for staff: which chat cards NovaDesk is still retrying.
   const isDecom = !!(change.novaconnect_channel_id || change.novaconnect_conversation_id);
   const chatSync = isDecom && req.session.user.role !== 'user' ? await describePendingCards(change.id) : [];
-  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice, chatSync });
+  const canDecideApproval = await mayDecideApproval(req.session.user, change);
+  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice, chatSync, canDecideApproval });
 });
 
 router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -512,6 +519,9 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   const { approval_status, approved_by } = deriveApprovalStatus(b.status, existing, req.session.user.id);
+  if (approval_status !== existing.approval_status && !(await mayDecideApproval(req.session.user, existing))) {
+    return res.status(403).render('error', { title: 'Not allowed', message: NOT_ALLOWED_MESSAGE });
+  }
 
   await db.prepare(`
     UPDATE changes SET short_description=@short_description, description=@description, change_type=@change_type,
@@ -585,9 +595,14 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   res.redirect(`/changes/${req.params.id}`);
 });
 
-router.post('/:id/approve', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+router.post('/:id/approve', requireAuth, async (req, res) => {
   const decision = req.body.decision === 'reject' ? 'rejected' : 'approved';
   const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });
+  // A decommission Change: its requester or an IRO-Build/Decom member. Any other Change: admin or agent.
+  if (!(await mayDecideApproval(req.session.user, existing))) {
+    return res.status(403).render('error', { title: 'Not allowed', message: isDecomChangeRow(existing) ? NOT_ALLOWED_MESSAGE : 'You do not have permission to approve this change.' });
+  }
   // A decom Change starts executing (prechecks, power-down) the instant it's approved, rather
   // than waiting for some future scheduled date — 'in_progress' reflects that, whereas
   // 'scheduled' is right for a regular Change still waiting on a planned window.
@@ -692,6 +707,7 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
   const actorId = req.session.user.id;
   const actor = await db.prepare('SELECT full_name FROM users WHERE id = ?').get(actorId);
   let updated = 0;
+  const denied = [];
 
   for (const id of ids) {
     const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(id);
@@ -707,6 +723,10 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
 
     const newAssignedTo = assigned_to !== undefined ? (assigned_to || null) : existing.assigned_to;
     const { approval_status, approved_by } = deriveApprovalStatus(newStatus, existing, actorId);
+    if (approval_status !== existing.approval_status && !(await mayDecideApproval(req.session.user, existing))) {
+      denied.push(existing.number);
+      continue;
+    }
 
     await db.prepare(`
       UPDATE changes SET status = ?, assigned_to = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
@@ -727,7 +747,7 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
     updated++;
   }
 
-  res.json({ ok: true, updated });
+  res.json({ ok: true, updated, denied, ...(denied.length ? { message: `${denied.join(', ')}: ${NOT_ALLOWED_MESSAGE}` } : {}) });
 });
 
 attachRoutes(router, 'change', {

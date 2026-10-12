@@ -290,6 +290,15 @@ ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by INTEGER;
 -- own record per Change (changes.ci_status_before_decom).
 ALTER TABLE cmdb_ci ADD COLUMN IF NOT EXISTS status_before_maintenance TEXT;
 
+-- Membership of assignment groups (the names in helpers.ASSIGNMENT_GROUPS). Used for who may
+-- approve a decommission Change in NovaDesk: its requester or a member of IRO-Build/Decom
+-- (approvalAccess.js). Edited on the user's page.
+CREATE TABLE IF NOT EXISTS user_assignment_groups (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  group_name TEXT NOT NULL,
+  PRIMARY KEY (user_id, group_name)
+);
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
@@ -702,9 +711,22 @@ async function seedIfEmpty() {
   }
 }
 
+// First time only: put today's admins in the IRO-Build/Decom group so enforcing group membership for
+// decommission approvals locks nobody out (on a fresh install this runs after the first admin
+// exists). Once the group has any member it is left alone, so removing someone sticks.
+async function seedDecomGroup() {
+  await db.prepare(`
+    INSERT INTO user_assignment_groups (user_id, group_name)
+    SELECT id, 'IRO-Build/Decom' FROM users WHERE role = 'admin' AND active = 1
+      AND NOT EXISTS (SELECT 1 FROM user_assignment_groups WHERE group_name = 'IRO-Build/Decom')
+    ON CONFLICT DO NOTHING
+  `).run();
+}
+
 async function initDb() {
   await initSchema();
   await seedIfEmpty();
+  await seedDecomGroup();
 }
 
 module.exports = { db, nextNumber, logActivity, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };

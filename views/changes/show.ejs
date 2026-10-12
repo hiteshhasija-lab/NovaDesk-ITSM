@@ -18,7 +18,7 @@
     <a href="/changes" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>
   </div>
 
-  <% if (change.approval_status === 'pending' && !['cancelled','rejected','closed'].includes(change.status) && (currentUser.role === 'admin' || currentUser.role === 'agent')) { %>
+  <% if (change.approval_status === 'pending' && !['cancelled','rejected','closed'].includes(change.status) && canDecideApproval) { %>
   <div class="alert alert-info d-flex justify-content-between align-items-center">
     <span><i class="bi bi-hourglass-split me-1"></i> This change is awaiting approval.</span>
     <div>

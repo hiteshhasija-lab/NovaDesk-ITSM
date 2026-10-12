@@ -1,17 +1,30 @@
 const bcrypt = require('bcryptjs');
 const { db } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { ASSIGNMENT_GROUPS } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 
 const router = createAsyncRouter();
 
+async function groupsOf(userId) {
+  return (await db.prepare('SELECT group_name FROM user_assignment_groups WHERE user_id = ? ORDER BY group_name').all(userId)).map((r) => r.group_name);
+}
+async function saveGroups(userId, submitted) {
+  const wanted = [].concat(submitted || []).filter((g) => ASSIGNMENT_GROUPS.includes(g));
+  await db.prepare('DELETE FROM user_assignment_groups WHERE user_id = ?').run(userId);
+  for (const g of wanted) await db.prepare('INSERT INTO user_assignment_groups (user_id, group_name) VALUES (?, ?) ON CONFLICT DO NOTHING').run(userId, g);
+}
+
 router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
   const users = await db.prepare('SELECT * FROM users ORDER BY full_name').all();
-  res.render('users/list', { title: 'Users', users });
+  const rows = await db.prepare('SELECT user_id, group_name FROM user_assignment_groups ORDER BY group_name').all();
+  const groupsByUser = {};
+  for (const r of rows) (groupsByUser[r.user_id] = groupsByUser[r.user_id] || []).push(r.group_name);
+  res.render('users/list', { title: 'Users', users, groupsByUser });
 });
 
 router.get('/new', requireAuth, requireRole('admin'), (req, res) => {
-  res.render('users/form', { title: 'New User', user: null, error: null });
+  res.render('users/form', { title: 'New User', user: null, error: null, groups: ASSIGNMENT_GROUPS, userGroups: [] });
 });
 
 router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
@@ -21,16 +34,18 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
       INSERT INTO users (username, password_hash, full_name, email, role, department)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(b.username, bcrypt.hashSync(b.password || 'changeme123', 10), b.full_name, b.email || null, b.role || 'user', b.department || null);
+    const created = await db.prepare('SELECT id FROM users WHERE username = ?').get(b.username);
+    if (created) await saveGroups(created.id, b.groups);
     res.redirect('/users');
   } catch (e) {
-    res.render('users/form', { title: 'New User', user: b, error: 'Username already exists or invalid data.' });
+    res.render('users/form', { title: 'New User', user: b, error: 'Username already exists or invalid data.', groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
   }
 });
 
 router.get('/:id/edit', requireAuth, requireRole('admin'), async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
-  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null });
+  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id) });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) => {
@@ -46,9 +61,12 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
     return res.render('users/form', {
       title: `Edit ${user.full_name}`,
       user: { ...user, ...b },
-      error: 'Username already exists or invalid data.'
+      error: 'Username already exists or invalid data.',
+      groups: ASSIGNMENT_GROUPS,
+      userGroups: [].concat(b.groups || [])
     });
   }
+  await saveGroups(user.id, b.groups);
 
   if (b.password) {
     await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(b.password, 10), req.params.id);

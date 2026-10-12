@@ -1264,6 +1264,68 @@ async function e17() {
   return out;
 }
 
+// ---------------------------------------------------------------- E18 who may approve in NovaDesk
+async function e18() {
+  say('E18: NovaDesk approval rights (requester or IRO-Build/Decom member)');
+  const out = [];
+  const mkUser = (username, role, groups = []) => {
+    psql(`INSERT INTO users (username, full_name, email, password_hash, role) SELECT '${username}','${username}','${username}@corp.local',password_hash,'${role}' FROM users WHERE username='admin' ON CONFLICT (username) DO NOTHING`);
+    const id = Number(q(`SELECT id FROM users WHERE username='${username}'`)[0].id);
+    psql(`DELETE FROM user_assignment_groups WHERE user_id=${id}`);
+    for (const g of groups) psql(`INSERT INTO user_assignment_groups (user_id, group_name) VALUES (${id}, '${g}')`);
+    return id;
+  };
+  const requesterId = mkUser('fi18-requester', 'user');            // plain role, requested the Change
+  const memberId = mkUser('fi18-member', 'agent', ['IRO-Build/Decom']);
+  const otherGroupId = mkUser('fi18-wrongroup', 'agent', ['IRO-Windows']);
+  const plainAgentId = mkUser('fi18-agent', 'agent');
+  const adminNoGroupId = mkUser('fi18-admin', 'admin');            // NovaDesk admin, not in the group
+  const cookie = {}; for (const u of ['fi18-requester', 'fi18-member', 'fi18-wrongroup', 'fi18-agent', 'fi18-admin']) cookie[u] = await loginAs(u, 'admin123');
+  const decide = (changeId, user, decision = 'approve') => fetch(`${ND}/changes/${changeId}/approve`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie[user], 'Content-Type': 'application/x-www-form-urlencoded' }, body: `decision=${decision}` });
+  const approval = (changeId) => q(`SELECT approval_status, status FROM changes WHERE id=${changeId}`)[0];
+  const decomChange = async (label) => { await resetStub(); const c = await newChange(label); psql(`UPDATE changes SET requested_by=${requesterId} WHERE id=${c.changeId}`); return c; };
+
+  say('  18a decommission Change: who is allowed');
+  { const r = {};
+    for (const [who, expect] of [['fi18-wrongroup', 'refused'], ['fi18-agent', 'refused'], ['fi18-admin', 'refused'], ['fi18-member', 'allowed'], ['fi18-requester', 'allowed']]) {
+      const c = await decomChange('E18A'); const res = await decide(c.changeId, who);
+      r[who] = { expect, http: res.status, approval: approval(c.changeId).approval_status };
+    }
+    out.push({ case: '18a', title: 'Approve a decommission Change from the Change page', results: r }); }
+
+  say('  18b reject, page buttons and the other approval paths');
+  { const c = await decomChange('E18B');
+    const pageAgent = await (await fetch(`${ND}/changes/${c.changeId}`, { headers: { Cookie: cookie['fi18-agent'] } })).text();
+    const pageMember = await (await fetch(`${ND}/changes/${c.changeId}`, { headers: { Cookie: cookie['fi18-member'] } })).text();
+    const pageRequester = await (await fetch(`${ND}/changes/${c.changeId}`, { headers: { Cookie: cookie['fi18-requester'] } })).text();
+    const rejectByAgent = await decide(c.changeId, 'fi18-agent', 'reject');
+    // board / status route (JSON) and the edit form try to approve by moving the status
+    const board = await fetch(`${ND}/changes/${c.changeId}/status`, { method: 'POST', headers: { Cookie: cookie['fi18-agent'], 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'scheduled' }) });
+    const boardMember = await fetch(`${ND}/changes/${c.changeId}/status`, { method: 'POST', headers: { Cookie: cookie['fi18-member'], 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'scheduled' }) });
+    out.push({ case: '18b', title: 'Buttons and the status paths', agentSeesApproveButtons: /name="decision" value="approve"/.test(pageAgent), memberSeesApproveButtons: /name="decision" value="approve"/.test(pageMember) || /\/approve/.test(pageMember), requesterSeesButtons: /\/approve/.test(pageRequester), rejectByAgent: rejectByAgent.status, boardByAgent: board.status, boardByMember: boardMember.status, approvalAfter: approval(c.changeId).approval_status }); }
+
+  say('  18c a non-decommission Change keeps the admin/agent rule');
+  { const id = Number(psql(`INSERT INTO changes (number, short_description, change_type, risk, status, approval_status, requested_by, assignment_group) VALUES ('CHG-FI18-' || floor(random()*1e6)::int, 'E18 normal change', 'normal', 'low', 'submitted', 'pending', ${requesterId}, 'IRO-Windows') RETURNING id`, { firstLine: true }));
+    const agent = await decide(id, 'fi18-agent'); const id2 = Number(psql(`INSERT INTO changes (number, short_description, change_type, risk, status, approval_status, requested_by, assignment_group) VALUES ('CHG-FI18-' || floor(random()*1e6)::int, 'E18 normal change 2', 'normal', 'low', 'submitted', 'pending', ${requesterId}, 'IRO-Windows') RETURNING id`, { firstLine: true }));
+    const plain = await decide(id2, 'fi18-requester');
+    out.push({ case: '18c', title: 'Ordinary Change', agentApproves: { http: agent.status, approval: approval(id).approval_status }, requesterWithRoleUserIsRefused: { http: plain.status, approval: approval(id2).approval_status } }); }
+
+  say('  18d the Users page: groups shown and edited; seeding');
+  { const staff = await staffCookie(); const list = await (await fetch(`${ND}/users`, { headers: { Cookie: staff } })).text();
+    const edit = await (await fetch(`${ND}/users/${memberId}/edit`, { headers: { Cookie: staff } })).text();
+    const save = await fetch(`${ND}/users/${memberId}/update`, { method: 'POST', redirect: 'manual', headers: { Cookie: staff, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'username=fi18-member&full_name=fi18-member&email=fi18-member%40corp.local&role=agent&active=on&groups=IRO-Build%2FDecom&groups=IRO-UNIX' });
+    const after = q(`SELECT group_name FROM user_assignment_groups WHERE user_id=${memberId} ORDER BY group_name`).map((r) => r.group_name);
+    const seeded = q(`SELECT u.username FROM user_assignment_groups g JOIN users u ON u.id=g.user_id WHERE g.group_name='IRO-Build/Decom' AND u.username IN ('admin','hhasija') ORDER BY 1`).map((r) => r.username);
+    out.push({ case: '18d', title: 'Users page', listShowsGroupsColumn: /Assignment groups/.test(list) && /IRO-Build\/Decom/.test(list), editFormHasCheckboxes: /name="groups" value="IRO-Build\/Decom"/.test(edit) && /checked/.test(edit), saveStatus: save.status, groupsAfterSave: after, defaultAdminSeededMember: seeded }); }
+
+  save('e18.json', out);
+  md('## E18. NovaDesk approval rights'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1286,6 +1348,7 @@ async function e17() {
     if (cmd === 'e14' || cmd === 'all') await e14();
     if (cmd === 'e16' || cmd === 'all') await e16();
     if (cmd === 'e17' || cmd === 'all') await e17();
+    if (cmd === 'e18' || cmd === 'all') await e18();
     if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');
