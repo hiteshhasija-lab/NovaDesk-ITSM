@@ -1054,6 +1054,110 @@ async function e15() {
   return out;
 }
 
+// ---------------------------------------------------------------- E13 crash tests
+// SIGKILL NovaDesk at a precise point of the workflow, start it again (production's systemd does
+// that), and see what resumes on its own and what is left stuck.
+async function crashNovaDesk() {
+  podman('kill', 'fi-novadesk');
+  await sleep(1500);
+  podman('start', 'fi-novadesk');
+  const ms = await waitHealthy(90000);
+  return Math.round(ms / 1000);
+}
+async function waitFor(fn, maxSec, stepMs = 400) {
+  const w0 = Date.now();
+  while (Date.now() - w0 < maxSec * 1000) { const v = await fn(); if (v) return v; await sleep(stepMs); }
+  return null;
+}
+const cardsFor = async (changeId, type) => (await stubState()).cards.filter((c) => Number(c.changeId) === changeId && c.cardType === type);
+const taskIdOf = (changeId, desc) => (tasksOf(changeId).find((t) => t.description === desc) || {}).id;
+const snapshot = (changeId, vmId) => ({ change: changeRow(changeId).status, tasks: tasksOf(changeId).map((t) => t.status[0]).join(''), ci: q(`SELECT status FROM cmdb_ci WHERE id=${vmId}`)[0].status, timer: (schedRow(changeId) || {}).status || 'none' });
+const swallow = (p) => p.then((r) => r, (e) => ({ error: String(e && e.message || e) }));
+
+async function e13() {
+  say('E13: crash tests (SIGKILL NovaDesk mid-sequence)');
+  const out = [];
+
+  say('  13a killed while the host is destroying the VM (answer never arrives)');
+  { await resetStub(); const { changeId, vm } = await toPowerDown('E13A'); await waitSoak(changeId);
+    await govcFault({ cmd: 'vm.destroy', kind: 'hang', n: 1, applied: true });
+    const call = swallow(confirmDestroy(changeId));
+    await waitFor(async () => (await govcState()).calls.some((c) => c.cmd === 'vm.destroy' && c.outcome === 'hung'), 60);
+    const bootSec = await crashNovaDesk(); await call; await govcClear();
+    const atCrash = snapshot(changeId, vm.id); const tBoot = Date.now();
+    const closed = await waitFor(() => changeRow(changeId).status === 'closed', 150, 1000); // does it finish on its own?
+    out.push({ case: '13a', title: 'Killed during vm.destroy (host destroyed it, NovaDesk never heard)', bootSec, atCrash, finishedOnItsOwn: !!closed, afterSec: closed ? Math.round((Date.now() - tBoot) / 1000) : null, final: snapshot(changeId, vm.id), vmOnHost: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', summaryCard: (await cardsFor(changeId, 'decom_summary')).length, resumedLines: actsOf(changeId, 'Resumed after a restart%') }); }
+
+  say('  13b killed after the destroy step is recorded, before retire / close');
+  { await resetStub(); const { changeId, vm } = await toPowerDown('E13B'); await waitSoak(changeId);
+    const call = swallow(confirmDestroy(changeId));
+    await waitFor(() => actsOf(changeId, 'VM destroyed on%').length > 0, 90, 250);
+    const bootSec = await crashNovaDesk(); await call;
+    const atCrash = snapshot(changeId, vm.id); const cardAtCrash = ((await cardsFor(changeId, 'decom_confirm_destroy'))[0] || {}).status; const tBoot = Date.now();
+    const closed = await waitFor(() => changeRow(changeId).status === 'closed', 150, 1000);
+    out.push({ case: '13b', title: 'Killed after VM destroyed, before the CI is retired', bootSec, atCrash, confirmCardAtCrash: cardAtCrash, finishedOnItsOwn: !!closed, afterSec: closed ? Math.round((Date.now() - tBoot) / 1000) : null, final: snapshot(changeId, vm.id), summaryCard: (await cardsFor(changeId, 'decom_summary')).length, resumedLines: actsOf(changeId, 'Resumed after a restart%') }); }
+
+  say('  13c killed during the pause before the power-off');
+  { await resetStub(); const { changeId, vm } = await newChange('E13C'); await approve(changeId);
+    const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    await precheck(changeId, manual[0].id, 'complete'); await precheck(changeId, manual[1].id, 'complete');
+    const t0 = Date.now(); const call = swallow(precheck(changeId, manual[2].id, 'complete'));
+    await waitFor(async () => (await stubLog(t0)).some((e) => /Proceeding with the Power Down/.test(e.bodyText || '')), 60, 250);
+    const bootSec = await crashNovaDesk(); await call;
+    const atCrash = snapshot(changeId, vm.id); const tBoot = Date.now();
+    const resumed = await waitFor(() => (schedRow(changeId) || {}).status === 'pending', 150, 1000);
+    out.push({ case: '13c', title: 'Killed during the 10 s pause before power-off', bootSec, atCrash, resumedOnItsOwn: !!resumed, afterSec: resumed ? Math.round((Date.now() - tBoot) / 1000) : null, final: snapshot(changeId, vm.id), vmOnHost: ((await govcState()).vms[vm.name] || {}).powerState || 'gone', resumedLines: actsOf(changeId, 'Resumed after a restart%'), powerOffCalls: (await govcState()).calls.filter((c) => c.cmd === 'vm.power -off').length }); }
+
+  say('  13d killed during the pause after a pre-check is completed');
+  { await resetStub(); const { changeId, vm } = await newChange('E13D'); await approve(changeId);
+    const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    const call = swallow(precheck(changeId, manual[0].id, 'complete'));
+    await waitFor(() => actsOf(changeId, '%Verify backup completed%marked completed%').length > 0, 40, 250);
+    const bootSec = await crashNovaDesk(); await call; const tBoot = Date.now();
+    const posted = await waitFor(async () => (await cardsFor(changeId, 'decom_precheck_task')).some((c) => Number(c.taskId) === manual[1].id), 150, 1000);
+    const card2 = (await cardsFor(changeId, 'decom_precheck_task')).filter((c) => Number(c.taskId) === manual[1].id).length;
+    out.push({ case: '13d', title: 'Killed after pre-check 1 is recorded, before the next card is posted', bootSec, state: snapshot(changeId, vm.id), nextPrecheckCardPosted: !!posted, afterSec: posted ? Math.round((Date.now() - tBoot) / 1000) : null, copies: card2, resumedLines: actsOf(changeId, 'Resumed after a restart%'), card1: ((await cardsFor(changeId, 'decom_precheck_task')).find((c) => Number(c.taskId) === manual[0].id) || {}).status }); }
+
+  say('  13e killed during the pause after approval');
+  { await resetStub(); const { changeId, vm } = await newChange('E13E');
+    const call = swallow(approve(changeId));
+    await waitFor(() => actsOf(changeId, 'Server has been added in maintenance mode.').length > 0, 40, 250);
+    const bootSec = await crashNovaDesk(); await call; const tBoot = Date.now();
+    await waitFor(async () => (await cardsFor(changeId, 'decom_precheck_task')).length > 0, 150, 1000);
+    const cards = await cardsFor(changeId, 'decom_precheck_task');
+    out.push({ case: '13e', title: 'Killed after approval is recorded, before the first pre-check card', bootSec, afterSec: cards.length ? Math.round((Date.now() - tBoot) / 1000) : null, resumedLines: actsOf(changeId, 'Resumed after a restart%'), state: snapshot(changeId, vm.id), approvalCard: ((await cardsFor(changeId, 'decom_approval'))[0] || {}).status, precheckCards: cards.length, ledger: q(`SELECT card_type, desired_status, done FROM decom_card_sync WHERE change_id=${changeId} ORDER BY id`) }); }
+
+  say('  13f killed with a card post unanswered (receiver hung), receiver then released');
+  { await resetStub(); const { changeId } = await newChange('E13F'); await setFault('hang');
+    const call = swallow(approve(changeId, { timeoutMs: 20000 }));
+    await sleep(6000);
+    const bootSec = await crashNovaDesk(); await call;
+    const ledgerAtCrash = q(`SELECT card_type, desired_status, done, attempts, (inflight_until IS NOT NULL) AS claimed FROM decom_card_sync WHERE change_id=${changeId} ORDER BY id`);
+    await setFault('normal'); const c = await waitConverged(changeId, 180);
+    out.push({ case: '13f', title: 'Killed while a card post was in flight', bootSec, ledgerAtCrash, convergedAfterSec: c.sec, converged: c.converged, duplicates: c.d.duplicates, ledgerAtEnd: q(`SELECT card_type, desired_status, done FROM decom_card_sync WHERE change_id=${changeId} ORDER BY id`) }); }
+
+  say('  13g a power-off that FAILED is not retried by a restart');
+  { await resetStub(); const { changeId, vm } = await toPowerDown('E13G', { faultBeforeLast: { cmd: 'vm.power -off', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' } });
+    const t0 = Date.now(); const before = snapshot(changeId, vm.id); await crashNovaDesk(); await sleep(100000);
+    const offCalls = (await govcState(t0)).calls.filter((c) => c.cmd === 'vm.power -off').length;
+    out.push({ case: '13g', title: 'Power-off failed, NovaDesk restarted: no automatic retry', before, afterRestart100s: snapshot(changeId, vm.id), powerOffCallsAfterRestart: offCalls, resumedLines: actsOf(changeId, 'Resumed after a restart%').length }); }
+
+  say('  13h a destroy that FAILED is not retried by a restart');
+  { await resetStub(); const { changeId, vm } = await toPowerDown('E13H'); await waitSoak(changeId);
+    await govcFault({ cmd: 'vm.destroy', kind: 'fail', n: 1, stderr: 'govc: ServerFaultCode: The operation failed (injected)\n' });
+    const d1 = await confirmDestroy(changeId); const t0 = Date.now(); const before = snapshot(changeId, vm.id);
+    await crashNovaDesk(); await sleep(100000);
+    const destroyCalls = (await govcState(t0)).calls.filter((c) => c.cmd === 'vm.destroy').length;
+    out.push({ case: '13h', title: 'Destroy failed, NovaDesk restarted: no automatic retry', firstAnswer: d1.status, before, afterRestart100s: snapshot(changeId, vm.id), destroyCallsAfterRestart: destroyCalls, resumedLines: actsOf(changeId, 'Resumed after a restart%').length }); }
+
+  save('e13.json', out);
+  md('## E13. Crash tests'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1074,6 +1178,7 @@ async function e15() {
     if (cmd === 'e11' || cmd === 'all') await e11();
     if (cmd === 'e12' || cmd === 'all') await e12();
     if (cmd === 'e14' || cmd === 'all') await e14();
+    if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');
     say('results written to', OUT);

@@ -281,6 +281,10 @@ ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_issued_at TEXT;
 -- decommission can put it back (decomAutomation.putCiInMaintenance / restoreCiFromMaintenance).
 ALTER TABLE changes ADD COLUMN IF NOT EXISTS ci_status_before_decom TEXT;
 
+-- Who confirmed the destroy, kept with vm_destroy_issued_at so an interrupted destroy can be
+-- resumed after a crash under the same confirmation (decomAutomation.resumeInterruptedDecoms).
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by INTEGER;
+
 CREATE TABLE IF NOT EXISTS problem_comments (
   id SERIAL PRIMARY KEY,
   problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,

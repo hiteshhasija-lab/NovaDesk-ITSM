@@ -573,7 +573,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
         await logActivity('change', change.id, confirmer.id, `No VM named "${ci.name}" on ${esxiHost.name}; the destroy NovaDesk issued at ${issued.vm_destroy_issued_at} UTC evidently completed. Continuing with the remaining steps.`);
       } else {
         fromEsxi = hardwareFromVm(vm.raw);
-        await db.prepare('UPDATE changes SET vm_destroy_issued_at = ? WHERE id = ?').run(nowStr(), change.id);
+        await db.prepare('UPDATE changes SET vm_destroy_issued_at = ?, vm_destroy_confirmed_by = COALESCE(vm_destroy_confirmed_by, ?) WHERE id = ?').run(nowStr(), confirmer.id || null, change.id);
         await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
       }
     } catch (e) {
@@ -637,6 +637,83 @@ async function runConfirmedDestroy(change, ci, confirmer) {
   }
 }
 
+// Picks decommissions back up after NovaDesk was killed or restarted in the middle of a step.
+// Every pause in the workflow (10 s before the next pre-check card, before the power-off, before
+// retiring the CI) holds its continuation only in memory, so a crash there used to leave the Change
+// stuck with nothing resuming it: the next pre-check card never posted (fault-injection E13d, E13e,
+// E13f), the VM never powered off (E13c), a destroy the host had already done was never finished
+// (E13a, E13b). Called on a timer and shortly after startup. It only acts on a Change that has been
+// quiet for RESUME_QUIET_SECONDS (a step still running here logs something every few seconds) and
+// never retries a step that FAILED: a logged power-off or destroy failure waits for a person.
+const RESUME_QUIET_SECONDS = 45;
+let resuming = false;
+
+async function resumeInterruptedDecoms() {
+  if (resuming) return;
+  resuming = true;
+  try {
+    const cutoff = new Date(Date.now() - RESUME_QUIET_SECONDS * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const changes = await db.prepare(`
+      SELECT * FROM changes
+      WHERE approval_status = 'approved' AND status = 'in_progress'
+        AND (novaconnect_channel_id IS NOT NULL OR novaconnect_conversation_id IS NOT NULL)
+    `).all();
+    for (const change of changes) {
+      try {
+        if (destroysRunning.has(change.id) || powerDownInProgress.has(change.id)) continue;
+        const last = await db.prepare(`SELECT max(created_at) AS t FROM activity_log WHERE entity_type = 'change' AND entity_id = ?`).get(change.id);
+        if (!last || !last.t || last.t > cutoff) continue;
+
+        const tasks = await db.prepare('SELECT * FROM change_tasks WHERE change_id = ? ORDER BY sequence').all(change.id);
+        const task = (d) => tasks.find((t) => t.description === d);
+        const manualPending = MANUAL_TASKS.map((d) => task(d)).filter((t) => t && t.status === 'pending');
+
+        if (manualPending.length) {
+          // The next pre-check card. Only when it was never recorded: a card that is recorded but
+          // not yet delivered belongs to the card ledger's own retry loop.
+          const next = manualPending[0];
+          const row = await db.prepare(`SELECT done FROM decom_card_sync WHERE change_id = ? AND card_type = 'decom_precheck_task' AND task_id = ?`).get(change.id, next.id);
+          if (!row) {
+            await logActivity('change', change.id, null, `Resumed after a restart: posting the pre-check card for "${next.description}".`).catch(() => {});
+            await postNextPrecheckCard(change);
+          }
+          continue;
+        }
+
+        const powerTask = task('Power off — soak period');
+        const timer = await db.prepare(`SELECT 1 AS x FROM scheduled_actions WHERE change_id = ? AND action_type = 'destroy_vm' LIMIT 1`).get(change.id);
+        if (powerTask && powerTask.status === 'pending' && !timer) {
+          const failed = await db.prepare(`SELECT 1 AS x FROM activity_log WHERE entity_type = 'change' AND entity_id = ? AND message LIKE 'ESXi power-off failed%' LIMIT 1`).get(change.id);
+          if (failed) continue; // it failed: a person decides whether to retry
+          await logActivity('change', change.id, null, 'Resumed after a restart: continuing with the power-off that was interrupted.').catch(() => {});
+          await maybeProceedWithPowerDown(change.id, null);
+          continue;
+        }
+
+        // A destroy that was issued but not carried through: the VM step itself, or the steps after
+        // it (retire the CI, update the tracker, close, summary) that follow it in one sequence.
+        const afterDestroy = [DESTROY_TASK, RETIRE_TASK, TRACKER_TASK].map((d) => task(d)).filter(Boolean);
+        const unfinished = afterDestroy.some((t) => t.status !== 'done' && t.status !== 'skipped');
+        if (unfinished && change.vm_destroy_issued_at && change.vm_destroy_confirmed_by) {
+          const failed = await db.prepare(`
+            SELECT 1 AS x FROM activity_log WHERE entity_type = 'change' AND entity_id = ? AND message LIKE 'Destroy of %' AND message LIKE '%failed%' AND created_at >= ? LIMIT 1
+          `).get(change.id, change.vm_destroy_issued_at);
+          if (failed) continue;
+          const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
+          const confirmer = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(change.vm_destroy_confirmed_by);
+          if (!ci || !confirmer) continue;
+          await logActivity('change', change.id, null, `Resumed after a restart: finishing the destroy confirmed by ${confirmer.username}.`).catch(() => {});
+          await runConfirmedDestroy(change, ci, { id: confirmer.id, username: confirmer.username });
+        }
+      } catch (e) {
+        console.error(`Resuming decommission change ${change.id} failed:`, e.message);
+      }
+    }
+  } finally {
+    resuming = false;
+  }
+}
+
 // "Retire CI in CMDB" / "Update tracker & reclaim licenses" completed by hand in NovaDesk: by the
 // user's choice these only report to NovaConnect (the CI record and the tracker are not touched).
 // Once all 7 tasks are resolved, the Change closes and the summary card posts, as after a destroy.
@@ -656,6 +733,7 @@ async function announceManualFinalTask(change, task, actor) {
 }
 
 module.exports = {
+  resumeInterruptedDecoms,
   putCiInMaintenance,
   restoreCiFromMaintenance,
   DESTROY_TASK,

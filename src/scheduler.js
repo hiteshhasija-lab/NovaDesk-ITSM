@@ -1,9 +1,11 @@
 const { db, nowStr } = require('./db');
 const { syncCard, reconcileCards } = require('./cardSync');
+const { resumeInterruptedDecoms } = require('./decomAutomation');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 // How often the card ledger is retried (cardSync.js); only the test rig changes this.
 const CARD_SYNC_POLL_MS = (Number(process.env.CARD_SYNC_POLL_S) || 30) * 1000;
+const RESUME_POLL_MS = (Number(process.env.DECOM_RESUME_POLL_S) || 30) * 1000;
 
 // A slow poll (a receiver that takes a while to answer) must not overlap the next one, or the same
 // due action would be processed twice at once.
@@ -75,6 +77,11 @@ function startScheduler() {
   // Separate loop from the timers: a slow or unreachable NovaConnect can hold the card retries for
   // minutes, and that must never delay a destroy timer.
   setInterval(() => { reconcileCards().catch((e) => console.error('Card reconcile failed:', e.message)); }, CARD_SYNC_POLL_MS);
+  // Picks interrupted decommission steps back up after a crash or restart (see decomAutomation).
+  // The first pass waits past the quiet period so a step that was mid-flight is not raced.
+  const resume = () => resumeInterruptedDecoms().catch((e) => console.error('Decommission resume failed:', e.message));
+  setInterval(resume, RESUME_POLL_MS);
+  setTimeout(resume, 50 * 1000);
 }
 
 module.exports = { startScheduler };
