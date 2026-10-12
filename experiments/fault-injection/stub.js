@@ -79,7 +79,7 @@ function handleReal(req, res, path, body, base) {
         targetKind: body.channel_id ? 'channel' : 'dm', source: 'novadesk'
       });
     }
-    record({ ...base, outcome: 'ok', cardType: meta && meta.cardType, changeId: meta && meta.changeId, taskId: meta && meta.taskId, bodyText: String(body.body || '').slice(0, 80) });
+    record({ ...base, outcome: 'ok', cardType: meta && meta.cardType, changeId: meta && meta.changeId, taskId: meta && meta.taskId, bodyText: String(body.body || '').slice(0, 240) });
     return send(res, 201, { ok: true, messageId: messages, ...(key ? { keyed: true } : {}) });
   }
 
