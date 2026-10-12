@@ -12,4 +12,14 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
   res.render('notifications/list', { title: 'Notifications', notifications });
 });
 
+// One notification as it was sent, from NovaDesk's own copy (notifications.body). The Preview used
+// to open the sandbox mailbox's page (ethereal.email), which deletes its messages and accounts
+// within days, so every older notification answered "This message does not exist".
+router.get('/:id', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  const id = Number(req.params.id);
+  const notification = Number.isInteger(id) && id > 0 ? await db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) : null;
+  if (!notification) return res.status(404).render('error', { title: 'Not Found', message: 'Notification not found.' });
+  res.render('notifications/show', { title: `Notification: ${notification.subject}`, notification });
+});
+
 module.exports = router;

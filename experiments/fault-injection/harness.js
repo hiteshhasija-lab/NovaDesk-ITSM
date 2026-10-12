@@ -1003,6 +1003,57 @@ async function e14() {
   return out;
 }
 
+// ---------------------------------------------------------------- E15 notification preview page
+async function loginAs(username, password) {
+  const r = await fetch(ND + '/login', { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}` });
+  const set = r.headers.getSetCookie ? r.headers.getSetCookie() : [r.headers.get('set-cookie')].filter(Boolean);
+  return set.map((c) => c.split(';')[0]).join('; ');
+}
+async function e15() {
+  say('E15: notification preview served from NovaDesk');
+  const out = [];
+  await resetStub();
+  const { changeId } = await newChange('E15'); await approve(changeId);
+  const t0 = Date.now(); let rows = [];
+  while (Date.now() - t0 < 45000 && rows.length < 2) { await sleep(2000); rows = q(`SELECT id, subject, body, preview_url, status FROM notifications WHERE related_type='change' AND related_id=${changeId} ORDER BY id`); }
+  const staff = await staffCookie();
+  const list = await (await fetch(`${ND}/notifications`, { headers: { Cookie: staff } })).text();
+  const links = [...list.matchAll(/href="\/notifications\/(\d+)"/g)].map((m) => Number(m[1]));
+  const first = rows[0];
+  const page = await fetch(`${ND}/notifications/${first.id}`, { headers: { Cookie: staff } });
+  const html = await page.text();
+  // a hostile body must stay inside the sandboxed frame's attribute
+  const evil = Number(psql(`INSERT INTO notifications (recipient_email, subject, body, status) VALUES ('x@corp.local','E15 evil','<p>hi</p><script>window.__pwned=1</script><img src=x onerror=alert(1)>','sent') RETURNING id`, { firstLine: true }));
+  const evilHtml = await (await fetch(`${ND}/notifications/${evil}`, { headers: { Cookie: staff } })).text();
+  const noBody = Number(psql(`INSERT INTO notifications (recipient_email, subject, status) VALUES ('x@corp.local','E15 no body','failed') RETURNING id`, { firstLine: true }));
+  const noBodyHtml = await (await fetch(`${ND}/notifications/${noBody}`, { headers: { Cookie: staff } })).text();
+  psql(`INSERT INTO users (username, full_name, email, password_hash, role) SELECT 'fi-e15-user','E15 User','e15@corp.local',password_hash,'user' FROM users WHERE username='admin' ON CONFLICT DO NOTHING`);
+  const userCookie = await loginAs('fi-e15-user', 'admin123');
+  const asUser = await fetch(`${ND}/notifications/${first.id}`, { headers: { Cookie: userCookie }, redirect: 'manual' });
+  const anon = await fetch(`${ND}/notifications/${first.id}`, { redirect: 'manual' });
+  const missing = await fetch(`${ND}/notifications/99999999`, { headers: { Cookie: staff } });
+  const junk = await fetch(`${ND}/notifications/abc`, { headers: { Cookie: staff } });
+  out.push({
+    case: '15a', title: 'List and preview pages',
+    notificationsForChange: rows.length, listLinksInternal: links.includes(first.id), listHasEtherealLinks: /ethereal\.email/.test(list),
+    previewStatus: page.status, hasSubject: html.includes(first.subject.replace(/&/g, '&amp;')), hasSandboxedFrame: /<iframe sandbox/.test(html), bodyInSrcdoc: /srcdoc="[^"]*&lt;p&gt;/.test(html),
+    storedSandboxLinkWas404Source: !!first.preview_url,
+  });
+  out.push({
+    case: '15b', title: 'Hostile and missing content',
+    scriptTagOutsideAttribute: /<script>window\.__pwned/.test(evilHtml), onerrorOutsideAttribute: /<img src=x onerror/.test(evilHtml),
+    escapedInAttribute: /srcdoc="[^"]*&lt;script&gt;/.test(evilHtml), noBodyMessage: /was not stored/.test(noBodyHtml),
+    missingId: missing.status, nonNumericId: junk.status,
+  });
+  out.push({ case: '15c', title: 'Who can open it', plainUser: asUser.status, plainUserLocation: asUser.headers.get('location'), anonymous: anon.status, anonymousLocation: anon.headers.get('location') });
+  save('e15.json', out);
+  md('## E15. Notification preview'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1023,6 +1074,7 @@ async function e14() {
     if (cmd === 'e11' || cmd === 'all') await e11();
     if (cmd === 'e12' || cmd === 'all') await e12();
     if (cmd === 'e14' || cmd === 'all') await e14();
+    if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');
     say('results written to', OUT);
   } catch (e) {
