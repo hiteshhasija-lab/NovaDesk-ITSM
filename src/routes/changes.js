@@ -258,9 +258,10 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
   }
 
   await db.prepare(`
-    UPDATE changes SET status = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
+    UPDATE changes SET status = ?, closed_at = ?, approval_status = ?, approved_by = ?,
+      approved_by_name = CASE WHEN approved_by IS DISTINCT FROM ? THEN NULL ELSE approved_by_name END, updated_at = ?
     WHERE id = ?
-  `).run(status, closed_at, approval_status, approved_by, nowStr(), req.params.id);
+  `).run(status, closed_at, approval_status, approved_by, approved_by, nowStr(), req.params.id);
 
   if (status !== existing.status) {
     await logActivity('change', existing.id, req.session.user.id,
@@ -341,7 +342,7 @@ async function notifyOnCreate(changeId) {
 router.get('/:id', requireAuth, async (req, res) => {
   const change = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name, ci.ci_number, ci.status AS ci_status,
-      ap.full_name AS approver_name
+      COALESCE(c.approved_by_name, ap.full_name) AS approver_name
     FROM changes c
     LEFT JOIN users u ON u.id = c.requested_by
     LEFT JOIN users a ON a.id = c.assigned_to
@@ -361,7 +362,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   `).all(req.params.id);
 
   const activity = await db.prepare(`
-    SELECT al.*, u.full_name AS actor_name
+    SELECT al.*, COALESCE(al.actor_name, u.full_name) AS actor_name
     FROM activity_log al LEFT JOIN users u ON u.id = al.actor_id
     WHERE al.entity_type = 'change' AND al.entity_id = ?
     ORDER BY al.created_at ASC, al.id ASC
@@ -528,6 +529,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
       risk=@risk, status=@status, assigned_to=@assigned_to, assignment_group=@assignment_group, affected_ci_id=@affected_ci_id,
       planned_start=@planned_start, planned_end=@planned_end, implementation_plan=@implementation_plan,
       backout_plan=@backout_plan, approval_status=@approval_status, approved_by=@approved_by,
+      approved_by_name = CASE WHEN approved_by IS DISTINCT FROM @approved_by THEN NULL ELSE approved_by_name END,
       updated_at=@updated_at, closed_at=@closed_at
     WHERE id=@id
   `).run({
@@ -610,7 +612,7 @@ router.post('/:id/approve', requireAuth, async (req, res) => {
   const newStatus = decision === 'approved' ? (isDecomChange ? 'in_progress' : 'scheduled') : 'rejected';
 
   await db.prepare(`
-    UPDATE changes SET approval_status=?, approved_by=?, status=?, updated_at=? WHERE id=?
+    UPDATE changes SET approval_status=?, approved_by=?, approved_by_name=NULL, status=?, updated_at=? WHERE id=?
   `).run(decision, req.session.user.id, newStatus, nowStr(), req.params.id);
 
   if (existing) {
@@ -729,9 +731,10 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
     }
 
     await db.prepare(`
-      UPDATE changes SET status = ?, assigned_to = ?, closed_at = ?, approval_status = ?, approved_by = ?, updated_at = ?
+      UPDATE changes SET status = ?, assigned_to = ?, closed_at = ?, approval_status = ?, approved_by = ?,
+        approved_by_name = CASE WHEN approved_by IS DISTINCT FROM ? THEN NULL ELSE approved_by_name END, updated_at = ?
       WHERE id = ?
-    `).run(newStatus, newAssignedTo, closed_at, approval_status, approved_by, nowStr(), id);
+    `).run(newStatus, newAssignedTo, closed_at, approval_status, approved_by, approved_by, nowStr(), id);
 
     if (status && status !== existing.status) {
       await logActivity('change', id, actorId, `Status changed from ${CHANGE_STATUS_LABELS[existing.status]} to ${CHANGE_STATUS_LABELS[status]} (bulk action)`);

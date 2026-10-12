@@ -290,6 +290,18 @@ ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by INTEGER;
 -- own record per Change (changes.ci_status_before_decom).
 ALTER TABLE cmdb_ci ADD COLUMN IF NOT EXISTS status_before_maintenance TEXT;
 
+-- Display names for people who act on a decommission through NovaConnect but have no NovaDesk
+-- account. Their actions are stored under NovaDesk's default admin account (the id columns need a
+-- NovaDesk user); these hold the real name so the Activity list and "Approved By" show the person
+-- who acted, not the admin account. NULL means "use the account's own name".
+--  activity_log.actor_name            the name shown for that activity row
+--  changes.approved_by_name           the name shown as the approver (cleared when approved_by changes)
+--  changes.vm_destroy_confirmed_by_name  kept with vm_destroy_confirmed_by so a destroy resumed after
+--                                     a restart is still attributed to the person who confirmed it
+ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS actor_name TEXT;
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS approved_by_name TEXT;
+ALTER TABLE changes ADD COLUMN IF NOT EXISTS vm_destroy_confirmed_by_name TEXT;
+
 -- Membership of assignment groups (the names in helpers.ASSIGNMENT_GROUPS). Used for who may
 -- approve a decommission Change in NovaDesk: its requester or a member of IRO-Build/Decom
 -- (approvalAccess.js). Edited on the user's page.
@@ -413,10 +425,26 @@ async function nextNumber(counterName, prefix) {
   return `${prefix}${String(next).padStart(7, '0')}`;
 }
 
+// Who is acting, when that person has no NovaDesk account of their own: { actorId, name }, where
+// actorId is the account their actions are stored under (the default admin). The decommission API
+// routes open one of these per request and fill it in once the acting person is known, so every
+// activity row written on their behalf during that request (including the power-off that follows
+// their last pre-check) is shown under their name. A row is only renamed when its actor id is that
+// account, so unrelated rows (system rows, other users) are left alone.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const actingAs = new AsyncLocalStorage();
+const runWithActingAs = (fn, init = {}) => actingAs.run({ actorId: init.actorId || null, name: init.name || null }, fn);
+function setActingAs(actorId, name) {
+  const store = actingAs.getStore();
+  if (store) { store.actorId = actorId || null; store.name = name || null; }
+}
+
 async function logActivity(entityType, entityId, actorId, message) {
+  const acting = actingAs.getStore();
+  const actorName = acting && acting.name && actorId && acting.actorId === actorId ? acting.name : null;
   await db.prepare(`
-    INSERT INTO activity_log (entity_type, entity_id, actor_id, message) VALUES (?, ?, ?, ?)
-  `).run(entityType, entityId, actorId || null, message);
+    INSERT INTO activity_log (entity_type, entity_id, actor_id, actor_name, message) VALUES (?, ?, ?, ?, ?)
+  `).run(entityType, entityId, actorId || null, actorName, message);
 }
 
 async function seedIfEmpty() {
@@ -729,4 +757,4 @@ async function initDb() {
   await seedDecomGroup();
 }
 
-module.exports = { db, nextNumber, logActivity, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };
+module.exports = { db, nextNumber, logActivity, runWithActingAs, setActingAs, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };

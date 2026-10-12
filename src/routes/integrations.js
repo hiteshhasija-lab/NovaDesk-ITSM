@@ -1,4 +1,4 @@
-const { db, nextNumber, logActivity, nowStr, offsetStr } = require('../db');
+const { db, nextNumber, logActivity, nowStr, offsetStr, runWithActingAs, setActingAs } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
@@ -24,6 +24,9 @@ function requireSyncAuth(req, res, next) {
   next();
 }
 router.use(requireSyncAuth);
+// One acting-as context per request (see db.js): resolveDecomActor fills it in when the person
+// acting has no NovaDesk account, and logActivity then shows their name on the rows it writes.
+router.use((req, res, next) => runWithActingAs(next));
 
 async function findCiByHostname(hostname) {
   return db.prepare(
@@ -158,7 +161,7 @@ router.post('/novaconnect/decommission-status', async (req, res) => {
       id: c.id, number: c.number, isDecommission: isDecom, status: c.status, approvalStatus: c.approval_status, step,
       shortDescription: c.short_description,
       ci: cci ? { name: cci.name, ciNumber: cci.ci_number, status: cci.status } : null,
-      requestedBy: await nameOf(c.requested_by), assignedTo: await nameOf(c.assigned_to), approvedBy: c.approval_status === 'approved' ? await nameOf(c.approved_by) : null,
+      requestedBy: await nameOf(c.requested_by), assignedTo: await nameOf(c.assigned_to), approvedBy: c.approval_status === 'approved' ? (c.approved_by_name || await nameOf(c.approved_by)) : null,
       assignmentGroup: c.assignment_group || null,
       submittedAt: c.created_at, approvedAt: approvedRow ? approvedRow.created_at : null,
       poweredOffAt: powerTask && powerTask.status === 'done' ? powerTask.completed_at : null,
@@ -201,9 +204,12 @@ async function resolveDecomActor(req, username) {
     if (vouch.authorized !== true || vouch.username !== username) return null;
     const name = (typeof vouch.full_name === 'string' && vouch.full_name.trim() ? vouch.full_name.trim() : (user && user.full_name) || username).slice(0, 100);
     const basis = vouch.basis === 'requester' ? 'requester' : 'server-decom admin';
-    if (user) return { id: user.id, role: 'admin', full_name: name, username, basis };
+    if (user) return { id: user.id, role: 'admin', full_name: name, username, basis, displayName: null };
     const fallback = await db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
-    return fallback ? { id: fallback.id, role: 'admin', full_name: name, username, basis } : null;
+    if (!fallback) return null;
+    // No NovaDesk account: stored under the default admin, shown under their own name.
+    setActingAs(fallback.id, name);
+    return { id: fallback.id, role: 'admin', full_name: name, username, basis, displayName: name };
   }
 
   if (user && user.role === 'admin') return { id: user.id, role: 'admin', full_name: user.full_name, username, basis: null };
@@ -241,10 +247,10 @@ router.post('/novaconnect/decommission-requests/:id/approve', async (req, res) =
   // The state change is the real gate: it only succeeds while the Change is still pending and open,
   // so two simultaneous approvals can't both get through the read check above.
   const claimed = await db.prepare(`
-    UPDATE changes SET approval_status='approved', approved_by=?, status='in_progress', updated_at=?
+    UPDATE changes SET approval_status='approved', approved_by=?, approved_by_name=?, status='in_progress', updated_at=?
     WHERE id=? AND approval_status='pending' AND status NOT IN ('closed','cancelled','rejected')
     RETURNING id
-  `).get(approver.id, nowStr(), change.id);
+  `).get(approver.id, approver.displayName || null, nowStr(), change.id);
   if (!claimed) {
     return res.status(409).json({ error: `${change.number} was just actioned from another window.` });
   }
@@ -341,7 +347,7 @@ router.post('/novaconnect/decommission-requests/:id/confirm-destroy', async (req
   // The whole sequence (destroy, retire, tracker, close, summary) is shared with NovaDesk's own
   // Change Tasks list, where completing "Destroy VM & release storage" runs the same thing.
   try {
-    const closed = await runConfirmedDestroy(change, ci, { id: confirmer.id, username: req.body.confirmed_by_username });
+    const closed = await runConfirmedDestroy(change, ci, { id: confirmer.id, username: req.body.confirmed_by_username, displayName: confirmer.displayName });
     res.json({ change: closed, ci: await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(ci.id) });
   } catch (e) {
     if (e.status) return res.status(e.status).json({ error: e.message });

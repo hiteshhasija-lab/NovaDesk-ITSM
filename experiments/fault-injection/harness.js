@@ -1326,6 +1326,64 @@ async function e18() {
   return out;
 }
 
+// ---------------------------------------------------------------- E19 who is shown as the actor when the person has no NovaDesk account
+async function e19() {
+  say('E19: acting person is shown by name, not as the default admin account');
+  const out = [];
+  const EVA = { username: 'fi-eva', full_name: 'Eva Hasija' };
+  const vouch = (u = EVA, basis = 'server-decom admin') => ({ acting_user: { ...u, authorized: true, basis } });
+  const act = (changeId, route, body) => nd('POST', `${REQ}/${changeId}/${route}`, body, { timeoutMs: 120000 });
+  const adminId = Number(q(`SELECT id FROM users WHERE username='admin'`)[0].id);
+  const rows = (changeId) => q(`SELECT al.message, al.actor_id, al.actor_name, u.full_name AS account_name FROM activity_log al LEFT JOIN users u ON u.id=al.actor_id WHERE al.entity_type='change' AND al.entity_id=${changeId} ORDER BY al.id`);
+  const shown = (r) => r.actor_name || r.account_name || 'System';
+  const cookie = await loginAs('admin', 'admin123');
+  const page = async (changeId) => (await fetch(`${ND}/changes/${changeId}`, { headers: { Cookie: cookie } })).text();
+
+  say('  19a Eva (no account) approves, completes the pre-checks and confirms the destroy');
+  { await resetStub(); const { changeId } = await newChange('E19A');
+    const ap = await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch() });
+    const manual = tasksOf(changeId).filter((x) => MANUAL.includes(x.description));
+    for (const t of manual) await act(changeId, 'precheck-task', { actor_username: EVA.username, action: 'complete', task_id: t.id, ...vouch() });
+    await waitSoak(changeId);
+    const d = await act(changeId, 'confirm-destroy', { confirmed_by_username: EVA.username, ...vouch() });
+    const all = rows(changeId);
+    const onAdminAccount = all.filter((r) => Number(r.actor_id) === adminId);
+    const c = q(`SELECT approved_by, approved_by_name FROM changes WHERE id=${changeId}`)[0];
+    const html = await page(changeId);
+    const status = await statusQuery(changeRow(changeId).number).catch(() => null);
+    out.push({ case: '19a', title: 'Whole flow by an account-less admin', approve: ap.status, destroy: d.status,
+      approvedByStoredUnder: Number(c.approved_by) === adminId ? 'default admin account' : c.approved_by, approvedByName: c.approved_by_name,
+      rowsOnAdminAccount: onAdminAccount.length, ofThoseShownAsEva: onAdminAccount.filter((r) => shown(r) === 'Eva Hasija').length,
+      shownAsAlexAdmin: all.filter((r) => shown(r) === 'Alex Admin').map((r) => r.message),
+      evaLines: all.filter((r) => shown(r) === 'Eva Hasija').map((r) => r.message.slice(0, 60)),
+      pageApprovedBy: (html.match(/Approved By<\/dt><dd[^>]*>([^<]*)</) || [])[1], pageHasAlexAsActor: /<strong>Alex Admin<\/strong>/.test(html), pageHasEvaAsActor: /<strong>Eva Hasija<\/strong>/.test(html),
+      statusCardApprovedBy: status && status.json && status.json.matches && status.json.matches[0] ? status.json.matches[0].approvedBy : null }); }
+
+  say('  19b a person with their own NovaDesk account keeps their own name');
+  { await resetStub(); const { changeId } = await newChange('E19B');
+    const jdoe = { username: 'jdoe', full_name: 'Jane Doe' };
+    const ap = await act(changeId, 'approve', { approved_by_username: 'jdoe', ...vouch(jdoe, 'requester') });
+    const c = q(`SELECT approved_by, approved_by_name FROM changes WHERE id=${changeId}`)[0];
+    const jdoeId = Number(q(`SELECT id FROM users WHERE username='jdoe'`)[0].id);
+    const mine = rows(changeId).filter((r) => /Decommission approved/.test(r.message));
+    out.push({ case: '19b', title: 'Own account', approve: ap.status, approvedByIsJdoe: Number(c.approved_by) === jdoeId, approvedByName: c.approved_by_name, approvalRowShownAs: mine.map(shown), approvalRowActorName: mine.map((r) => r.actor_name) }); }
+
+  say('  19c a later approval decision by a NovaDesk user clears the stored name');
+  { await resetStub(); const { changeId } = await newChange('E19C');
+    await act(changeId, 'approve', { approved_by_username: EVA.username, ...vouch() });
+    const before = q(`SELECT approved_by_name FROM changes WHERE id=${changeId}`)[0].approved_by_name;
+    const reset = await fetch(`${ND}/changes/${changeId}/status`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'status=draft' });
+    const after = q(`SELECT approval_status, approved_by, approved_by_name FROM changes WHERE id=${changeId}`)[0];
+    out.push({ case: '19c', title: 'Name cleared with the approval', nameBefore: before, resetAnswer: reset.status, approvalAfter: after.approval_status, approvedByAfter: after.approved_by, nameAfter: after.approved_by_name }); }
+
+  save('e19.json', out);
+  md('## E19. Acting person shown by name'); md();
+  md('| Case | Scenario | Result |'); md('|---|---|---|');
+  for (const o of out) md(`| ${o.case} | ${o.title} | \`${JSON.stringify({ ...o, case: undefined, title: undefined })}\` |`);
+  md();
+  return out;
+}
+
 // ---------------------------------------------------------------- main
 (async () => {
   try {
@@ -1349,6 +1407,7 @@ async function e18() {
     if (cmd === 'e16' || cmd === 'all') await e16();
     if (cmd === 'e17' || cmd === 'all') await e17();
     if (cmd === 'e18' || cmd === 'all') await e18();
+    if (cmd === 'e19' || cmd === 'all') await e19();
     if (cmd === 'e13' || cmd === 'all') await e13();
     if (cmd === 'e15' || cmd === 'all') await e15();
     flushSummary('summary.md');

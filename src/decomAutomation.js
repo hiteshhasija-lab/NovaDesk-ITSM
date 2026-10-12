@@ -1,4 +1,4 @@
-const { db, nowStr, offsetStr, logActivity } = require('./db');
+const { db, nowStr, offsetStr, logActivity, runWithActingAs } = require('./db');
 const esxi = require('./esxi');
 const { notifyDecom } = require('./decomNotify');
 const { pushDecomUpdate, pushDecomThinking, decomTargets } = require('./novaconnect');
@@ -573,7 +573,12 @@ async function runConfirmedDestroy(change, ci, confirmer) {
         await logActivity('change', change.id, confirmer.id, `No VM named "${ci.name}" on ${esxiHost.name}; the destroy NovaDesk issued at ${issued.vm_destroy_issued_at} UTC evidently completed. Continuing with the remaining steps.`);
       } else {
         fromEsxi = hardwareFromVm(vm.raw);
-        await db.prepare('UPDATE changes SET vm_destroy_issued_at = ?, vm_destroy_confirmed_by = COALESCE(vm_destroy_confirmed_by, ?) WHERE id = ?').run(nowStr(), confirmer.id || null, change.id);
+        await db.prepare(`
+          UPDATE changes SET vm_destroy_issued_at = ?,
+            vm_destroy_confirmed_by_name = CASE WHEN vm_destroy_confirmed_by IS NULL THEN ? ELSE vm_destroy_confirmed_by_name END,
+            vm_destroy_confirmed_by = COALESCE(vm_destroy_confirmed_by, ?)
+          WHERE id = ?
+        `).run(nowStr(), confirmer.displayName || null, confirmer.id || null, change.id);
         await esxi.destroyVm(esxiHost.ip_address, sessionId, vm.vm);
       }
     } catch (e) {
@@ -589,7 +594,7 @@ async function runConfirmedDestroy(change, ci, confirmer) {
     // Resolve the confirm-destroy card whichever door was used, or it stays stuck showing
     // "Confirm Destroy" with active buttons.
     await syncCard(change, { cardType: 'decom_confirm_destroy', desiredStatus: 'destroyed' });
-    await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — storage released.`);
+    await pushDecomUpdate(decomTargets(change), `✅ ${ci.name} destroyed on ${esxiHost.name} — resources released.`);
 
     // Same pacing as the other steps — otherwise "retired in the CMDB" lands in the same instant.
     await pushDecomThinking(decomTargets(change), true);
@@ -702,8 +707,10 @@ async function resumeInterruptedDecoms() {
           const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(change.affected_ci_id);
           const confirmer = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(change.vm_destroy_confirmed_by);
           if (!ci || !confirmer) continue;
+          const shownAs = change.vm_destroy_confirmed_by_name || null;
           await logActivity('change', change.id, null, `Resumed after a restart: finishing the destroy confirmed by ${confirmer.username}.`).catch(() => {});
-          await runConfirmedDestroy(change, ci, { id: confirmer.id, username: confirmer.username });
+          // No request is open here, so carry the confirmer's own name into the activity rows explicitly.
+          await runWithActingAs(() => runConfirmedDestroy(change, ci, { id: confirmer.id, username: confirmer.username, displayName: shownAs }), { actorId: confirmer.id, name: shownAs });
         }
       } catch (e) {
         console.error(`Resuming decommission change ${change.id} failed:`, e.message);
