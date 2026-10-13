@@ -187,7 +187,7 @@ nd = versions(os.path.dirname(os.path.dirname(HERE)), 'src/version.js')
 if nd:
     n = [v for v in nd if v.startswith('0.0.') and int(v.split('.')[2]) >= 65]
     eq('V.1', '1', 'NovaDesk releases 0.0.65 to 0.0.80', 16, len(n), 'Distinct versions in src/version.js history', 'git log -p src/version.js')
-nc = versions('/Users/hhasija/Desktop/NovaConnect', 'src/version.js')
+nc = versions(os.environ['NOVACONNECT_REPO'], 'src/version.js') if os.environ.get('NOVACONNECT_REPO') else None   # path to a NovaConnect checkout; skipped when unset
 if nc:
     n = [v for v in nc if v.startswith('1.0.') and int(v.split('.')[2]) >= 183]
     eq('V.2', '1', 'NovaConnect releases 1.0.183 to 1.0.187', 5, len(n), 'Distinct versions in src/version.js history (NovaConnect repo)', 'git log -p src/version.js')
