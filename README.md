@@ -39,3 +39,13 @@ Then open http://localhost:3000. The database (`data/itsm.db`) is created and se
 - End users (`role: user`) only see and create their own incidents/changes, and cannot edit CMDB or see internal work notes.
 - Agents and admins can manage tickets, changes, and CMDB records; only admins can manage users or delete CMDB items.
 - This is a self-contained local app — reset by deleting the `data/` folder.
+
+## Checking that pages, routes and the NovaConnect integration agree
+
+```bash
+node scripts/contract-check.js          # forms, links, fetch() and redirects reach a route; every view variable is passed
+NOVACONNECT_REPO=../NovaConnect node scripts/contract-check.js   # also the NovaDesk <-> NovaConnect integration calls
+node --test test/*.test.js
+```
+
+It is static analysis (no server or database) and needs `acorn`, taken from a sibling NovaConnect checkout or `npm install --no-save acorn@8.18.0`. Run it before a release; a failure is a page or an integration call that would break.
