@@ -13,8 +13,19 @@
 //   node harness.js e5                                state-machine and idempotency probes
 //   node harness.js e6                                card ledger cases (restart, long outage, dead target)
 //   node harness.js e7                                the Change page 'chat is catching up' indicator
-//   node harness.js e11                               ESXi (govc) faults against the stubbed host
 //   node harness.js e8                                HTTP 5xx answers (inline retry rules)
+//   node harness.js e9                                concurrent requests (duplicate completion, double power-down)
+//   node harness.js e10                               idempotency keys on card posts
+//   node harness.js e11                               ESXi (govc) faults against the stubbed host
+//   node harness.js e12                               notifications for decommissions
+//   node harness.js e13                               crash recovery: SIGKILL at six points
+//   node harness.js e14                               status lookup
+//   node harness.js e15                               notification preview
+//   node harness.js e16                               actions by a team admin without a record-system account
+//   node harness.js e17                               manual maintenance-mode button
+//   node harness.js e18                               approval rights in the record system's own interface
+//   node harness.js e19                               acting person shown by name, not as the default account
+//   node harness.js e20                               destroy-task wording (old and new)
 //   node harness.js all
 //
 // Safety: refuses to run unless the rig's NovaDesk has NO ESXi credentials, uses the rig database
@@ -1421,7 +1432,7 @@ async function e20() {
 // ---------------------------------------------------------------- main
 (async () => {
   try {
-    if (cmd === 'help') { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 14).join('\n')); return; }
+    if (cmd === 'help') { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(2).filter((l, i, a) => a.slice(0, i + 1).every((x) => x.startsWith('//'))).join('\n')); return; }
     const env = await check();
     md('# Fault-injection results'); md();
     md(`Rig: image \`${env.NOVADESK_RELEASE_VERSION}\` build against an isolated database, receiver stubbed, no ESXi credentials. Run started ${new Date().toISOString()}.`); md();
