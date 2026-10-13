@@ -48,7 +48,7 @@ function opt(name, def) {
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : def;
 }
 const OUT = opt('out', path.join(__dirname, 'results', new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)));
-fs.mkdirSync(OUT, { recursive: true });
+if (cmd !== 'help' && cmd !== 'check') fs.mkdirSync(OUT, { recursive: true });   // no empty result folders for help/check
 const summary = [];
 function say(...a) { console.log(new Date().toISOString().slice(11, 19), ...a); }
 function save(name, obj) { fs.writeFileSync(path.join(OUT, name), JSON.stringify(obj, null, 2)); }
