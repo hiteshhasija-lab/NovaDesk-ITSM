@@ -1,7 +1,7 @@
 const dayjs = require('dayjs');
 const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { CHANGE_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
+const { CHANGE_STATUS_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
@@ -124,7 +124,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rangeCutoff = reportRangeCutoff(req.query.range);
+  if (rangeCutoff) { where.push('c.created_at >= ?'); params.push(rangeCutoff); }
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let changes = await db.prepare(`
     SELECT c.*, u.full_name AS requester_name, a.full_name AS assigned_name, ci.name AS ci_name

@@ -4,7 +4,7 @@ const createAsyncRouter = require('../asyncRouter');
 
 const router = createAsyncRouter();
 
-const RANGE_DAYS = { '7': 7, '30': 30, '90': 90 };
+const { REPORT_RANGE_DAYS: RANGE_DAYS, reportRangeDays } = require('../helpers');
 
 router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const days = RANGE_DAYS[req.query.range] || 30;
@@ -93,19 +93,16 @@ router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {
   res.render('reports/form', { title: 'New Report' });
 });
 
+// The "New Report" form: pick a time range and either the dashboard (which covers every module)
+// or a CSV export of one module's records created in that range.
+const CSV_SOURCES = { incidents: '/incidents/export.csv', changes: '/changes/export.csv', problems: '/problems/export.csv', cmdb: '/cmdb/export.csv', requests: '/requests/export.csv' };
 router.post('/generate', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { source, range, format } = req.body;
+  const days = reportRangeDays(range) || 30;
   if (format === 'csv') {
-    const rangeParam = range && range !== 'all' ? `?range=${range}` : '';
-    if (source === 'incidents') return res.redirect('/incidents/export.csv' + rangeParam);
-    if (source === 'changes') return res.redirect('/changes/export.csv' + rangeParam);
-    if (source === 'problems') return res.redirect('/problems/export.csv' + rangeParam);
-    if (source === 'cmdb') return res.redirect('/cmdb/export.csv' + rangeParam);
-    if (source === 'requests') return res.redirect('/requests/export.csv' + rangeParam);
-    return res.redirect('/reports/export.csv' + rangeParam);
+    return res.redirect(`${CSV_SOURCES[source] || '/reports/export.csv'}?range=${days}`);
   }
-  const rangeParam = range && range !== 'all' ? `?range=${range}` : '';
-  res.redirect('/reports' + rangeParam);
+  res.redirect(`/reports?range=${days}`);
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {

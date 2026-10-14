@@ -2,7 +2,7 @@
 <%- include('../partials/nav') %>
 <div class="container-fluid px-4 py-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0"><i class="bi bi-graph-up-arrow text-primary me-1"></i>New Report</h4>
+    <h4 class="mb-0"><i class="bi bi-graph-up-arrow text-primary me-1"></i>Run a Report</h4>
     <a href="/reports" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back to Reports</a>
   </div>
 
@@ -10,21 +10,6 @@
     <div class="card-body">
       <form method="POST" action="/reports/generate">
         <div class="row g-3">
-          <div class="col-md-6">
-            <label class="form-label fw-semibold">Report Name *</label>
-            <input type="text" name="name" class="form-control" required placeholder="e.g. Incident Resolution & SLA Performance">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label fw-semibold">Data Source *</label>
-            <select name="source" class="form-select" id="reportSourceSelect">
-              <option value="incidents" selected>Incidents (MTTR, SLA Compliance, Volume)</option>
-              <option value="changes">Changes (Success Rate, Risk, Outages)</option>
-              <option value="problems">Problems (Root Causes, Linked Incidents)</option>
-              <option value="cmdb">CMDB (Configuration Items, Status, Environment)</option>
-              <option value="requests">Service Requests (Fulfillment, Categories)</option>
-            </select>
-          </div>
-
           <div class="col-md-4">
             <label class="form-label fw-semibold">Time Range</label>
             <select name="range" class="form-select">
@@ -32,31 +17,27 @@
               <option value="30" selected>Last 30 days</option>
               <option value="90">Last 90 days</option>
               <option value="365">Last 365 days</option>
-              <option value="all">All Time</option>
-            </select>
-          </div>
-
-          <div class="col-md-4">
-            <label class="form-label fw-semibold">Group By / Dimension</label>
-            <select name="group_by" class="form-select">
-              <option value="priority" selected>Priority</option>
-              <option value="status">Status</option>
-              <option value="assigned_to">Assignee / Agent</option>
-              <option value="category">Category / CI</option>
             </select>
           </div>
 
           <div class="col-md-4">
             <label class="form-label fw-semibold">Output Format</label>
-            <select name="format" class="form-select">
-              <option value="dashboard" selected>Interactive Dashboard</option>
-              <option value="csv">Export CSV</option>
+            <select name="format" class="form-select" id="reportFormatSelect">
+              <option value="dashboard" selected>Dashboard (all modules)</option>
+              <option value="csv">Export CSV (one module)</option>
             </select>
           </div>
 
-          <div class="col-md-12">
-            <label class="form-label fw-semibold">Description / Notes</label>
-            <textarea name="description" class="form-control" rows="2" placeholder="Optional notes about the criteria or purpose of this report..."></textarea>
+          <div class="col-md-4" id="reportSourceGroup" hidden>
+            <label class="form-label fw-semibold">Records to export</label>
+            <select name="source" class="form-select" id="reportSourceSelect">
+              <option value="incidents" selected>Incidents</option>
+              <option value="changes">Changes</option>
+              <option value="problems">Problems</option>
+              <option value="cmdb">CMDB (Configuration Items)</option>
+              <option value="requests">Service Requests</option>
+            </select>
+            <div class="form-text">Records created in the chosen time range.</div>
           </div>
         </div>
 
@@ -68,4 +49,13 @@
     </div>
   </div>
 </div>
+<script>
+  (function () {
+    var format = document.getElementById('reportFormatSelect');
+    var group = document.getElementById('reportSourceGroup');
+    function sync() { group.hidden = format.value !== 'csv'; }
+    format.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 <%- include('../partials/foot') %>

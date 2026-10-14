@@ -1,7 +1,7 @@
 const fs = require('fs');
 const { db, nextNumber, nowStr, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv } = require('../helpers');
+const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 const { TRACKER_PATH, readTrackerForDownload } = require('../decomTracker');
@@ -68,7 +68,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
   if (environment) { where.push('ci.environment = ?'); params.push(environment); }
   if (location) { where.push('ci.location = ?'); params.push(location); }
   if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rangeCutoff = reportRangeCutoff(req.query.range);
+  if (rangeCutoff) { where.push('ci.created_at >= ?'); params.push(rangeCutoff); }
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let items = await db.prepare(`
     SELECT ci.*, u.full_name AS owner_name

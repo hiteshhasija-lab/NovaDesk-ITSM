@@ -1,6 +1,6 @@
 const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml } = require('../helpers');
+const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
@@ -81,7 +81,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rangeCutoff = reportRangeCutoff(req.query.range);
+  if (rangeCutoff) { where.push('p.created_at >= ?'); params.push(rangeCutoff); }
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let problems = await db.prepare(`
     SELECT p.*, a.full_name AS assigned_name, c.name AS ci_name,

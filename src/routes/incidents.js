@@ -1,6 +1,6 @@
 const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus } = require('../helpers');
+const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus, reportRangeCutoff } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
@@ -108,7 +108,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rangeCutoff = reportRangeCutoff(req.query.range);
+  if (rangeCutoff) { where.push('i.created_at >= ?'); params.push(rangeCutoff); }
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let incidents = await db.prepare(`
     SELECT i.*, u.full_name AS caller_name, a.full_name AS assigned_name, c.name AS ci_name

@@ -211,7 +211,17 @@ function withQuery(query, overrides) {
   return parts.length ? `?${parts.join('&')}` : '';
 }
 
+// Time ranges offered by the report form and the reports page (days back from today, UTC dates).
+const REPORT_RANGE_DAYS = { '7': 7, '30': 30, '90': 90, '365': 365 };
+function reportRangeDays(value) { return REPORT_RANGE_DAYS[String(value)] || null; }
+// 'YYYY-MM-DD' to compare with created_at, or null when no (valid) range was asked for.
+function reportRangeCutoff(value) {
+  const days = reportRangeDays(value);
+  return days ? new Date(Date.now() - days * 86400000).toISOString().slice(0, 10) : null;
+}
+
 module.exports = {
+  REPORT_RANGE_DAYS, reportRangeDays, reportRangeCutoff,
   priorityFromImpactUrgency,
   PRIORITY_LABELS, PRIORITY_BADGE,
   INCIDENT_STATUS_LABELS, INCIDENT_STATUS_BADGE,

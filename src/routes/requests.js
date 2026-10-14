@@ -1,6 +1,6 @@
 const { db, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { REQUEST_STATUS_LABELS, toCsv, escapeHtml } = require('../helpers');
+const { REQUEST_STATUS_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
@@ -71,7 +71,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     else if (assigned_to) { where.push('r.assigned_to = ?'); params.push(assigned_to); }
   }
   if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const rangeCutoff = reportRangeCutoff(req.query.range);
+  if (rangeCutoff) { where.push('r.created_at >= ?'); params.push(rangeCutoff); }
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let requests = await db.prepare(`
     SELECT r.*, ci.name AS item_name, u.full_name AS requester_name, a.full_name AS assigned_name
