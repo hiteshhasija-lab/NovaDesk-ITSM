@@ -4,6 +4,7 @@
 //   node scripts/contract-check.js                 # check this repository
 //   node scripts/contract-check.js --root DIR      # check another checkout (used by tests)
 //   node scripts/contract-check.js --json          # machine readable report
+//   node scripts/contract-check.js --list-routes   # every route with the body fields its handler reads
 //   NOVACONNECT_REPO=/path/to/NovaConnect          # also check the NovaDesk <-> NovaConnect calls
 //                                                  # (default: a sibling ../NovaConnect if present)
 //
@@ -310,6 +311,11 @@ const viewsDir = path.join(ROOT, 'views');
 const publicDir = path.join(ROOT, 'public');
 const viewFiles = listFiles(viewsDir, '.ejs');
 for (const f of mine.unmounted) add(warnings, 'unmounted', f, 'defines routes but is not mounted in server.js');
+
+if (args.includes('--list-routes')) {
+  for (const r of mine.table) console.log(`${r.method.padEnd(6)} ${r.path.padEnd(52)} ${r.where.padEnd(28)} body: ${r.bodyOpaque ? '(whole body)' : [...r.bodyKeys].join(',')}`);
+  process.exit(0);
+}
 
 // -- 1. views -> routes -------------------------------------------------
 const ejsTag = /<%[=\-_#]?([\s\S]*?)[-_]?%>/g;

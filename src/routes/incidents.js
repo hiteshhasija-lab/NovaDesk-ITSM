@@ -5,6 +5,7 @@ const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 
 const INCIDENT_SORT_COLUMNS = {
   number: r => r.number,
@@ -199,6 +200,7 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
 });
 
 router.post('/', requireAuth, async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const impact = Number(b.impact) || 3;
   const urgency = Number(b.urgency) || 3;
@@ -328,6 +330,7 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const existing = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Incident not found.' });

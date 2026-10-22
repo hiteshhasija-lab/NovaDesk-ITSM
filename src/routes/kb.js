@@ -3,6 +3,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { toCsv } = require('../helpers');
 const { sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 
 const router = createAsyncRouter();
 
@@ -86,6 +87,7 @@ router.get('/new', requireAuth, requireRole('admin', 'agent'), (req, res) => {
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['title', 'Title'], ['body', 'Body']])) return;
   const b = req.body;
   const number = await nextNumber('kb', 'KB');
   const info = await db.prepare(`
@@ -120,6 +122,7 @@ router.get('/:id/edit', requireAuth, requireRole('admin', 'agent'), async (req, 
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['title', 'Title'], ['body', 'Body']])) return;
   const b = req.body;
   await db.prepare(`
     UPDATE kb_articles SET title = ?, category = ?, body = ?, status = ?, updated_at = ? WHERE id = ?

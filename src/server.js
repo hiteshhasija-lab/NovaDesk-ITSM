@@ -27,6 +27,7 @@ const kbRoutes = require('./routes/kb');
 const reportRoutes = require('./routes/reports');
 const integrationRoutes = require('./routes/integrations');
 const { startScheduler } = require('./scheduler');
+const { createLimiter } = require('./rateLimit');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -35,6 +36,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const TLS_KEY_PATH = process.env.TLS_KEY_PATH || path.join(__dirname, '..', 'certs', 'key.pem');
 const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'certs', 'cert.pem');
 
+app.disable('x-powered-by');
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
 
@@ -47,6 +49,15 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Basic browser hardening headers (set here because helmet is not a dependency of this app).
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'SAMEORIGIN');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
+  next();
+});
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(methodOverride('_method'));
@@ -57,7 +68,8 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'itsm-dev-secret-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 1000 * 60 * 60 * 8 }
+  // SameSite is explicit because the forms carry no CSRF tokens: a cross-site post must not carry the session.
+  cookie: { maxAge: 1000 * 60 * 60 * 8, httpOnly: true, sameSite: 'lax' }
 }));
 
 app.use(attachUser);
@@ -66,6 +78,10 @@ app.use((req, res, next) => {
   res.locals.path = req.path;
   next();
 });
+
+// Sign-in: 20 refused attempts per address per 15 minutes. Sign-up: 20 requests per address per 15 minutes.
+app.post('/login', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' }));
+app.post('/register', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, countSuccess: true }));
 
 app.use('/api/integrations', integrationRoutes);
 app.use('/', authRoutes);
@@ -88,7 +104,16 @@ app.use((req, res) => {
   res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
 });
 
+// A request the client got wrong is answered with its own 4xx status, not a 500 and a stack trace
+// in the log: a body that is too large, malformed input, an id that is not a number.
 app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode;
+  // Postgres "invalid input syntax" / "out of range": a non-numeric or absurd id in the URL.
+  if (err.code === '22P02' || err.code === '22003') return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
+  if (status >= 400 && status < 500) {
+    const message = status === 413 ? 'That is too large to send.' : 'The request could not be read.';
+    return res.status(status).render('error', { title: 'Request Refused', message });
+  }
   console.error(err);
   res.status(500).render('error', { title: 'Server Error', message: 'Something went wrong.' });
 });

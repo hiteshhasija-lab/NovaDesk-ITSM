@@ -49,3 +49,9 @@ node --test test/*.test.js
 ```
 
 It is static analysis (no server or database) and needs `acorn`, taken from a sibling NovaConnect checkout or `npm install --no-save acorn@8.18.0`. Run it before a release; a failure is a page or an integration call that would break.
+
+```bash
+BASE_URL=http://127.0.0.1:18080 node scripts/walkthrough.js     # drives every module through its real pages and forms (76 steps)
+```
+
+`scripts/walkthrough.js` needs a running instance with the demo data and creates records on it: use a throwaway one, never production. Its last step fires wrong passwords until the sign-in limiter answers 429 (`WALK_SKIP_BRUTE_FORCE=1` skips it).

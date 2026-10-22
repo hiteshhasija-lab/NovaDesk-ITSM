@@ -3,6 +3,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { REQUEST_STATUS_LABELS, escapeHtml } = require('../helpers');
 const { sendNotification } = require('../mailer');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 
 const router = createAsyncRouter();
 
@@ -17,6 +18,7 @@ router.get('/manage', requireAuth, requireRole('admin'), async (req, res) => {
 });
 
 router.post('/manage', requireAuth, requireRole('admin'), async (req, res) => {
+  if (!requireFields(req, res, [['name', 'Name']])) return;
   const b = req.body;
   await db.prepare(`
     INSERT INTO catalog_items (name, description, category, icon, fulfillment_group)

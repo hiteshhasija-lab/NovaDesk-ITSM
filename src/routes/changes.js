@@ -13,6 +13,7 @@ const {
 } = require('../decomAutomation');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 
 const router = createAsyncRouter();
 
@@ -278,6 +279,7 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
 });
 
 router.post('/', requireAuth, async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const number = await nextNumber('change', 'CHG');
   const info = await db.prepare(`
@@ -510,6 +512,7 @@ router.post('/:id/tasks/:taskId/skip', requireAuth, requireRole('admin', 'agent'
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const existing = await db.prepare('SELECT * FROM changes WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Change request not found.' });

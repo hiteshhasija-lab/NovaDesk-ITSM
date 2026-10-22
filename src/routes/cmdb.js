@@ -4,6 +4,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 const { TRACKER_PATH, readTrackerForDownload } = require('../decomTracker');
 
 const router = createAsyncRouter();
@@ -125,6 +126,7 @@ router.get('/decommissioned-tracker.xlsx', requireAuth, requireRole('admin', 'ag
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
   const b = req.body;
   const ci_number = await nextNumber('ci', 'CI');
   const info = await db.prepare(`
@@ -247,6 +249,7 @@ router.get('/:id/edit', requireAuth, requireRole('admin', 'agent'), async (req, 
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
   const b = req.body;
   await db.prepare(`
     UPDATE cmdb_ci SET name=@name, ci_type=@ci_type, environment=@environment, status=@status, ip_address=@ip_address,

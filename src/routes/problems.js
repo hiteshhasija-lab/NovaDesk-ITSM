@@ -4,6 +4,7 @@ const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml, reportRangeCu
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
+const { requireFields } = require('../validate');
 
 const router = createAsyncRouter();
 const staffOnly = [requireAuth, requireRole('admin', 'agent')];
@@ -124,6 +125,7 @@ router.get('/new', requireAuth, requireRole('admin', 'agent'), async (req, res) 
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const number = await nextNumber('problem', 'PRB');
   const info = await db.prepare(`
@@ -185,6 +187,7 @@ router.get('/:id', requireAuth, requireRole('admin', 'agent'), async (req, res) 
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
+  if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const existing = await db.prepare('SELECT * FROM problems WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Problem not found.' });
