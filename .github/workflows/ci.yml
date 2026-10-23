@@ -317,7 +317,9 @@ jobs:
               -e "s/^ADMIN_PASSWORD=$/ADMIN_PASSWORD=$ADMIN_PASSWORD/" \
               -e "s/^NOVADESK_HTTP_PORT=80$/NOVADESK_HTTP_PORT=8080/" \
               -e "s/^NOVADESK_HTTPS_PORT=443$/NOVADESK_HTTPS_PORT=8443/" \
+              -e "s/^SEED_DEMO=false$/SEED_DEMO=true/" \
               .env.example > .env
+          # SEED_DEMO=true: releases since 0.0.84 create the demo people only when asked (0.0.35 always does).
           mkdir -p certs
           ref="${{ matrix.ref }}"
           # "auto": the second-latest commit that changed src/version.js = the release before the current one.
