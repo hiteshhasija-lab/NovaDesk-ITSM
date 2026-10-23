@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Unit tests and contract check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # NovaConnect's source, so the contract check can compare both directions of the integration.
+      - uses: actions/checkout@v7
+        with:
+          repository: hiteshhasija-lab/NovaConnect
+          path: novaconnect
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      # acorn is not a dependency of the app (the image is built with --omit=dev and stays small).
+      - run: npm install --no-save acorn@8.18.0
+      - name: Unit tests
+        run: node --test test/*.test.js
+      - name: Contract check (views, routes, redirects, render variables, NovaConnect integration)
+        run: NOVACONNECT_REPO="$GITHUB_WORKSPACE/novaconnect" node scripts/contract-check.js
+
+  walkthrough:
+    name: Feature walk-through (real app, real database)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: novadesk
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: novadesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U novadesk -d novadesk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Start NovaDesk on an empty database
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          export PORT=8080 HOST=127.0.0.1 SESSION_SECRET=ci-session-secret-$RANDOM$RANDOM
+          nohup node src/server.js > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8080/health
+      - name: Walk-through (every module, as the five demo roles)
+        run: BASE_URL=http://127.0.0.1:8080 node scripts/walkthrough.js
+      - name: Server log (on failure)
+        if: failure()
+        run: tail -80 server.log
+      - name: The server logged no errors
+        run: |
+          if grep -iE "error|unhandled|exception" server.log | grep -v "Failed to load resource" | head -5 | grep .; then
+            echo "errors in the server log"; exit 1
+          fi
+      - name: Stop
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
