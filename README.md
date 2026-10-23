@@ -141,3 +141,5 @@ BASE_URL=http://127.0.0.1:18080 node scripts/walkthrough.js     # drives every m
 ```
 
 `scripts/walkthrough.js` needs a running instance started with `SEED_DEMO=true` on an empty database (the demo users) and creates records on it: use a throwaway one, never production. Its last step fires wrong passwords until the sign-in limiter answers 429 (`WALK_SKIP_BRUTE_FORCE=1` skips it).
+
+CI (`.github/workflows/ci.yml`) runs all of this on every push, and also: a clean start (first admin, no demo data, strict production settings), a fresh install with `compose.yaml` (data survives a container recreate and the backup/restore above, then the walk-through), and two in-place upgrades (from the release before the latest, and from 0.0.35) checked with `scripts/upgrade-check.js`. A change to the schema code in `src/db.js` has to keep the upgrade jobs green: additive and idempotent, with defaults for existing rows.
