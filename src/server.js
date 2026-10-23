@@ -128,7 +128,8 @@ initDb()
 
     servers.push(app.listen(PORT, HOST, () => {
       console.log(`ITSM app running at http://${HOST}:${PORT}`);
-      console.log('Seed logins: admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
+      // The demo logins exist only when the demonstration workspace was asked for; never advertise them otherwise.
+      if (process.env.SEED_DEMO === 'true') console.log('Demo logins (SEED_DEMO=true): admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
     }));
 
     if (fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH)) {
