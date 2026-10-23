@@ -30,6 +30,79 @@ Then open http://localhost:3000. The tables are created automatically, and on an
 
 With neither `ADMIN_*` nor `SEED_DEMO` an empty database stays empty and the log says so. In production mode a missing database setting or session secret stops the start with a message naming it. Decommission requests from NovaConnect are assigned to the account named `admin`, or, if there is none, to the oldest active administrator.
 
+## Fresh install (server)
+
+One server running NovaDesk and Postgres with Docker Compose or Podman Compose, from a clone of this repository.
+
+```bash
+cp .env.example .env     # then fill in the "Required" part: database password, SESSION_SECRET, first admin
+mkdir certs              # optional: certs/cert.pem + certs/key.pem make NovaDesk serve https as well
+docker compose up -d --build        # or: podman compose up -d --build
+docker compose logs novadesk        # "Created the first admin account ..."
+```
+
+Generate each secret with `openssl rand -hex 32` (hex only, so nothing needs quoting in `.env`). Open
+`http://<server>/` and sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`; change the password in
+**Profile**. Those two settings are used once, on an empty database. There is no demonstration data
+and no built-in account (`SEED_DEMO=true` is for demos only). The tables are created by NovaDesk
+itself at start-up. The service catalog, knowledge base and assignment groups start empty; add what
+you need under **Catalog** and **Users**.
+
+Browsers do not need https for NovaDesk to work, but passwords then cross the network in clear text:
+put a certificate in `certs/` (or a TLS proxy in front) for anything but a trial.
+
+**Linking it to NovaConnect** (chat-driven decommissioning): set `NOVACONNECT_BASE_URL` (where this
+server reaches NovaConnect) and `SYNC_API_KEY` in NovaDesk's `.env`, and on the NovaConnect side
+`NOVADESK_BASE_URL` (where NovaConnect reaches NovaDesk), `NOVADESK_PUBLIC_URL` (the address people open)
+and the **same** `SYNC_API_KEY`. Decommission requests are assigned to the account named `admin`, or
+to the oldest active administrator if there is none; only the requester or members of the
+*IRO-Build/Decom* group (the first admin is added automatically; manage it under **Users**) can
+approve. **ESXi:** `ESXI_USER` and `ESXI_PASSWORD` must name an account that may power off and destroy
+virtual machines on your hosts; without them the automation stops at the first ESXi step and says so.
+
+**Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
+`podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
+rebuilds the image but leaves the running container on the old one without it. The database and the
+data volume keep their contents; table changes apply themselves when NovaDesk starts. Back up first
+(below).
+
+**Backups.** Two things hold your data: the database and the data volume (attachments, sessions and
+the Decommissioned Tracker workbook). Use your own database user in place of `novadesk` if you changed `PGUSER`.
+
+```bash
+docker compose exec -T postgres pg_dump -U novadesk -Fc novadesk < /dev/null > novadesk.dump
+docker compose exec -T novadesk tar -C /app/data -cf - . < /dev/null > appdata.tar
+```
+
+Keep both files, plus `.env` and `certs/`, somewhere off the server. (`< /dev/null` matters inside a
+script: `compose exec` otherwise swallows the rest of the script as its input.)
+
+**Restore** onto an empty install (same `.env`). The order matters: the data goes in *before* NovaDesk
+starts, or it would see an empty database and create a new first admin that the restore would clash with.
+
+```bash
+docker compose up -d postgres                  # the database only, empty; give it ~15 s to initialise
+docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --exit-on-error < novadesk.dump
+docker compose run --rm --no-deps -T --entrypoint tar novadesk -C /app/data -xf - < appdata.tar
+docker compose up -d novadesk
+```
+
+Everyone signs in again afterwards (sessions are part of the data volume, so restoring a backup
+brings the old sessions back too). With Podman, use `podman compose`.
+
+**Host notes**
+- *Podman Compose on RHEL:* `podman compose` needs a provider; `podman-compose` is in EPEL.
+- *Rootless Podman:* binding ports 80/443 needs `sysctl net.ipv4.ip_unprivileged_port_start=0`
+  (or set `NOVADESK_HTTP_PORT` / `NOVADESK_HTTPS_PORT` above 1024). Containers do not come back after
+  a reboot on their own: run once, as the user that owns them, `systemctl --user enable podman-restart.service`
+  and `sudo loginctl enable-linger $USER`. Docker restarts them itself (`restart: unless-stopped`).
+- *Next to NovaConnect on the same server:* both default to ports 80/443. Give each its own address
+  (`NOVADESK_BIND_IP` / `NOVACONNECT_BIND_IP`) or its own ports.
+- *SELinux (RHEL, Fedora):* `compose.yaml` mounts `certs/` with `:z` so the container can read it.
+  Don't mount this whole folder into other containers with `:Z`.
+- *The image* is built on the machine it runs on: the `govc` tool for ESXi is fetched for that
+  machine's CPU (x86-64 or ARM64) while building, so the build needs internet access.
+
 ## Demo logins (`SEED_DEMO=true` only)
 
 | Username | Password  | Role  | Notes |

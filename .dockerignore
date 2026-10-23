@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.claude
+node_modules
+data
+certs
+experiments
+test
+scripts
+README.md
