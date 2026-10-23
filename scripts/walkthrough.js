@@ -396,7 +396,8 @@ const has = (r, re) => re.test(r.text);
   });
   await step('very long text is refused or accepted, but never crashes the server', async () => {
     const r = await jane.post('/incidents', { short_description: 'x'.repeat(300000), category: 'other', impact: '3', urgency: '3' }); const h = await anon.get('/health');
-    return must(r.status < 500 && h.status === 200, `status ${r.status}`) && `long text -> ${r.status}`;
+    // The refusal is a proper page (the app's own layout), not Express's bare error text or a stack trace.
+    return must(r.status === 413 && /too large/i.test(r.text) && /<title>[^<]*NovaDesk/i.test(r.text) && !/at .*\.js:\d+|ReferenceError/.test(r.text) && h.status === 200, `status ${r.status}: ${r.text.replace(/\s+/g, ' ').slice(0, 120)}`) && `long text -> ${r.status}`;
   });
 
   section = 'sign-in protection';

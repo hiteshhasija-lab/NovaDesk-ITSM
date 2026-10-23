@@ -69,7 +69,8 @@ jobs:
         run: tail -80 server.log
       - name: The server logged no errors
         run: |
-          if grep -iE "error|unhandled|exception" server.log | grep -v "Failed to load resource" | head -5 | grep .; then
+          if grep -iE "error|unhandled|exception|is not defined" server.log | grep -v "Failed to load resource" | head -1 | grep -q .; then
+            grep -B1 -A6 -iE "error|unhandled|exception|is not defined" server.log | head -40
             echo "errors in the server log"; exit 1
           fi
       - name: Stop

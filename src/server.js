@@ -49,6 +49,14 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// Template helpers for every page, set before anything that can fail: an error raised by the body
+// parser (a request that is too large) is rendered with the same layout, which needs `h`.
+app.use((req, res, next) => {
+  res.locals.h = helpers;
+  res.locals.path = req.path;
+  next();
+});
+
 // Basic browser hardening headers (set here because helmet is not a dependency of this app).
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
@@ -73,11 +81,6 @@ app.use(session({
 }));
 
 app.use(attachUser);
-app.use((req, res, next) => {
-  res.locals.h = helpers;
-  res.locals.path = req.path;
-  next();
-});
 
 // Sign-in: 20 refused attempts per address per 15 minutes. Sign-up: 20 requests per address per 15 minutes.
 app.post('/login', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' }));
