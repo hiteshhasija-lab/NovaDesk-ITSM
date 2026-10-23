@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const { dbConfig, seedPlan } = require('./settings');
 
 // Postgres returns COUNT()/SUM() as bigint and AVG() as numeric, both of which
 // node-postgres parses as STRINGS by default (bigint can exceed Number.MAX_SAFE_INTEGER).
@@ -10,13 +11,7 @@ pgTypes.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val))); /
 
 const knexInstance = require('knex')({
   client: 'pg',
-  connection: {
-    host: process.env.PGHOST || 'RHEL10',
-    port: process.env.PGPORT || 5432,
-    user: process.env.PGUSER || 'novadesk',
-    password: process.env.PGPASSWORD || 'novadesk_dev_pw',
-    database: process.env.PGDATABASE || 'novadesk'
-  },
+  connection: dbConfig(process.env),
   pool: { min: 0, max: 10 }
 });
 
@@ -451,7 +446,18 @@ async function logActivity(entityType, entityId, actorId, message) {
 
 async function seedIfEmpty() {
   const userCount = (await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c;
-  if (Number(userCount) > 0) return;
+  const plan = seedPlan(process.env, Number(userCount));
+  if (plan.action === 'skip') return;
+  if (plan.action === 'none') { console.warn(`[Setup] ${plan.problem}`); return; }
+  if (plan.action === 'admin') {
+    await db.prepare(`
+      INSERT INTO users (username, password_hash, full_name, email, role)
+      VALUES (?, ?, ?, ?, 'admin')
+    `).run(plan.username, bcrypt.hashSync(plan.password, 10), plan.fullName, plan.email);
+    console.log(`Created the first admin account "${plan.username}" from ADMIN_USERNAME/ADMIN_PASSWORD (no demonstration data).`);
+    return;
+  }
+  // SEED_DEMO=true: the demonstration workspace below.
 
   const insertUser = db.prepare(`
     INSERT INTO users (username, password_hash, full_name, email, role, department)
@@ -759,4 +765,13 @@ async function initDb() {
   await seedDecomGroup();
 }
 
-module.exports = { db, nextNumber, logActivity, runWithActingAs, setActingAs, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };
+// The administrator that decommission requests are assigned to and that stands in for people without a
+// NovaDesk account: the account named 'admin' if there is one (as always), otherwise the oldest active
+// administrator, so an install whose first admin has another name works too.
+async function defaultAdmin() {
+  return (await db.prepare("SELECT id FROM users WHERE username = 'admin' AND active = 1").get())
+    || (await db.prepare("SELECT id FROM users WHERE role = 'admin' AND active = 1 ORDER BY id LIMIT 1").get())
+    || null;
+}
+
+module.exports = { db, defaultAdmin, nextNumber, logActivity, runWithActingAs, setActingAs, initDb, nowStr, offsetStr, offsetDateStr, addHoursStr };

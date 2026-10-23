@@ -10,14 +10,27 @@ A ServiceNow-style IT Service Management app: Incident Management, Change Manage
 
 ## Run it
 
+You need Node.js 22 and a Postgres database (the defaults are `localhost`, user `novadesk`, database `novadesk`; set `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` to change them).
+
 ```bash
 npm install
-npm run dev
+npm run dev      # = SEED_DEMO=true node src/server.js: the demonstration workspace
 ```
 
-Then open http://localhost:3000. The database (`data/itsm.db`) is created and seeded automatically on first run with demo users, CMDB assets, incidents, and change requests.
+Then open http://localhost:3000. The tables are created automatically, and on an empty database `npm run dev` also fills it with demo users, CMDB assets, incidents, changes, catalog items and articles.
 
-## Demo logins
+## Settings
+
+| Setting | |
+|---|---|
+| `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` (`PGPORT`) | The database. **Required** when `NODE_ENV=production`; otherwise development defaults apply. |
+| `SESSION_SECRET` | Signs sessions. **Required** when `NODE_ENV=production`: at least 32 characters, for example `openssl rand -hex 32`. |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` (8+ characters), optional `ADMIN_FULL_NAME`, `ADMIN_EMAIL` | On an **empty** database, creates one administrator and nothing else. Used once: changing them later does not change an existing account. |
+| `SEED_DEMO=true` | On an empty database, creates the demonstration workspace instead (see "Demo logins"). Never use it on a real installation. |
+
+With neither `ADMIN_*` nor `SEED_DEMO` an empty database stays empty and the log says so. In production mode a missing database setting or session secret stops the start with a message naming it. Decommission requests from NovaConnect are assigned to the account named `admin`, or, if there is none, to the oldest active administrator.
+
+## Demo logins (`SEED_DEMO=true` only)
 
 | Username | Password  | Role  | Notes |
 |----------|-----------|-------|-------|
@@ -54,4 +67,4 @@ It is static analysis (no server or database) and needs `acorn`, taken from a si
 BASE_URL=http://127.0.0.1:18080 node scripts/walkthrough.js     # drives every module through its real pages and forms (76 steps)
 ```
 
-`scripts/walkthrough.js` needs a running instance with the demo data and creates records on it: use a throwaway one, never production. Its last step fires wrong passwords until the sign-in limiter answers 429 (`WALK_SKIP_BRUTE_FORCE=1` skips it).
+`scripts/walkthrough.js` needs a running instance started with `SEED_DEMO=true` on an empty database (the demo users) and creates records on it: use a throwaway one, never production. Its last step fires wrong passwords until the sign-in limiter answers 429 (`WALK_SKIP_BRUTE_FORCE=1` skips it).

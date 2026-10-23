@@ -10,7 +10,7 @@
 //
 //   BASE_URL=http://127.0.0.1:18080 node scripts/walkthrough.js
 //
-// Needs the demo data NovaDesk seeds into an empty database (admin/admin123, jdoe/agent123,
+// Needs the demonstration data (start NovaDesk with SEED_DEMO=true on an empty database: admin/admin123, jdoe/agent123,
 // bsmith/agent123, mchen/user123, rpatel/user123). It creates records on that instance: use a
 // throwaway or test one, never production.
 const BASE = (process.env.BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');

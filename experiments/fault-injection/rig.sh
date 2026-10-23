@@ -55,7 +55,7 @@ up() {
     -e PGHOST=127.0.0.1 -e PGPORT=5432 -e PGUSER=fi -e PGPASSWORD=fi_pw -e PGDATABASE=fi \
     -e SESSION_SECRET=fi-session-secret -e SYNC_API_KEY="$KEY" \
     -e NOVACONNECT_BASE_URL=http://127.0.0.1:18081 \
-    -e DECOM_SOAK_PERIOD_HOURS=0.01 \
+    -e DECOM_SOAK_PERIOD_HOURS=0.01 -e SEED_DEMO=true \
     -v "$DIR/bin:/fi/bin:ro,Z" -e PATH=/fi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e ESXI_USER=fi-stub-user -e ESXI_PASSWORD=fi-stub-password \
     -e ESXI_POWER_TIMEOUT_S="${ESXI_POWER_TIMEOUT_S:-15}" -e ESXI_DESTROY_TIMEOUT_S="${ESXI_DESTROY_TIMEOUT_S:-45}" \

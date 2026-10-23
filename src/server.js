@@ -28,6 +28,7 @@ const reportRoutes = require('./routes/reports');
 const integrationRoutes = require('./routes/integrations');
 const { startScheduler } = require('./scheduler');
 const { createLimiter } = require('./rateLimit');
+const { sessionSecret } = require('./settings');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -73,7 +74,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use(session({
   store: new FileStore({ path: path.join(__dirname, '..', 'data', 'sessions'), logFn: () => {} }),
-  secret: process.env.SESSION_SECRET || 'itsm-dev-secret-change-me',
+  secret: sessionSecret(process.env),
   resave: false,
   saveUninitialized: false,
   // SameSite is explicit because the forms carry no CSRF tokens: a cross-site post must not carry the session.

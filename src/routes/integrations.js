@@ -1,4 +1,4 @@
-const { db, nextNumber, logActivity, nowStr, offsetStr, runWithActingAs, setActingAs } = require('../db');
+const { db, defaultAdmin, nextNumber, logActivity, nowStr, offsetStr, runWithActingAs, setActingAs } = require('../db');
 const { escapeHtml } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
 const esxi = require('../esxi');
@@ -60,7 +60,7 @@ router.post('/novaconnect/decommission-requests', async (req, res) => {
   // Decommission changes are always assigned to Alex Admin (username 'admin') and scheduled to
   // start immediately with a 1-day window -- there's no separate approval-to-schedule gap for
   // this automated flow, so "planned" is just "now" through "now + 1 day".
-  const defaultAssignee = await db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
+  const defaultAssignee = await defaultAdmin();
   const plannedStart = nowStr();
   const plannedEnd = offsetStr(1);
 
@@ -205,7 +205,7 @@ async function resolveDecomActor(req, username) {
     const name = (typeof vouch.full_name === 'string' && vouch.full_name.trim() ? vouch.full_name.trim() : (user && user.full_name) || username).slice(0, 100);
     const basis = vouch.basis === 'requester' ? 'requester' : 'server-decom admin';
     if (user) return { id: user.id, role: 'admin', full_name: name, username, basis, displayName: null };
-    const fallback = await db.prepare("SELECT id FROM users WHERE username = 'admin'").get();
+    const fallback = await defaultAdmin();
     if (!fallback) return null;
     // No NovaDesk account: stored under the default admin, shown under their own name.
     setActingAs(fallback.id, name);

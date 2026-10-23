@@ -58,6 +58,8 @@ jobs:
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           export PORT=8080 HOST=127.0.0.1 SESSION_SECRET=ci-session-secret-$RANDOM$RANDOM
+          # The walk-through uses the demonstration users, which are only created when asked for.
+          export SEED_DEMO=true
           nohup node src/server.js > server.log 2>&1 &
           echo $! > server.pid
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
@@ -73,6 +75,98 @@ jobs:
             grep -B1 -A6 -iE "error|unhandled|exception|is not defined" server.log | head -40
             echo "errors in the server log"; exit 1
           fi
+      - name: Stop
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+
+  # A clean install: an empty database with no demo switch gets exactly one administrator from the
+  # settings, and no demonstration data; production mode refuses to start without its settings.
+  first-admin:
+    name: Clean start (first admin from settings, no demo data, strict production settings)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: novadesk
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: novadesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U novadesk -d novadesk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: novadesk
+      PGPASSWORD: ci_only_password
+      PGDATABASE: novadesk
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Production mode refuses to start without its settings
+        run: |
+          set +e
+          out=$(NODE_ENV=production PGHOST= PORT=8081 timeout 20 node src/server.js 2>&1); code=$?
+          echo "$out" | head -3; echo "exit code: $code"
+          test "$code" -ne 0
+          echo "$out" | grep -q "Missing settings (NODE_ENV=production): PGHOST"
+          out=$(NODE_ENV=production PORT=8081 timeout 20 node src/server.js 2>&1); code=$?
+          echo "$out" | head -3
+          test "$code" -ne 0
+          echo "$out" | grep -q "SESSION_SECRET is required"
+
+      - name: First start with ADMIN_USERNAME and ADMIN_PASSWORD only
+        run: |
+          export PORT=8080 HOST=127.0.0.1 SESSION_SECRET=$(openssl rand -hex 32)
+          export ADMIN_USERNAME=owner ADMIN_PASSWORD=$(openssl rand -hex 12)
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          echo "::add-mask::$ADMIN_PASSWORD"
+          nohup env NODE_ENV=production node src/server.js > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8080/health
+
+      - name: One administrator, no demonstration data, the demo logins do not work
+        run: |
+          grep -q 'Created the first admin account "owner"' server.log
+          sql() { psql -Atc "$1"; }
+          test "$(sql 'select count(*) from users')" = 1
+          test "$(sql "select role from users where username = 'owner'")" = admin
+          for t in incidents changes problems cmdb_ci catalog_items kb_articles service_requests; do
+            test "$(sql "select count(*) from $t")" = 0 || { echo "$t is not empty"; exit 1; }
+          done
+          login() { curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=$1" --data-urlencode "password=$2" http://127.0.0.1:8080/login; }
+          test "$(login owner "$ADMIN_PASSWORD")" = 302
+          test "$(login admin admin123)" = 401
+          test "$(login jdoe agent123)" = 401
+
+      - name: The first admin is in the IRO-Build/Decom group (so decommission approvals are not locked)
+        run: |
+          sql() { psql -Atc "$1"; }
+          test "$(sql "select count(*) from user_assignment_groups where group_name = 'IRO-Build/Decom'")" = 1
+
+      - name: A restart does not seed again
+        run: |
+          kill "$(cat server.pid)"; sleep 2
+          export PORT=8080 HOST=127.0.0.1 SESSION_SECRET=$(openssl rand -hex 32) ADMIN_USERNAME=other ADMIN_PASSWORD=anotherpassword1
+          nohup env NODE_ENV=production node src/server.js > server2.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
+          test "$(psql -Atc 'select count(*) from users')" = 1
+          ! grep -q "Created the first admin" server2.log
+
+      - name: Server log (on failure)
+        if: failure()
+        run: tail -60 server.log; tail -30 server2.log 2>/dev/null || true
       - name: Stop
         if: always()
         run: kill "$(cat server.pid)" 2>/dev/null || true
