@@ -45,8 +45,8 @@ Generate each secret with `openssl rand -hex 32` (hex only, so nothing needs quo
 `http://<server>/` and sign in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`; change the password in
 **Profile**. Those two settings are used once, on an empty database. There is no demonstration data
 and no built-in account (`SEED_DEMO=true` is for demos only). The tables are created by NovaDesk
-itself at start-up. The service catalog, knowledge base and assignment groups start empty; add what
-you need under **Catalog** and **Users**.
+itself at start-up. The service catalog and knowledge base start empty; add what you need under
+**Catalog** and **Knowledge Base**, and your people under **Users**.
 
 Browsers do not need https for NovaDesk to work, but passwords then cross the network in clear text:
 put a certificate in `certs/` (or a TLS proxy in front) for anything but a trial.
@@ -87,8 +87,8 @@ docker compose run --rm --no-deps -T --entrypoint tar novadesk -C /app/data -xf 
 docker compose up -d novadesk
 ```
 
-Everyone signs in again afterwards (sessions are part of the data volume, so restoring a backup
-brings the old sessions back too). With Podman, use `podman compose`.
+Sessions are part of the data volume, so people whose session was in the backup stay signed in and
+everyone else signs in again. With Podman, use `podman compose`.
 
 **Host notes**
 - *Podman Compose on RHEL:* `podman compose` needs a provider; `podman-compose` is in EPEL.
