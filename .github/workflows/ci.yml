@@ -170,3 +170,210 @@ jobs:
       - name: Stop
         if: always()
         run: kill "$(cat server.pid)" 2>/dev/null || true
+
+  # The install kit works from nothing: compose up, first admin, no demo data, data survives a restart
+  # and the README's backup/wipe/restore, and (started with the demo switch) the whole walk-through.
+  fresh-install:
+    name: Fresh install (compose.yaml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Settings from .env.example
+        run: |
+          gen() { openssl rand -hex 32; }
+          ADMIN_PASSWORD=$(openssl rand -hex 12)
+          echo "::add-mask::$ADMIN_PASSWORD"
+          echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
+          sed -e "s/^PGPASSWORD=$/PGPASSWORD=$(gen)/" \
+              -e "s/^SESSION_SECRET=$/SESSION_SECRET=$(gen)/" \
+              -e "s/^ADMIN_PASSWORD=$/ADMIN_PASSWORD=$ADMIN_PASSWORD/" \
+              -e "s/^NOVADESK_HTTP_PORT=80$/NOVADESK_HTTP_PORT=8080/" \
+              -e "s/^NOVADESK_HTTPS_PORT=443$/NOVADESK_HTTPS_PORT=8443/" \
+              .env.example > .env
+          mkdir -p certs
+          grep -cE '^[A-Z_]+=.+' .env
+
+      - name: Start (docker compose up -d --build)
+        run: docker compose up -d --build
+
+      - name: Wait until healthy
+        run: |
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && exit 0; sleep 3; done
+          echo "NovaDesk did not become healthy"; exit 1
+
+      - name: First start created the first admin and nothing else
+        run: |
+          docker compose logs novadesk > first-start.log
+          grep -q 'Created the first admin account "admin"' first-start.log
+          sql() { docker compose exec -T postgres psql -U novadesk -d novadesk -Atc "$1" < /dev/null | head -1; }
+          test "$(sql 'select count(*) from users')" = 1
+          for t in incidents changes problems cmdb_ci catalog_items kb_articles service_requests; do
+            test "$(sql "select count(*) from $t")" = 0 || { echo "$t is not empty"; exit 1; }
+          done
+          login() { curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=$1" --data-urlencode "password=$2" http://localhost:8080/login; }
+          test "$(login admin "$ADMIN_PASSWORD")" = 302
+          test "$(login admin admin123)" = 401
+          test "$(login jdoe agent123)" = 401
+
+      - name: Put data in (an incident with an attachment)
+        run: |
+          curl -s -o /dev/null -c jar.txt -X POST -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' -b jar.txt -X POST -d "short_description=ci kit incident&category=other&impact=3&urgency=2" http://localhost:8080/incidents)
+          echo "$loc" > incident.loc
+          head -c 300000 /dev/urandom > attach.bin
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt -F "file=@attach.bin;filename=ci.bin" "$loc/attachments")" = 302
+          attid=$(curl -s -b jar.txt "$loc" | grep -oE '/attachments/[0-9]+/download' | head -1 | grep -oE '[0-9]+')
+          echo "$attid" > attachment.id
+          curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"
+          cmp attach.bin back.bin
+
+      - name: A recreated container keeps the data, the session and does not seed again
+        run: |
+          docker compose up -d --force-recreate novadesk
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
+          loc=$(cat incident.loc); attid=$(cat attachment.id)
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt "$loc")" = 200
+          curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"; cmp attach.bin back.bin
+          docker compose logs novadesk > second-start.log
+          if grep -q "Created the first admin" second-start.log; then echo "seeded again"; exit 1; fi
+
+      - name: Backup, wipe and restore (README "Backups" and "Restore")
+        run: |
+          docker compose exec -T postgres pg_dump -U novadesk -Fc novadesk < /dev/null > novadesk.dump
+          docker compose exec -T novadesk tar -C /app/data -cf - . < /dev/null > appdata.tar
+          ls -la novadesk.dump appdata.tar
+          docker compose down -v
+          docker compose up -d postgres
+          for i in $(seq 1 40); do docker compose exec -T postgres pg_isready -U novadesk -d novadesk < /dev/null && break; sleep 3; done
+          sleep 5
+          docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --exit-on-error < novadesk.dump
+          docker compose run --rm --no-deps -T --entrypoint tar novadesk -C /app/data -xf - < appdata.tar
+          docker compose up -d novadesk
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
+          loc=$(cat incident.loc); attid=$(cat attachment.id)
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login)" = 302
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt "$loc")" = 200
+          curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"; cmp attach.bin back.bin
+          docker compose logs novadesk > restored.log
+          if grep -q "Created the first admin" restored.log; then echo "a new first admin was created during the restore"; exit 1; fi
+
+      - name: Demonstration mode and the full walk-through
+        run: |
+          docker compose down -v
+          sed -i 's/^SEED_DEMO=false$/SEED_DEMO=true/' .env
+          docker compose up -d --build
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
+          BASE_URL=http://localhost:8080 node scripts/walkthrough.js
+
+      - name: The server logged no errors
+        run: |
+          docker compose logs novadesk > walk.log
+          if grep -iE "error|unhandled|exception|is not defined" walk.log | grep -v "Failed to load resource" | head -1 | grep -q .; then
+            grep -B1 -A6 -iE "error|unhandled|exception|is not defined" walk.log | head -40
+            echo "errors in the server log"; exit 1
+          fi
+
+      - name: Logs (on failure)
+        if: failure()
+        run: docker compose logs
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
+
+  # An existing install keeps working when it is upgraded in place, the way the README describes:
+  # start an OLDER release (its demonstration workspace comes with it), put data in it, rebuild from
+  # this version on the same volumes, and check that the same people still sign in and find everything.
+  # Two baselines: the release before the latest one (what a regularly updated install does) and 0.0.35
+  # (a long jump). The old release is built with this tree's install kit (Containerfile, compose.yaml),
+  # which old releases do not have.
+  upgrade:
+    name: Upgrade in place from ${{ matrix.baseline }} (compose.yaml)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - baseline: the previous release
+            ref: auto
+          - baseline: 0.0.35
+            ref: 5343a90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Settings from .env.example, and the old source
+        run: |
+          gen() { openssl rand -hex 32; }
+          ADMIN_PASSWORD=$(openssl rand -hex 12)
+          echo "::add-mask::$ADMIN_PASSWORD"
+          sed -e "s/^PGPASSWORD=$/PGPASSWORD=$(gen)/" \
+              -e "s/^SESSION_SECRET=$/SESSION_SECRET=$(gen)/" \
+              -e "s/^ADMIN_PASSWORD=$/ADMIN_PASSWORD=$ADMIN_PASSWORD/" \
+              -e "s/^NOVADESK_HTTP_PORT=80$/NOVADESK_HTTP_PORT=8080/" \
+              -e "s/^NOVADESK_HTTPS_PORT=443$/NOVADESK_HTTPS_PORT=8443/" \
+              .env.example > .env
+          mkdir -p certs
+          ref="${{ matrix.ref }}"
+          # "auto": the second-latest commit that changed src/version.js = the release before the current one.
+          if [ "$ref" = auto ]; then ref=$(git log -n 2 --format=%H -- src/version.js | tail -1); fi
+          test "$(git rev-parse "$ref")" != "$(git rev-parse HEAD)"
+          echo "Upgrading from $ref ($(git show "$ref:src/version.js" | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+" | head -1)) to $(git rev-parse --short HEAD) ($(grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+" src/version.js | head -1))"
+          git worktree add "$RUNNER_TEMP/old" "$ref"
+          cp Containerfile compose.yaml .dockerignore "$RUNNER_TEMP/old/"
+          cp .env "$RUNNER_TEMP/old/.env"
+          mkdir -p "$RUNNER_TEMP/old/certs"
+
+      - name: Start the old release (demo workspace included) and put data in it
+        working-directory: ${{ runner.temp }}/old
+        run: |
+          docker compose -p ndup up -d --build
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
+          curl -fsS http://localhost:8080/health
+          echo "old version: $(docker compose -p ndup exec -T novadesk node -e 'console.log(require("./src/version"))' < /dev/null)"
+          STATE_FILE="$RUNNER_TEMP/upgrade-state.json" node "$GITHUB_WORKSPACE/scripts/upgrade-check.js" seed
+
+      - name: Upgrade in place to this version
+        run: |
+          # Same project name, same .env, same volumes: only the image and the code change.
+          docker compose -p ndup up -d --build --force-recreate novadesk
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
+          curl -fsS http://localhost:8080/health
+          new="$(grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+" src/version.js | head -1)"
+          running="$(docker compose -p ndup exec -T novadesk node -e 'console.log(require("./src/version"))' < /dev/null)"
+          echo "now running: $running (expected $new)"
+          test "$running" = "$new"
+
+      - name: No second admin, nothing seeded again, nothing in the logs
+        run: |
+          test "$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc 'select count(*) from users' < /dev/null | head -1)" = 5
+          docker compose -p ndup logs novadesk > upgrade.log
+          if grep -q "Created the first admin" upgrade.log; then echo "a first admin was created on an existing database"; exit 1; fi
+          if grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -1 | grep -q .; then grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -5; exit 1; fi
+
+      - name: The same people find everything after the upgrade
+        run: STATE_FILE="$RUNNER_TEMP/upgrade-state.json" node scripts/upgrade-check.js verify
+
+      - name: Walk-through on the upgraded install
+        run: BASE_URL=http://localhost:8080 WALK_SKIP_BRUTE_FORCE=1 node scripts/walkthrough.js
+
+      - name: The server logged no errors during the walk-through
+        run: |
+          docker compose -p ndup logs novadesk > walk.log
+          if grep -iE "error|unhandled|exception|is not defined" walk.log | grep -v "Failed to load resource" | head -1 | grep -q .; then
+            grep -B1 -A6 -iE "error|unhandled|exception|is not defined" walk.log | head -40
+            echo "errors in the server log"; exit 1
+          fi
+
+      - name: Logs (on failure)
+        if: failure()
+        run: docker compose -p ndup logs
+
+      - name: Clean up
+        if: always()
+        run: docker compose -p ndup down -v
