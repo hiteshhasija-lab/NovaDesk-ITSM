@@ -81,4 +81,54 @@ function mailConfig(env) {
   };
 }
 
-module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, DEV_SESSION_SECRET };
+// Single sign-on (OpenID Connect) and two-step verification.
+//   OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and PUBLIC_URL switch SSO on (all four, or none).
+//   OIDC_AUTO_CREATE=true creates an account the first time someone signs in (role OIDC_DEFAULT_ROLE, never admin).
+//   OIDC_TRUST_EMAIL=true matches an existing account by an email the provider did not mark verified (Microsoft
+//   Entra ID does not send email_verified); use it only with an issuer that belongs to your own tenant.
+//   OIDC_ALLOWED_DOMAINS limits sign-in to those email domains.
+//   LOCAL_LOGIN=false hides the username and password form (needs SSO).
+//   MFA_REQUIRE=admins|all makes those people set up two-step verification before they can use NovaDesk.
+const isLoopbackHost = (host) => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host);
+
+function oidcConfig(env) {
+  const issuer = (env.OIDC_ISSUER || '').trim().replace(/\/+$/, '');
+  const clientId = (env.OIDC_CLIENT_ID || '').trim();
+  const clientSecret = env.OIDC_CLIENT_SECRET || '';
+  const publicUrl = (env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (!issuer && !clientId && !clientSecret) return { enabled: false };
+  const missing = [['OIDC_ISSUER', issuer], ['OIDC_CLIENT_ID', clientId], ['OIDC_CLIENT_SECRET', clientSecret], ['PUBLIC_URL', publicUrl]].filter(([, v]) => !v).map(([n]) => n);
+  if (missing.length) throw new Error(`Single sign-on needs ${missing.join(', ')} as well (set all of OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and PUBLIC_URL, or none of them).`);
+  const url = (name, value) => {
+    let u;
+    try { u = new URL(value); } catch { throw new Error(`${name} is not a web address.`); }
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLoopbackHost(u.hostname))) throw new Error(`${name} must start with https:// (plain http is only accepted for localhost).`);
+    return u;
+  };
+  url('OIDC_ISSUER', issuer);
+  url('PUBLIC_URL', publicUrl);
+  const flag = (name) => (env[name] || '').trim().toLowerCase() === 'true';
+  const role = (env.OIDC_DEFAULT_ROLE || 'user').trim().toLowerCase();
+  if (!['user', 'agent'].includes(role)) throw new Error('OIDC_DEFAULT_ROLE must be user or agent: administrators are never created by single sign-on.');
+  return {
+    enabled: true, issuer, clientId, clientSecret,
+    redirectUri: `${publicUrl}/auth/oidc/callback`,
+    scopes: (env.OIDC_SCOPES || 'openid email profile').trim().split(/\s+/).filter(Boolean),
+    buttonLabel: (env.OIDC_BUTTON_LABEL || 'Sign in with SSO').trim().slice(0, 60),
+    autoCreate: flag('OIDC_AUTO_CREATE'),
+    defaultRole: role,
+    trustEmail: flag('OIDC_TRUST_EMAIL'),
+    allowedDomains: (env.OIDC_ALLOWED_DOMAINS || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+  };
+}
+
+function authPolicy(env) {
+  const oidc = oidcConfig(env);
+  const localLogin = (env.LOCAL_LOGIN || 'true').trim().toLowerCase() !== 'false';
+  if (!localLogin && !oidc.enabled) throw new Error('LOCAL_LOGIN=false hides the password form, so single sign-on has to be set up (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, PUBLIC_URL) or nobody could sign in.');
+  const mfaRequire = (env.MFA_REQUIRE || 'none').trim().toLowerCase();
+  if (!['none', 'admins', 'all'].includes(mfaRequire)) throw new Error('MFA_REQUIRE must be none, admins or all.');
+  return { oidc, localLogin, mfaRequire };
+}
+
+module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, DEV_SESSION_SECRET };

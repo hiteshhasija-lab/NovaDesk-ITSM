@@ -19,6 +19,7 @@ const cmdbRoutes = require('./routes/cmdb');
 const userRoutes = require('./routes/users');
 const notificationRoutes = require('./routes/notifications');
 const slaRoutes = require('./routes/sla');
+const mfaRoutes = require('./routes/mfa');
 const searchRoutes = require('./routes/search');
 const profileRoutes = require('./routes/profile');
 const myWorkRoutes = require('./routes/mywork');
@@ -88,6 +89,9 @@ app.use(attachUser);
 // Sign-in: 20 refused attempts per address per 15 minutes. Sign-up: 20 requests per address per 15 minutes.
 app.post('/login', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' }));
 app.post('/register', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, countSuccess: true }));
+// The code step: 20 wrong codes per address per 15 minutes (and 5 per person, see mfa.js). Single sign-on: 30 failed returns.
+app.post('/login/mfa', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many wrong codes. Please wait 15 minutes and try again.' }));
+app.get('/auth/oidc/callback', createLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many failed sign-in attempts. Please wait 15 minutes and try again.' }));
 
 app.use('/api/integrations', integrationRoutes);
 app.use('/', authRoutes);
@@ -100,6 +104,7 @@ app.use('/users', userRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/settings/sla', slaRoutes);
 app.use('/search', searchRoutes);
+app.use('/profile/mfa', mfaRoutes);
 app.use('/profile', profileRoutes);
 app.use('/my-work', myWorkRoutes);
 app.use('/catalog', catalogRoutes);

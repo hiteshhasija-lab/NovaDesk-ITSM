@@ -178,3 +178,24 @@ test('0003 adds request and change policies switched off, and the clock columns,
     assert.deepStrictEqual([ch.status, rq.status], ['submitted', 'submitted']);
   });
 });
+
+test('0004 adds sign-in links, two-step secrets and recovery codes that go away with the person, and one identity links once', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const [{ id: a }] = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('a', 'x', 'A', 'user') RETURNING id`)).rows;
+    const [{ id: b }] = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('b', 'x', 'B', 'user') RETURNING id`)).rows;
+    await knex.raw(`INSERT INTO user_identities (user_id, issuer, subject) VALUES (?, 'https://idp.example', 'sub-1')`, [a]);
+    await assert.rejects(knex.raw(`INSERT INTO user_identities (user_id, issuer, subject) VALUES (?, 'https://idp.example', 'sub-1')`, [b]), /duplicate key|unique/i, 'the same identity cannot be linked to two accounts');
+    await knex.raw(`INSERT INTO user_identities (user_id, issuer, subject) VALUES (?, 'https://other.example', 'sub-1')`, [b]);   // same subject at another provider is a different identity
+    await knex.raw(`INSERT INTO user_mfa (user_id, secret_enc) VALUES (?, 'v1:x:y:z')`, [a]);
+    await assert.rejects(knex.raw(`INSERT INTO user_mfa (user_id, secret_enc) VALUES (?, 'v1:x:y:z')`, [a]), /duplicate key|unique/i, 'one two-step record per person');
+    await knex.raw(`INSERT INTO user_recovery_codes (user_id, code_hash) VALUES (?, 'h1'), (?, 'h2')`, [a, a]);
+    const mfa = (await knex.raw(`SELECT enabled, last_counter FROM user_mfa WHERE user_id = ?`, [a])).rows[0];
+    assert.deepStrictEqual([mfa.enabled, Number(mfa.last_counter)], [0, 0], 'setup starts unfinished');
+    await knex.raw(`DELETE FROM users WHERE id = ?`, [a]);
+    for (const t of ['user_identities', 'user_mfa', 'user_recovery_codes']) {
+      assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM ${t} WHERE user_id = ?`, [a])).rows[0].c), 0, `${t} rows go with the person`);
+    }
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM user_identities WHERE user_id = ?`, [b])).rows[0].c), 1, 'the other person is untouched');
+  });
+});

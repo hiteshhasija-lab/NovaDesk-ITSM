@@ -70,12 +70,17 @@ jobs:
           export SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_FROM='NovaDesk <helpdesk@example.test>'
           # SLA warning/breach emails are looked for every 2 seconds instead of every minute, for the SLA mail steps.
           export SLA_SWEEP_S=2
+          # Single sign-on against a local OpenID Connect provider (scripts/mock-oidc.js); accounts are created on first sign-in.
+          nohup node scripts/mock-oidc.js 9999 > oidc.log 2>&1 &
+          echo $! > oidc.pid
+          export PUBLIC_URL=http://127.0.0.1:8080 OIDC_ISSUER=http://127.0.0.1:9999 OIDC_CLIENT_ID=novadesk-test OIDC_CLIENT_SECRET=test-secret
+          export OIDC_AUTO_CREATE=true OIDC_ALLOWED_DOMAINS=corp.local,newco.example OIDC_JWKS_MIN_REFETCH_S=1 OIDC_BUTTON_LABEL='Sign in with Contoso'
           nohup node src/server.js > server.log 2>&1 &
           echo $! > server.pid
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
           curl -fsS http://127.0.0.1:8080/health
       - name: Walk-through (every module, as the five demo roles)
-        run: BASE_URL=http://127.0.0.1:8080 WALK_EXPECT_MAIL=1 WALK_FAST_SLA=1 node scripts/walkthrough.js
+        run: BASE_URL=http://127.0.0.1:8080 WALK_EXPECT_MAIL=1 WALK_FAST_SLA=1 WALK_OIDC=http://127.0.0.1:9999 node scripts/walkthrough.js
       - name: The mail really went out through the SMTP server
         run: |
           test -s sink.jsonl || { echo "the SMTP sink received nothing"; exit 1; }
@@ -100,6 +105,10 @@ jobs:
             if (bad.length) { console.log([...new Set(bad)].join("\n")); process.exit(1); }
             console.log("sender, subject and both parts are right on all " + msgs.length + " messages");
           '
+      - name: Sign-in policies (MFA_REQUIRE, LOCAL_LOGIN=false, settings that are refused)
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/sign-in-policy-check.js
       - name: Server log (on failure)
         if: failure()
         run: tail -80 server.log
@@ -114,6 +123,7 @@ jobs:
         run: |
           kill "$(cat server.pid)" 2>/dev/null || true
           kill "$(cat sink.pid)" 2>/dev/null || true
+          kill "$(cat oidc.pid)" 2>/dev/null || true
 
   # A clean install: an empty database with no demo switch gets exactly one administrator from the
   # settings, and no demonstration data; production mode refuses to start without its settings.

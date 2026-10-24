@@ -65,5 +65,23 @@
       </form>
     </div>
   </div>
+
+  <% if (user && user.id && mfaStatus) { %>
+  <div class="card mt-3" style="max-width:700px;">
+    <div class="card-body">
+      <h6 class="section-title">Sign-in security</h6>
+      <% if (resetMessage) { %><div class="alert alert-success py-2 small"><%= resetMessage %></div><% } %>
+      <dl class="row mb-2 small">
+        <dt class="col-sm-4">Two-step verification</dt>
+        <dd class="col-sm-8"><%= mfaStatus.enabled ? 'On' : (mfaStatus.pending ? 'Set-up started, not finished' : 'Off') %></dd>
+        <dt class="col-sm-4">Single sign-on</dt>
+        <dd class="col-sm-8"><% if (identities.length) { %><% identities.forEach(i => { %><div><%= i.issuer %><% if (i.email) { %> <span class="text-muted">(<%= i.email %>)</span><% } %></div><% }) %><% } else { %>Not linked<% } %></dd>
+      </dl>
+      <% if (mfaStatus.enabled || mfaStatus.pending) { %>
+      <form method="POST" action="/users/<%= user.id %>/mfa/reset" class="m-0"><button type="submit" class="btn btn-outline-danger btn-sm">Reset two-step verification</button> <span class="small text-muted ms-2">For someone who lost their phone and recovery codes.</span></form>
+      <% } %>
+    </div>
+  </div>
+  <% } %>
 </div>
 <%- include('../partials/foot') %>

@@ -12,6 +12,7 @@
 
       <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
 
+      <% if (localLogin) { %>
       <form method="POST" action="/login">
         <div class="login-field mb-2">
           <span class="login-field-icon"><i class="bi bi-person"></i></span>
@@ -30,14 +31,16 @@
         </div>
         <button type="submit" class="btn login-btn-primary w-100 py-2">Sign In <i class="bi bi-arrow-right ms-1"></i></button>
       </form>
+      <% } %>
 
-      <div class="login-divider-row my-2">or</div>
+      <% if (sso) { %>
+      <% if (localLogin) { %><div class="login-divider-row my-2">or</div><% } %>
+      <a href="/auth/oidc/start" class="btn login-btn-sso w-100 py-2">
+        <i class="bi bi-building me-2"></i><%= sso.label %>
+      </a>
+      <% } %>
 
-      <button type="button" class="btn login-btn-sso w-100 py-2" aria-disabled="true" tabindex="-1" onclick="return false;" title="SSO is not configured for this instance">
-        <i class="bi bi-building me-2"></i>Sign in with SSO
-      </button>
-
-      <div class="login-signup-row">New here? <a href="/register">Create account</a></div>
+      <% if (localLogin) { %><div class="login-signup-row">New here? <a href="/register">Create account</a></div><% } %>
 
       <div class="login-trust-row">
         <span><i class="bi bi-shield-check"></i> Secure</span>
@@ -51,7 +54,8 @@
   </div>
 </div>
 <script>
-  document.getElementById('togglePassword').addEventListener('click', function () {
+  var toggle = document.getElementById('togglePassword');
+  if (toggle) toggle.addEventListener('click', function () {
     var input = document.getElementById('loginPassword');
     var icon = this.querySelector('i');
     var showing = input.type === 'text';

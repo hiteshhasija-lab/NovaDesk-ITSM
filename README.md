@@ -86,6 +86,31 @@ decommission change's requester and the IRO-Build/Decom group; any other change'
 administrators). A change's clock is kept by watching its status, so approving, rejecting or cancelling it works
 as before and stops the clock within a minute.
 
+**Single sign-on.** NovaDesk can sign people in through your identity provider with OpenID Connect: Microsoft
+Entra ID, Google Workspace, Okta, Keycloak and the like. At the provider, register an application ("web", code
+flow) with the redirect address `https://<your NovaDesk>/auth/oidc/callback`, then set `PUBLIC_URL`, `OIDC_ISSUER`,
+`OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in `.env` (see `.env.example`; for Entra the issuer is
+`https://login.microsoftonline.com/<tenant-id>/v2.0`, for Google `https://accounts.google.com`) and restart. The
+login page then shows a *Sign in with…* button.
+- A person is recognised by the provider's own id for them. The first time, an existing account is matched by
+  email, but only if the provider says the email is verified (Google does; Entra does not, so for Entra set
+  `OIDC_TRUST_EMAIL=true`, and only with your own tenant's issuer).
+- Nobody is created by surprise: without `OIDC_AUTO_CREATE=true`, only people who already have an account can
+  sign in. With it, an account (role `OIDC_DEFAULT_ROLE`, `user` or `agent`, never admin) is made on first sign-in.
+  `OIDC_ALLOWED_DOMAINS` limits sign-in to your email domains.
+- A turned-off account cannot sign in this way either. `LOCAL_LOGIN=false` removes the password form once single
+  sign-on works (keep it on until you have tested, so you cannot lock yourself out).
+- People who sign in through the provider answer to the provider's own multi-factor rules.
+
+**Two-step verification.** Anyone can add a second step to signing in with their password: under the user menu,
+*Two-step verification*, add the key to an authenticator app (Microsoft Authenticator, Google Authenticator,
+Authy, 1Password), confirm with a code, and keep the ten recovery codes shown once. The password then leads to a
+code page. Each code works once; five wrong codes lock the code step for that person for ten minutes; a recovery code
+works once. Whoever loses their phone and their recovery codes asks an administrator: *Users*, the person,
+*Reset two-step verification*. `MFA_REQUIRE=admins` (or `all`) makes it compulsory: until it is set up, only its
+setup page and sign-out open. The stored keys are encrypted with `MFA_ENCRYPTION_KEY` (default: derived from
+`SESSION_SECRET`; if that changes without a fixed `MFA_ENCRYPTION_KEY`, people use a recovery code or get a reset).
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

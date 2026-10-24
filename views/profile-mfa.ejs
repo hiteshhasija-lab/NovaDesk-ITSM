@@ -1,0 +1,59 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-shield-lock text-secondary me-1"></i>Two-step verification</h4>
+
+  <div class="card" style="max-width:640px;">
+    <div class="card-body">
+      <% if (forced) { %><div class="alert alert-warning py-2">Your organisation requires two-step verification. Set it up below to carry on.</div><% } %>
+      <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
+      <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+
+      <% if (recoveryCodes) { %>
+      <h6 class="section-title">Your recovery codes</h6>
+      <p class="small text-muted">Keep these somewhere safe, apart from your phone. Each one works once if you lose access to your authenticator app. <strong>This is the only time they are shown.</strong></p>
+      <pre class="border rounded p-3 mb-3" id="recoveryCodes" style="font-size:1.05rem; line-height:1.9;"><%= recoveryCodes.join('\n') %></pre>
+      <% } %>
+
+      <% if (state.enabled) { %>
+        <p><span class="badge bg-success">On</span> <span class="text-muted small ms-1">since <%- h.fmtDate(state.enabledAt) %> · <%= state.recoveryCodesLeft %> recovery code<%= state.recoveryCodesLeft === 1 ? '' : 's' %> left</span></p>
+        <p class="small text-muted">At sign-in with your password you will be asked for a code from your authenticator app.</p>
+
+        <h6 class="section-title mt-4">New recovery codes</h6>
+        <form method="POST" action="/profile/mfa/recovery-codes" class="row g-2 align-items-end mb-4">
+          <div class="col-md-6"><label class="form-label small" for="code_new">Current code</label><input type="text" id="code_new" name="code" class="form-control" inputmode="numeric" autocomplete="one-time-code" required></div>
+          <div class="col-md-6"><button type="submit" class="btn btn-outline-primary">Make new recovery codes</button></div>
+        </form>
+
+        <% if (!required) { %>
+        <h6 class="section-title">Turn off</h6>
+        <form method="POST" action="/profile/mfa/disable" class="row g-2 align-items-end">
+          <div class="col-md-5"><label class="form-label small" for="pw_off">Password</label><input type="password" id="pw_off" name="password" class="form-control" autocomplete="current-password" required></div>
+          <div class="col-md-4"><label class="form-label small" for="code_off">Current code</label><input type="text" id="code_off" name="code" class="form-control" inputmode="numeric" autocomplete="one-time-code" required></div>
+          <div class="col-md-3"><button type="submit" class="btn btn-outline-danger w-100">Turn off</button></div>
+        </form>
+        <% } else { %>
+        <p class="small text-muted">Your organisation requires two-step verification, so it cannot be turned off here.</p>
+        <% } %>
+
+      <% } else if (setup) { %>
+        <h6 class="section-title">1. Add NovaDesk to your authenticator app</h6>
+        <p class="small text-muted">In Microsoft Authenticator, Google Authenticator, Authy or 1Password, add an account and choose <em>enter a setup key</em>. Use this key (spaces do not matter):</p>
+        <p><code id="mfaKey" class="fs-5 user-select-all"><%= setup.secret.match(/.{1,4}/g).join(' ') %></code></p>
+        <p class="small text-muted">On your phone you can also <a href="<%= setup.uri %>">open the setup link</a> in your authenticator app.</p>
+        <h6 class="section-title mt-4">2. Enter the code it shows</h6>
+        <form method="POST" action="/profile/mfa/confirm" class="row g-2 align-items-end">
+          <div class="col-md-6"><label class="form-label small" for="code_confirm">6-digit code</label><input type="text" id="code_confirm" name="code" class="form-control" inputmode="numeric" autocomplete="one-time-code" required autofocus></div>
+          <div class="col-md-6"><button type="submit" class="btn btn-primary">Turn on</button></div>
+        </form>
+        <form method="POST" action="/profile/mfa/cancel" class="mt-3"><button type="submit" class="btn btn-link btn-sm p-0">Cancel setup</button></form>
+
+      <% } else { %>
+        <p><span class="badge bg-secondary">Off</span></p>
+        <p class="small text-muted">Add a second step to signing in with your password: a 6-digit code from an authenticator app on your phone. Even if someone learns your password, they cannot sign in without your phone.</p>
+        <form method="POST" action="/profile/mfa/setup"><button type="submit" class="btn btn-primary">Set up two-step verification</button></form>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('partials/foot') %>

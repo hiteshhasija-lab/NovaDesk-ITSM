@@ -552,6 +552,167 @@ const has = (r, re) => re.test(r.text);
     });
   }
 
+  section = 'sign-in security';
+  const totp = require('../src/totp');
+  const codeNow = (secret, steps = 0) => totp.codeAt(totp.base32Decode(secret), Date.now() + steps * 30000);
+  const keyOf = (html) => { const m = html.match(/id="mfaKey"[^>]*>([A-Z2-7 ]+)</); return m ? m[1].replace(/ /g, '') : null; };
+  const codesOf = (html) => { const m = html.match(/id="recoveryCodes"[^>]*>([^<]+)</); return m ? m[1].trim().split('\n').map((c) => c.trim()) : []; };
+  // A code is good once, so every step below spends as few as it can: enrolling uses one, the first sign-in the next one, and the rest use recovery codes.
+  const enrol = async (person) => {
+    await person.post('/profile/mfa/setup');
+    const page = (await person.get('/profile/mfa')).text; const key = keyOf(page); must(key, 'no setup key shown');
+    const bad = await person.post('/profile/mfa/confirm', { code: '000000' }); must(bad.status === 400 && /not right/.test(bad.text), 'a wrong code was accepted ' + bad.status);
+    const ok = await person.post('/profile/mfa/confirm', { code: codeNow(key) }); must(ok.status === 200 && /Two-step verification is on/.test(ok.text), 'confirm ' + ok.status);
+    const codes = codesOf(ok.text); must(codes.length === 10, 'recovery codes ' + codes.length);
+    return { key, codes };
+  };
+  const signInStart = async (username, password) => { const p = new Person('mfa-' + username); const r = await p.post('/login', { username, password }); return { p, r }; };
+  const signedIn = async (p) => (await p.get('/incidents')).status === 200;
+  let bobMfa = null; let rajMfa = null;
+  await step('two-step verification starts off and its page opens', async () => {
+    const p = new Person('bob0'); await p.login('bsmith', 'agent123'); const page = await p.get('/profile/mfa');
+    return must(page.status === 200 && /Set up two-step verification/.test(page.text) && />Off</.test(page.text), 'page ' + page.status);
+  });
+  await step('the code page cannot be reached without the password step', async () => {
+    const r = await new Person('direct').get('/login/mfa'); const w = await new Person('direct2').post('/login/mfa', { code: '123456' });
+    return must(r.status === 302 && /\/login$/.test(r.loc) && w.status === 302, `${r.status}/${w.status}`);
+  });
+  await step('setting it up needs a real code from the app; the recovery codes are shown once', async () => {
+    const p = new Person('bob1'); await p.login('bsmith', 'agent123');
+    bobMfa = await enrol(p);
+    const again = (await p.get('/profile/mfa')).text;
+    return must(/>On</.test(again) && /10 recovery codes left/.test(again) && codesOf(again).length === 0, 'status page');
+  });
+  await step('with it on, the password alone does not sign you in: the code comes next', async () => {
+    const { p, r } = await signInStart('bsmith', 'agent123');
+    must(r.status === 302 && /\/login\/mfa$/.test(r.loc), `password step ${r.status} ${r.loc}`);
+    must(!(await signedIn(p)), 'signed in before the code');
+    const page = await p.get('/login/mfa'); must(page.status === 200 && /Two-step verification/.test(page.text), 'code page');
+    const wrong = await p.post('/login/mfa', { code: '000000' }); must(wrong.status === 401 && /not right/.test(wrong.text), 'wrong code ' + wrong.status);
+    must(!(await signedIn(p)), 'signed in after a wrong code');
+    const right = await p.post('/login/mfa', { code: codeNow(bobMfa.key, 1) }); must(right.status === 302 && right.loc === '/incidents', `right code ${right.status} ${right.loc}`);   // back to the page asked for before signing in
+    return must(await signedIn(p), 'not signed in after the right code');
+  });
+  await step('a wrong password never reaches the code step, and a code from a used step cannot be replayed', async () => {
+    const wrongPw = await signInStart('bsmith', 'not-the-password'); must(wrongPw.r.status === 401, 'wrong password ' + wrongPw.r.status);
+    const { p } = await signInStart('bsmith', 'agent123');
+    const replay = await p.post('/login/mfa', { code: codeNow(bobMfa.key, 1) });      // the step the previous sign-in used
+    return must(replay.status === 401 && !(await signedIn(p)), 'a used code was accepted again ' + replay.status);
+  });
+  await step('a recovery code signs you in once, and says how many are left', async () => {
+    const { p } = await signInStart('bsmith', 'agent123');
+    const ok = await p.post('/login/mfa', { code: bobMfa.codes[0].toUpperCase() }); must(ok.status === 302, 'recovery code refused ' + ok.status);
+    const home = (await p.get('/')).text; must(/signed in with a recovery code\. 9 left/.test(home), 'no notice about the recovery code');   // shown once, on the first page
+    must(!/signed in with a recovery code/.test((await p.get('/')).text) && await signedIn(p), 'the notice stayed, or not signed in');
+    const { p: p2 } = await signInStart('bsmith', 'agent123');
+    const reuse = await p2.post('/login/mfa', { code: bobMfa.codes[0] }); return must(reuse.status === 401 && !(await signedIn(p2)), 'a recovery code worked twice');
+  });
+  await step('changing recovery codes or turning it off needs a current code (and the password to turn off)', async () => {
+    const { p } = await signInStart('bsmith', 'agent123'); await p.post('/login/mfa', { code: bobMfa.codes[1] }); must(await signedIn(p), 'sign in');
+    const noCode = await p.post('/profile/mfa/recovery-codes', { code: '000000' }); must(noCode.status === 400, 'new codes with a wrong code ' + noCode.status);
+    const fresh = await p.post('/profile/mfa/recovery-codes', { code: bobMfa.codes[2] }); const newCodes = codesOf(fresh.text); must(fresh.status === 200 && newCodes.length === 10, 'new codes ' + fresh.status);
+    const oldDead = await signInStart('bsmith', 'agent123'); const old = await oldDead.p.post('/login/mfa', { code: bobMfa.codes[3] }); must(old.status === 401, 'an old recovery code still works after new ones were made');
+    const wrongPw = await p.post('/profile/mfa/disable', { password: 'wrong', code: newCodes[0] }); must(wrongPw.status === 400 && /still on/.test(wrongPw.text), 'turned off with the wrong password');
+    const off = await p.post('/profile/mfa/disable', { password: 'agent123', code: newCodes[1] }); must(off.status === 200 && /is off/.test(off.text), 'turn off ' + off.status);
+    const plain = await signInStart('bsmith', 'agent123'); return must(plain.r.status === 302 && plain.r.loc === '/' && await signedIn(plain.p), 'plain sign-in after turning it off');
+  });
+  await step('five wrong codes lock the code step for that person, even for the right code', async () => {
+    const p0 = new Person('raj0'); await p0.login('rpatel', 'user123'); rajMfa = await enrol(p0);
+    const { p } = await signInStart('rpatel', 'user123');
+    for (let i = 0; i < 5; i++) { const w = await p.post('/login/mfa', { code: '111111' }); must(w.status === 401, `wrong code ${i + 1}: ${w.status}`); }
+    const locked = await p.post('/login/mfa', { code: rajMfa.codes[0] });
+    return must(locked.status === 429 && /Too many wrong codes/.test(locked.text) && !(await signedIn(p)), 'not locked ' + locked.status);
+  });
+  await step('an administrator can reset two-step verification for someone who lost their phone', async () => {
+    const usersPage = (await admin.get('/users')).text; const rajRow = (usersPage.match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*<td>rpatel<\/td>[\s\S]*?<\/tr>/) || [''])[0]; const rajId = (rajRow.match(/\/users\/(\d+)\/edit/) || [])[1]; must(rajId, 'no id for rpatel');
+    const asAgent = await jane.post(`/users/${rajId}/mfa/reset`, {}); must(asAgent.status === 403, 'an agent could reset it ' + asAgent.status);
+    const r = await admin.post(`/users/${rajId}/mfa/reset`, {}); must(r.status === 302, 'reset ' + r.status);
+    const page = (await admin.get(`/users/${rajId}/edit`)).text; must(/Sign-in security/.test(page), 'no security card');
+    const plain = await signInStart('rpatel', 'user123'); return must(plain.r.status === 302 && plain.r.loc === '/' && await signedIn(plain.p), 'raj could not sign in without a code after the reset');
+  });
+
+  if (process.env.WALK_OIDC) {
+    // Needs the app started with OIDC_* pointing at scripts/mock-oidc.js (WALK_OIDC is that provider's address),
+    // PUBLIC_URL equal to BASE_URL, OIDC_AUTO_CREATE=true and OIDC_ALLOWED_DOMAINS=corp.local,newco.example.
+    const IDP = process.env.WALK_OIDC.replace(/\/+$/, '');
+    const idp = (path, body) => fetch(IDP + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then((r) => r.json());
+    const ssoAttempt = async (identity, person = new Person('sso')) => {
+      await idp('/__next', identity);
+      const start = await person.get('/auth/oidc/start');
+      if (start.status !== 302 || !(start.loc || '').startsWith(IDP)) return { person, start };
+      const auth = await fetch(start.loc, { redirect: 'manual' });
+      const back = new URL(auth.headers.get('location'));
+      const cb = await person.get(back.pathname + back.search);
+      return { person, start, cb, back };
+    };
+    const whoAmI = async (p) => { const r = await p.get('/profile'); const m = r.text.match(/Username<\/label>\s*<input[^>]*value="([^"]*)"/); return r.status === 200 && m ? m[1] : null; };
+    const refusedWith = (a, pattern) => must(a.cb && a.cb.status === 401 && pattern.test(a.cb.text), `${a.cb && a.cb.status}: ${(a.cb && a.cb.text.match(/alert-danger[^>]*>([^<]*)/) || [])[1]}`);
+
+    await step('single sign-on: the login page offers the button, and the flow uses PKCE, state and nonce', async () => {
+      const page = await new Person('anon-sso').get('/login'); must(page.status === 200 && /auth\/oidc\/start/.test(page.text), 'no SSO button');
+      const a = await ssoAttempt({ sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true, name: 'Jane Doe' });
+      const q = new URL(a.start.loc).searchParams;
+      must(q.get('response_type') === 'code' && q.get('code_challenge_method') === 'S256' && q.get('code_challenge') && q.get('state') && q.get('nonce') && q.get('client_id') === 'novadesk-test', 'authorization request: ' + a.start.loc);
+      must(a.cb.status === 302 && a.cb.loc === '/', `callback ${a.cb.status} ${a.cb.loc}`);
+      return must(await whoAmI(a.person) === 'jdoe', 'not signed in as jdoe');
+    });
+    await step('the account is found by the provider\'s stable id, so a changed email does not matter', async () => {
+      const a = await ssoAttempt({ sub: 'sub-jane', email: 'someone.else@corp.local', email_verified: true });
+      return must(a.cb.status === 302 && await whoAmI(a.person) === 'jdoe', 'not jdoe after an email change');
+    });
+    await step('PKCE and the client secret checked out at the provider on every sign-in', async () => {
+      const log = await fetch(IDP + '/__log').then((r) => r.json());
+      const auth = log.filter((e) => e.path === 'authorize'); const tok = log.filter((e) => e.path === 'token');
+      return must(auth.length > 0 && auth.every((e) => e.pkce && e.has_state && e.has_nonce) && tok.length > 0 && tok.every((e) => e.secret_ok && e.client_ok && e.pkce_ok && e.redirect_ok), 'a flow skipped PKCE, state, nonce or the secret');
+    });
+    await step('an existing account is matched by email only when the provider verified it', async () => {
+      const a = await ssoAttempt({ sub: 'sub-maria-unverified', email: 'maria.chen@corp.local', email_verified: false });
+      refusedWith(a, /not verified your email/);
+      const ok = await ssoAttempt({ sub: 'sub-maria', email: 'MARIA.CHEN@corp.local', email_verified: true });
+      return must(ok.cb.status === 302 && await whoAmI(ok.person) === 'mchen', 'verified email (any case) did not match');
+    });
+    await step('a new person is created as an end user, only from an allowed domain and a verified email', async () => {
+      const hire = await ssoAttempt({ sub: 'sub-hire', email: 'newhire@newco.example', email_verified: true, name: 'New Hire' });
+      must(hire.cb.status === 302 && await whoAmI(hire.person) === 'newhire', 'not created');
+      must((await hire.person.get('/users')).status === 403, 'a created account is not an end user');
+      const list = (await admin.get('/users')).text; must(/newhire/.test(list) && /New Hire/.test(list), 'not in the user list');
+      refusedWith(await ssoAttempt({ sub: 'sub-evil', email: 'x@evil.example', email_verified: true }), /domain is not allowed/);
+      refusedWith(await ssoAttempt({ sub: 'sub-unverified-new', email: 'ghost@newco.example', email_verified: false }), /There is no NovaDesk account/);
+      return must(!/ghost@newco/.test((await admin.get('/users')).text), 'an unverified email created an account');
+    });
+    await step('a turned-off account cannot sign in through the provider either', async () => {
+      const list = (await admin.get('/users')).text; const row = (list.match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*<td>newhire<\/td>[\s\S]*?<\/tr>/) || [''])[0]; const id = (row.match(/\/users\/(\d+)\/edit/) || [])[1];
+      must(id, 'no id for newhire');
+      const off = await admin.post(`/users/${id}/update`, { username: 'newhire', full_name: 'New Hire', email: 'newhire@newco.example', role: 'user' }); must(off.status === 302, 'deactivate ' + off.status);
+      refusedWith(await ssoAttempt({ sub: 'sub-hire', email: 'newhire@newco.example', email_verified: true }), /turned off/);
+      await admin.post(`/users/${id}/update`, { username: 'newhire', full_name: 'New Hire', email: 'newhire@newco.example', role: 'user', active: 'on' });
+      return must((await ssoAttempt({ sub: 'sub-hire', email: 'newhire@newco.example', email_verified: true })).cb.status === 302, 'not back after turning on');
+    });
+    await step('tokens that are forged, for another app, from another issuer, expired or unsigned are refused', async () => {
+      for (const [bad, pattern] of [['signature', /signature/], ['nonce', /does not belong to this sign-in/], ['aud', /different application/], ['iss', /different identity provider/], ['expired', /expired/], ['alg-none', /signature type/]]) {
+        const a = await ssoAttempt({ sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true, bad });
+        refusedWith(a, pattern); must(!(await signedIn(a.person)), `${bad}: signed in anyway`);
+      }
+      return true;
+    });
+    await step('a refusal at the provider, a replayed link, a changed state and a link not started here all fail safely', async () => {
+      refusedWith(await ssoAttempt({ sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true, bad: 'deny' }), /cancelled or refused/);
+      const ok = await ssoAttempt({ sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true });
+      const replay = await ok.person.get(ok.back.pathname + ok.back.search); must(replay.status === 302 || replay.status === 400, 'replay ' + replay.status);
+      const other = new Person('replay'); const r2 = await other.get(ok.back.pathname + ok.back.search); must(r2.status === 400 && /expired or was not started here/.test(r2.text) && !(await signedIn(other)), 'replay by another browser ' + r2.status);
+      await idp('/__next', { sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true });
+      const p = new Person('state'); const start = await p.get('/auth/oidc/start'); const auth = await fetch(start.loc, { redirect: 'manual' }); const back = new URL(auth.headers.get('location'));
+      back.searchParams.set('state', 'forged'); const bad = await p.get(back.pathname + back.search); must(bad.status === 400 && !(await signedIn(p)), 'forged state ' + bad.status);
+      const none = await new Person('nostart').get('/auth/oidc/callback?code=abc&state=def'); return must(none.status === 400, 'no start ' + none.status);
+    });
+    await step('the provider rotating its keys does not lock people out', async () => {
+      await idp('/__rotate');
+      await sleep(1500);
+      const a = await ssoAttempt({ sub: 'sub-jane', email: 'jane.doe@corp.local', email_verified: true });
+      return must(a.cb.status === 302 && await whoAmI(a.person) === 'jdoe', 'sign-in failed after key rotation: ' + a.cb.status);
+    });
+  }
+
   section = 'input safety';
   await step('script tags in titles, comments, KB and CMDB names are escaped on every page', async () => {
     const x = `<script>alert('${tag}')</script>`;

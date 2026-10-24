@@ -1,0 +1,28 @@
+<%- include('partials/head') %>
+<div class="login-wrapper">
+  <div class="login-content">
+    <div class="card login-card">
+    <div class="card-body px-4 px-md-5 py-3">
+      <div class="text-center mb-2">
+        <div class="login-logo-mark mx-auto"><img src="/img/novadesk-icon.png" alt=""></div>
+        <div class="login-title">Two-step verification</div>
+        <div class="login-tagline">Enter the 6-digit code from your authenticator app</div>
+      </div>
+
+      <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+      <form method="POST" action="/login/mfa" autocomplete="off">
+        <div class="login-field mb-2">
+          <span class="login-field-icon"><i class="bi bi-shield-lock"></i></span>
+          <input type="text" name="code" id="mfaCode" class="form-control" placeholder="123456" inputmode="numeric" autocomplete="one-time-code" maxlength="20" required autofocus>
+        </div>
+        <p class="small text-muted mb-2">Lost your phone? Type one of your recovery codes instead (like <code>k7m2-x9qd-4tbp</code>).</p>
+        <button type="submit" class="btn login-btn-primary w-100 py-2">Verify <i class="bi bi-arrow-right ms-1"></i></button>
+      </form>
+
+      <div class="login-signup-row"><a href="/login">Back to sign in</a></div>
+    </div>
+  </div>
+  </div>
+</div>
+<%- include('partials/foot') %>
