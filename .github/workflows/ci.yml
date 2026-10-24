@@ -54,7 +54,7 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - name: Migration tests (real Postgres: fresh, existing, failing, edited, concurrent)
+      - name: Migration tests against a real Postgres (fresh, existing, failing, edited, concurrent)
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node --test test/migrate.db.test.js
