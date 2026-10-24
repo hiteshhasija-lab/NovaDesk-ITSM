@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { db, logActivity } = require('./db');
 const { sendNotification } = require('./mailer');
+const csrf = require('./csrf');
 
 const uploadRoot = path.join(__dirname, '..', 'data', 'uploads');
 if (!fs.existsSync(uploadRoot)) fs.mkdirSync(uploadRoot, { recursive: true });
@@ -43,9 +44,13 @@ function attachRoutes(router, entityType, { table, getEntity, canAccess, canMana
 
   router.post('/:id/attachments', ...middleware, (req, res) => {
     upload.single('file')(req, res, async (err) => {
+      // The file is already on disk when this runs: whatever refuses the request also removes it.
+      const discard = () => { if (req.file) fs.unlink(req.file.path, () => {}); };
+      // An upload is multipart, so the general CSRF check cannot read its fields; it is checked here, after they are read.
+      if (!csrf.checkRequest(req)) { discard(); return csrf.refuse(req, res); }
       const entity = await getEntity(req.params.id);
-      if (!entity) return res.status(404).render('error', { title: 'Not Found', message: 'Record not found.' });
-      if (!canAccess(req, entity)) return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot upload files here.' });
+      if (!entity) { discard(); return res.status(404).render('error', { title: 'Not Found', message: 'Record not found.' }); }
+      if (!canAccess(req, entity)) { discard(); return res.status(403).render('error', { title: 'Access Denied', message: 'You cannot upload files here.' }); }
 
       if (err) {
         const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (10MB max).' : err.message;

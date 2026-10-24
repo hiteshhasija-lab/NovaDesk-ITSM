@@ -1,8 +1,10 @@
-const bcrypt = require('bcryptjs');
 const { db } = require('../db');
 const createAsyncRouter = require('../asyncRouter');
 const mfa = require('../mfa');
 const sso = require('../oidc');
+const { checkPassword, hashPassword, verifyPassword, verifyAgainstNobody } = require('../passwords');
+const lockout = require('../lockout');
+const { audit } = require('../audit');
 
 const router = createAsyncRouter();
 
@@ -34,11 +36,25 @@ router.get('/login', (req, res) => {
 router.post('/login', async (req, res) => {
   if (!sso.policy.localLogin) return res.status(403).render('login', loginView({ error: 'Sign in with your organisation account.' }));
   const { username, password } = req.body;
-  const user = await db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(username);
-  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
-    // 401 (the page still renders): the sign-in limiter counts only refused attempts.
-    return res.status(401).render('login', loginView({ error: 'Invalid username or password.' }));
+  const user = await db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(typeof username === 'string' ? username : '');
+  // One answer for every way of failing (no such person, wrong password, account locked), 401 so the per-address limiter counts it.
+  const refuse = () => res.status(401).render('login', loginView({ error: 'Invalid username or password.' }));
+  if (!user) {
+    await verifyAgainstNobody(password);                          // takes as long as a real check, so timing does not reveal who exists
+    await audit(req, null, 'login.failed', { detail: 'no such account' });   // the typed name is not kept: people sometimes type a password there
+    return refuse();
   }
+  if (lockout.isLocked(user)) {
+    await verifyAgainstNobody(password);
+    await audit(req, null, 'login.refused', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'account is locked' });
+    return refuse();
+  }
+  if (!(await verifyPassword(password, user.password_hash))) {
+    const result = await lockout.recordFailure(user);
+    await audit(req, null, result.locked ? 'login.locked' : 'login.failed', { targetType: 'user', targetId: user.id, targetName: user.username, detail: result.locked ? `locked until ${result.until} UTC after repeated wrong passwords` : 'wrong password' });
+    return refuse();
+  }
+  await lockout.clearFailures(user.id);
   if (await mfa.isEnabled(user.id)) {
     // Password right, but not signed in yet: the code comes next.
     const returnTo = req.session.returnTo;
@@ -47,7 +63,9 @@ router.post('/login', async (req, res) => {
     req.session.pendingMfa = { userId: user.id, remember: Boolean(req.body.remember), at: Date.now() };
     return res.redirect('/login/mfa');
   }
-  res.redirect(await establishSession(req, user, { remember: Boolean(req.body.remember) }));
+  const dest = await establishSession(req, user, { remember: Boolean(req.body.remember) });
+  await audit(req, user, 'login.success', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'password' });
+  res.redirect(dest);
 });
 
 const pendingMfa = (req) => {
@@ -70,12 +88,14 @@ router.post('/login/mfa', async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').get(pending.userId);
   const result = user ? await mfa.verifyLogin(pending.userId, req.body.code) : { ok: false };
   if (!result.ok) {
-    mfa.recordFailure(pending.userId);
+    const count = mfa.recordFailure(pending.userId);
+    if (count === mfa.FAILURE_LIMIT) await audit(req, null, 'mfa.locked', { targetType: 'user', targetId: pending.userId, targetName: user && user.username, detail: `${count} wrong codes in a row` });
     return res.status(401).render('login-mfa', { title: 'Verify it is you', error: 'That code is not right. Check your authenticator app and try again.' });
   }
   mfa.clearFailures(pending.userId);
   req.session.pendingMfa = null;
   const dest = await establishSession(req, user, { remember: pending.remember });
+  await audit(req, user, 'login.success', { targetType: 'user', targetId: user.id, targetName: user.username, detail: result.usedRecoveryCode ? 'password and recovery code' : 'password and one-time code' });
   if (result.usedRecoveryCode) req.session.notice = `You signed in with a recovery code. ${result.recoveryCodesLeft} left; make new ones under Two-step verification.`;
   res.redirect(dest);
 });
@@ -112,8 +132,12 @@ router.get('/auth/oidc/callback', async (req, res) => {
   if (typeof code !== 'string' || !code) return ssoFailure(res, 400, 'The identity provider did not send a sign-in code. Start again.');
   try {
     const claims = await sso.completeLogin({ code, saved });
-    const { user } = await sso.resolveUser(claims);
-    res.redirect(await establishSession(req, user, { via: 'sso' }));
+    const { user, linked, created } = await sso.resolveUser(claims);
+    const dest = await establishSession(req, user, { via: 'sso' });
+    if (created) await audit(req, user, 'sso.created', { targetType: 'user', targetId: user.id, targetName: user.username, detail: `account created on first sign-in (role ${user.role})` });
+    else if (linked) await audit(req, user, 'sso.linked', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'linked to the identity provider by email' });
+    await audit(req, user, 'login.success', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'single sign-on' });
+    res.redirect(dest);
   } catch (err) {
     if (err instanceof sso.SsoError) return ssoFailure(res, 401, err.message);
     console.error('[SSO] sign-in failed:', err);
@@ -135,9 +159,8 @@ router.post('/register', async (req, res) => {
   if (!b.full_name || !b.username || !b.password) {
     return res.render('register', { error: 'Full name, username, and password are required.', title: 'Create Account', form });
   }
-  if (b.password.length < 8) {
-    return res.render('register', { error: 'Password must be at least 8 characters.', title: 'Create Account', form });
-  }
+  const weak = checkPassword(b.password, { username: b.username, email: b.email, fullName: b.full_name });
+  if (weak) return res.render('register', { error: weak, title: 'Create Account', form });
   if (b.password !== b.confirm_password) {
     return res.render('register', { error: 'Password and confirmation do not match.', title: 'Create Account', form });
   }
@@ -146,14 +169,14 @@ router.post('/register', async (req, res) => {
     await db.prepare(`
       INSERT INTO users (username, password_hash, full_name, email, role, department)
       VALUES (?, ?, ?, ?, 'user', ?)
-    `).run(b.username, bcrypt.hashSync(b.password, 10), b.full_name, b.email || null, b.department || null);
+    `).run(b.username, await hashPassword(b.password), b.full_name, b.email || null, b.department || null);
   } catch (e) {
     return res.render('register', { error: 'That username is already taken.', title: 'Create Account', form });
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE username = ?').get(b.username);
-  req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, theme_preference: user.theme_preference };
-  res.redirect('/');
+  await audit(req, user, 'user.registered', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'self-registration (end user)' });
+  res.redirect(await establishSession(req, user));
 });
 
 router.post('/logout', (req, res) => {

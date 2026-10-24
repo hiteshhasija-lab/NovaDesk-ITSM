@@ -4,6 +4,7 @@ const { db } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const mfa = require('../mfa');
+const { audit } = require('../audit');
 const { authPolicy } = require('../settings');
 
 const router = createAsyncRouter();
@@ -35,6 +36,7 @@ router.post('/cancel', async (req, res) => {
 router.post('/confirm', async (req, res) => {
   const codes = await mfa.finishSetup(req.session.user.id, req.body.code);
   if (!codes) return res.status(400).render('profile-mfa', await view(req, { error: 'That code is not right. Check your authenticator app and try again.' }));
+  await audit(req, req.session.user, 'mfa.enabled', { targetType: 'user', targetId: req.session.user.id, targetName: req.session.user.username });
   res.render('profile-mfa', await view(req, { success: 'Two-step verification is on.', recoveryCodes: codes }));
 });
 
@@ -46,7 +48,9 @@ async function codeOk(req) {
 
 router.post('/recovery-codes', async (req, res) => {
   if (!(await mfa.isEnabled(req.session.user.id)) || !(await codeOk(req))) return res.status(400).render('profile-mfa', await view(req, { error: 'That code is not right, so the recovery codes were not changed.' }));
-  res.render('profile-mfa', await view(req, { success: 'New recovery codes. The old ones no longer work.', recoveryCodes: await mfa.replaceRecoveryCodes(req.session.user.id) }));
+  const fresh = await mfa.replaceRecoveryCodes(req.session.user.id);
+  await audit(req, req.session.user, 'mfa.recovery_codes_replaced', { targetType: 'user', targetId: req.session.user.id, targetName: req.session.user.username });
+  res.render('profile-mfa', await view(req, { success: 'New recovery codes. The old ones no longer work.', recoveryCodes: fresh }));
 });
 
 router.post('/disable', async (req, res) => {
@@ -56,6 +60,7 @@ router.post('/disable', async (req, res) => {
     return res.status(400).render('profile-mfa', await view(req, { error: 'The password or the code is not right, so two-step verification is still on.' }));
   }
   await mfa.disable(user.id);
+  await audit(req, req.session.user, 'mfa.disabled', { targetType: 'user', targetId: user.id, targetName: req.session.user.username, detail: 'turned off by the person themselves' });
   res.render('profile-mfa', await view(req, { success: 'Two-step verification is off.' }));
 });
 

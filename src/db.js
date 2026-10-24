@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { dbConfig, seedPlan } = require('./settings');
 const { migrate } = require('./migrate');
+const { checkPassword } = require('./passwords');
 
 // Postgres returns COUNT()/SUM() as bigint and AVG() as numeric, both of which
 // node-postgres parses as STRINGS by default (bigint can exceed Number.MAX_SAFE_INTEGER).
@@ -114,6 +115,9 @@ async function seedIfEmpty() {
   if (plan.action === 'skip') return;
   if (plan.action === 'none') { console.warn(`[Setup] ${plan.problem}`); return; }
   if (plan.action === 'admin') {
+    // The first administrator's password follows the same rules as everyone's (length, no common passwords).
+    const weak = checkPassword(plan.password, { username: plan.username, email: plan.email, fullName: plan.fullName });
+    if (weak) { console.warn(`[Setup] ADMIN_PASSWORD is not acceptable: ${weak} No account was created; fix it and restart.`); return; }
     await db.prepare(`
       INSERT INTO users (username, password_hash, full_name, email, role)
       VALUES (?, ?, ?, ?, 'admin')

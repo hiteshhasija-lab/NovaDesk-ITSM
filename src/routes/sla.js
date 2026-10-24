@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const sla = require('../sla');
 const slaService = require('../slaService');
+const { audit } = require('../audit');
 
 const router = createAsyncRouter();
 router.use(requireAuth, requireRole('admin'));
@@ -67,6 +68,7 @@ router.post('/calendar', async (req, res) => {
   await db.prepare('UPDATE business_calendars SET timezone = ?, work_days = ?, start_minute = ?, end_minute = ? WHERE id = ?')
     .run(timezone, days.sort((a, c) => a - c).join(','), start, end, row.id);
   slaService.invalidateConfig();
+  await audit(req, req.session.user, 'sla.settings_changed', { detail: `business hours: ${timezone}, days ${days.join(',')}, ${b.start} to ${b.end}` });
   flash(req, 'success', 'Business hours saved.');
   back(req, res);
 });
@@ -82,6 +84,7 @@ router.post('/holidays', async (req, res) => {
   await db.prepare('INSERT INTO business_holidays (calendar_id, holiday_date, name) VALUES (?, ?, ?) ON CONFLICT (calendar_id, holiday_date) DO UPDATE SET name = EXCLUDED.name')
     .run(row.id, date, String(req.body.name || '').trim().slice(0, 100) || null);
   slaService.invalidateConfig();
+  await audit(req, req.session.user, 'sla.settings_changed', { detail: `holiday added: ${date}` });
   flash(req, 'success', `${date} added as a holiday.`);
   back(req, res);
 });
@@ -90,6 +93,7 @@ router.post('/holidays/:id/delete', async (req, res) => {
   const id = Number(req.params.id);
   if (Number.isInteger(id) && id > 0) await db.prepare('DELETE FROM business_holidays WHERE id = ?').run(id);
   slaService.invalidateConfig();
+  await audit(req, req.session.user, 'sla.settings_changed', { detail: `holiday removed (id ${id})` });
   flash(req, 'success', 'Holiday removed.');
   back(req, res);
 });
@@ -110,6 +114,7 @@ router.post('/policies', async (req, res) => {
     await db.prepare("UPDATE sla_policies SET target_minutes = ?, clock = ?, warn_percent = ? WHERE applies_to = 'incident' AND priority = ?").run(...u);
   }
   slaService.invalidateConfig();
+  await audit(req, req.session.user, 'sla.settings_changed', { detail: `incident targets: ${updates.map((u) => `P${u[3]} ${u[0]} min ${u[1]} warn ${u[2]}%`).join('; ')}` });
   flash(req, 'success', 'SLA targets saved. They apply to incidents created from now on, and to incidents whose priority changes.');
   back(req, res);
 });
@@ -136,6 +141,7 @@ router.post('/targets', async (req, res) => {
       .run(u.minutes, u.clock, u.warn, u.enabled ? 1 : 0, enabledAt, u.kind);
   }
   slaService.invalidateConfig();
+  await audit(req, req.session.user, 'sla.settings_changed', { detail: `request/change targets: ${updates.map((u) => `${u.kind} ${u.enabled ? 'on' : 'off'} ${u.minutes} min ${u.clock} warn ${u.warn}%`).join('; ')}` });
   flash(req, 'success', 'SLA targets for requests and changes saved. They apply from now on.');
   back(req, res);
 });

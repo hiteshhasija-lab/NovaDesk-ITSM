@@ -18,13 +18,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const tag = Math.random().toString(36).slice(2, 8);
 
 class Browser {
-  constructor(base = BASE) { this.base = base; this.cookie = ''; }
-  async req(method, p, form) {
+  constructor(base = BASE) { this.base = base; this.cookie = ''; this.csrf = null; }
+  async refreshCsrf() { for (const p of ['/login', '/profile']) { await this.req('GET', p); if (this.csrf) return; } }
+  async req(method, p, form, retried = false) {
+    const unsafe = !['GET', 'HEAD'].includes(method);
+    if (unsafe && !this.csrf && !retried) await this.refreshCsrf();
     const headers = { Cookie: this.cookie }; let body;
-    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = (() => { const sp = new URLSearchParams(); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); return sp.toString(); })(); }
+    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; const sp = new URLSearchParams(); if (unsafe && this.csrf) sp.append('_csrf', this.csrf); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); body = sp.toString(); }
+    else if (unsafe && this.csrf) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams({ _csrf: this.csrf }).toString(); }
     const res = await fetch(this.base + p, { method, headers, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie()) { const kv = c.split(';')[0]; const jar = Object.fromEntries(this.cookie.split('; ').filter(Boolean).map((x) => [x.split('=')[0], x])); jar[kv.split('=')[0]] = kv; this.cookie = Object.values(jar).join('; '); }
-    return { status: res.status, loc: res.headers.get('location'), text: await res.text() };
+    const text = await res.text();
+    if (res.headers.getSetCookie().length) this.csrf = null;
+    const meta = text.match(/<meta name="csrf-token" content="([^"]+)"/); if (meta) this.csrf = meta[1];
+    if (res.status === 403 && unsafe && !retried && /reload the page/i.test(text)) { this.csrf = null; await this.refreshCsrf(); return this.req(method, p, form, true); }
+    return { status: res.status, loc: res.headers.get('location'), text };
   }
   get(p) { return this.req('GET', p); }
   post(p, f) { return this.req('POST', p, f || {}); }
@@ -228,8 +236,8 @@ async function run() {
   const rajList = await api(rajWrite, 'GET', '/me');
   const usersPage = (await admin.get('/users')).text; const rajRow = (usersPage.match(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*<td>rpatel<\/td>[\s\S]*?<\/tr>/) || [''])[0]; const rajId = (rajRow.match(/\/users\/(\d+)\/edit/) || [])[1];
   check('an administrator can revoke all of someone\'s keys', rajList.status === 200 && (await admin.post(`/users/${rajId}/api-keys/revoke`)).status === 302 && errCode(await api(rajWrite, 'GET', '/me'), 401, 'invalid_token'));
-  const temp = await admin.post('/users', { username: `apiuser${tag}`, full_name: 'Api Temp', email: `api.${tag}@corp.local`, role: 'agent', password: 'Temp-pass-123' });
-  const tempBrowser = await new Browser().login(`apiuser${tag}`, 'Temp-pass-123'); const tempKey = await makeKey(tempBrowser, 'temp', 'write');
+  const temp = await admin.post('/users', { username: `apiuser${tag}`, full_name: 'Api Temp', email: `api.${tag}@corp.local`, role: 'agent', password: 'Cobalt-Meadow-Drift-8' });
+  const tempBrowser = await new Browser().login(`apiuser${tag}`, 'Cobalt-Meadow-Drift-8'); const tempKey = await makeKey(tempBrowser, 'temp', 'write');
   const tempRow = ((await admin.get('/users')).text.match(new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*<td>apiuser${tag}</td>[\\s\\S]*?</tr>`)) || [''])[0]; const tempId = (tempRow.match(/\/users\/(\d+)\/edit/) || [])[1];
   check('a key works for an active person', temp.status === 302 && tempId && (await api(tempKey, 'GET', '/me')).status === 200);
   await admin.post(`/users/${tempId}/update`, { username: `apiuser${tag}`, full_name: 'Api Temp', email: `api.${tag}@corp.local`, role: 'agent' });   // no "active": turned off

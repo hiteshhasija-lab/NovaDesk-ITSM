@@ -1,7 +1,8 @@
-const bcrypt = require('bcryptjs');
 const { db } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
+const { checkPassword, hashPassword, verifyPassword } = require('../passwords');
+const { audit } = require('../audit');
 
 const router = createAsyncRouter();
 
@@ -20,7 +21,7 @@ router.post('/', requireAuth, async (req, res) => {
   req.session.user.full_name = b.full_name;
 
   if (b.new_password) {
-    if (!bcrypt.compareSync(b.current_password || '', user.password_hash)) {
+    if (!(await verifyPassword(b.current_password, user.password_hash))) {
       const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
       return res.render('profile', { title: 'My Profile', profileUser: updated, error: 'Current password is incorrect — profile details were saved, but the password was not changed.', success: null });
     }
@@ -28,7 +29,13 @@ router.post('/', requireAuth, async (req, res) => {
       const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
       return res.render('profile', { title: 'My Profile', profileUser: updated, error: 'New password and confirmation do not match — profile details were saved, but the password was not changed.', success: null });
     }
-    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(b.new_password, 10), user.id);
+    const weak = checkPassword(b.new_password, { username: user.username, email: b.email || user.email, fullName: b.full_name || user.full_name });
+    if (weak) {
+      const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+      return res.render('profile', { title: 'My Profile', profileUser: updated, error: `${weak} Profile details were saved, but the password was not changed.`, success: null });
+    }
+    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(b.new_password), user.id);
+    await audit(req, req.session.user, 'password.changed', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'changed by the person themselves' });
   }
 
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);

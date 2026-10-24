@@ -67,8 +67,8 @@ test('proxy and limit settings', () => {
   assert.strictEqual(trustProxy({ TRUST_PROXY: '2' }), 2);
   assert.strictEqual(trustProxy({ TRUST_PROXY: 'loopback' }), 'loopback');
   assert.throws(() => trustProxy({ TRUST_PROXY: 'true' }), /believe any address/);
-  assert.deepStrictEqual(rateLimits({}), { ipPerMinute: 1200, apiPerMinute: 300, apiWritePerMinute: 60 });
-  assert.deepStrictEqual(rateLimits({ RATE_LIMIT_IP_PER_MIN: '0', RATE_LIMIT_API_PER_MIN: '10', RATE_LIMIT_API_WRITE_PER_MIN: '5' }), { ipPerMinute: 0, apiPerMinute: 10, apiWritePerMinute: 5 });
+  assert.deepStrictEqual(rateLimits({}), { ipPerMinute: 1200, apiPerMinute: 300, apiWritePerMinute: 60, loginFailuresPer15Min: 20 });
+  assert.deepStrictEqual(rateLimits({ RATE_LIMIT_IP_PER_MIN: '0', RATE_LIMIT_API_PER_MIN: '10', RATE_LIMIT_API_WRITE_PER_MIN: '5', RATE_LIMIT_LOGIN_FAILURES: '40' }), { ipPerMinute: 0, apiPerMinute: 10, apiWritePerMinute: 5, loginFailuresPer15Min: 40 });
   assert.throws(() => rateLimits({ RATE_LIMIT_API_PER_MIN: 'many' }), /RATE_LIMIT_API_PER_MIN/);
   assert.throws(() => rateLimits({ RATE_LIMIT_IP_PER_MIN: '-1' }), /RATE_LIMIT_IP_PER_MIN/);
 });

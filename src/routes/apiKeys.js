@@ -2,6 +2,7 @@
 const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const apiKeys = require('../apiKeys');
+const { audit } = require('../audit');
 const { requireFields } = require('../validate');
 
 const router = createAsyncRouter();
@@ -21,6 +22,7 @@ router.post('/', async (req, res) => {
   const days = EXPIRY_DAYS[req.body.expires] ?? 90;
   try {
     const made = await apiKeys.createKey(req.session.user.id, { name, scope: req.body.scope === 'write' ? 'write' : 'read', expiresInDays: days });
+    await audit(req, req.session.user, 'apikey.created', { targetType: 'apikey', targetId: made.id, targetName: name, detail: `${req.body.scope === 'write' ? 'read and write' : 'read only'}, ${days ? `expires in ${days} days` : 'never expires'}` });
     res.render('profile-api-keys', await view(req, { newKey: made.token, success: 'API key made. Copy it now: it is shown only this once.' }));
   } catch (err) {
     if (err.code !== 'too_many_keys') throw err;
@@ -30,6 +32,7 @@ router.post('/', async (req, res) => {
 
 router.post('/:id/revoke', async (req, res) => {
   const ok = await apiKeys.revokeKey(req.session.user.id, Number(req.params.id) || 0);
+  if (ok) await audit(req, req.session.user, 'apikey.revoked', { targetType: 'apikey', targetId: Number(req.params.id), detail: 'revoked by its owner' });
   res.render('profile-api-keys', await view(req, ok ? { success: 'API key revoked. It stops working at once.' } : { error: 'That key was not found or is already revoked.' }));
 });
 

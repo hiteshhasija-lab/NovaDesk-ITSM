@@ -77,6 +77,12 @@
         <dt class="col-sm-4">Single sign-on</dt>
         <dd class="col-sm-8"><% if (identities.length) { %><% identities.forEach(i => { %><div><%= i.issuer %><% if (i.email) { %> <span class="text-muted">(<%= i.email %>)</span><% } %></div><% }) %><% } else { %>Not linked<% } %></dd>
       </dl>
+      <% if (lockedUntil) { %>
+      <div class="alert alert-warning py-2 small d-flex justify-content-between align-items-center">
+        <span>Locked after repeated wrong passwords, until <%- h.fmtDate(lockedUntil) %>.</span>
+        <form method="POST" action="/users/<%= user.id %>/unlock" class="m-0"><button type="submit" class="btn btn-sm btn-outline-secondary">Unlock now</button></form>
+      </div>
+      <% } %>
       <dl class="row mb-2 small"><dt class="col-sm-4">API keys</dt><dd class="col-sm-8"><%= apiKeyCount %> active</dd></dl>
       <% if (apiKeyCount) { %>
       <form method="POST" action="/users/<%= user.id %>/api-keys/revoke" class="m-0 mb-2"><button type="submit" class="btn btn-outline-danger btn-sm">Revoke all API keys</button> <span class="small text-muted ms-2">For a leaked key, or someone who is leaving.</span></form>

@@ -17,16 +17,23 @@ const STATE = process.env.STATE_FILE || './upgrade-state.json';
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 class Person {
-  constructor(username, password) { this.username = username; this.password = password; this.cookie = ''; }
-  async req(method, path, { form, multipart } = {}) {
+  constructor(username, password) { this.username = username; this.password = password; this.cookie = ''; this.csrf = null; }
+  async refreshCsrf() { for (const p of ['/login', '/profile']) { await this.req('GET', p); if (this.csrf) return; } }
+  async req(method, path, { form, multipart } = {}, retried = false) {
+    const unsafe = !['GET', 'HEAD'].includes(method);
+    if (unsafe && !this.csrf && !retried) await this.refreshCsrf();     // releases from before the token have no token: nothing is added
     const headers = { Cookie: this.cookie };
     let body;
-    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }
-    else if (multipart) body = multipart;
+    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams({ ...(unsafe && this.csrf ? { _csrf: this.csrf } : {}), ...form }).toString(); }
+    else if (multipart) { if (unsafe && this.csrf) { const out = new FormData(); out.append('_csrf', this.csrf); for (const [k, v] of multipart.entries()) out.append(k, v); body = out; } else body = multipart; }
     const res = await fetch(BASE + path, { method, headers, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie()) this.cookie = c.split(';')[0];
     const buffer = Buffer.from(await res.arrayBuffer());
-    return { status: res.status, loc: res.headers.get('location'), buffer, text: buffer.toString() };
+    const text = buffer.toString();
+    if (res.headers.getSetCookie().length) this.csrf = null;
+    const meta = text.match(/<meta name="csrf-token" content="([^"]+)"/); if (meta) this.csrf = meta[1];
+    if (res.status === 403 && unsafe && !retried && /reload the page/i.test(text)) { this.csrf = null; await this.refreshCsrf(); return this.req(method, path, { form, multipart }, true); }
+    return { status: res.status, loc: res.headers.get('location'), buffer, text };
   }
   get(p) { return this.req('GET', p); }
   post(p, form) { return this.req('POST', p, { form }); }

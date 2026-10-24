@@ -22,6 +22,7 @@ const slaRoutes = require('./routes/sla');
 const mfaRoutes = require('./routes/mfa');
 const apiKeyRoutes = require('./routes/apiKeys');
 const webhookRoutes = require('./routes/webhooks');
+const auditRoutes = require('./routes/audit');
 const api = require('./api');
 const searchRoutes = require('./routes/search');
 const profileRoutes = require('./routes/profile');
@@ -35,6 +36,7 @@ const { startScheduler } = require('./scheduler');
 const { reportMailSetup } = require('./mailer');
 const { createLimiter, createIpLimiter } = require('./rateLimit');
 const { sessionSecret, trustProxy, rateLimits } = require('./settings');
+const csrf = require('./csrf');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -71,6 +73,9 @@ app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'SAMEORIGIN');
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.set('Cross-Origin-Opener-Policy', 'same-origin');
+  res.set('X-Permitted-Cross-Domain-Policies', 'none');
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
   next();
 });
@@ -93,13 +98,18 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   // SameSite is explicit because the forms carry no CSRF tokens: a cross-site post must not carry the session.
-  cookie: { maxAge: 1000 * 60 * 60 * 8, httpOnly: true, sameSite: 'lax' }
+  // secure: 'auto' marks the cookie Secure whenever the request came in over HTTPS (behind a TLS proxy this needs TRUST_PROXY).
+  cookie: { maxAge: 1000 * 60 * 60 * 8, httpOnly: true, sameSite: 'lax', secure: 'auto' }
 }));
 
 app.use(attachUser);
 
+// Forged-request protection (src/csrf.js): every page carries the session's token, every change must send it back.
+app.use(csrf.renderWithToken);
+app.use(csrf.middleware);
+
 // Sign-in: 20 refused attempts per address per 15 minutes. Sign-up: 20 requests per address per 15 minutes.
-app.post('/login', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' }));
+app.post('/login', createLimiter({ windowMs: 15 * 60 * 1000, max: rateLimits(process.env).loginFailuresPer15Min || Infinity, message: 'Too many sign-in attempts. Please wait 15 minutes and try again.' }));
 app.post('/register', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, countSuccess: true }));
 // The code step: 20 wrong codes per address per 15 minutes (and 5 per person, see mfa.js). Single sign-on: 30 failed returns.
 app.post('/login/mfa', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many wrong codes. Please wait 15 minutes and try again.' }));
@@ -121,6 +131,7 @@ app.use('/users', userRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/settings/sla', slaRoutes);
 app.use('/settings/webhooks', webhookRoutes);
+app.use('/settings/audit', auditRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);

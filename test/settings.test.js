@@ -38,7 +38,7 @@ test('an empty database: demo only on request, otherwise one admin from the sett
     { action: 'admin', username: 'hitesh', password: 'longenough', fullName: 'hitesh', email: 'h@example.test' });
   assert.strictEqual(seedPlan({ ADMIN_USERNAME: 'a', ADMIN_PASSWORD: 'longenough', ADMIN_FULL_NAME: 'Ada Admin' }, 0).fullName, 'Ada Admin');
   const short = seedPlan({ ADMIN_USERNAME: 'a', ADMIN_PASSWORD: 'short' }, 0);
-  assert.strictEqual(short.action, 'none'); assert.match(short.problem, /at least 8/);
+  assert.strictEqual(short.action, 'none'); assert.match(short.problem, /at least 10/);
   const nothing = seedPlan({}, 0);
   assert.strictEqual(nothing.action, 'none'); assert.match(nothing.problem, /ADMIN_USERNAME and ADMIN_PASSWORD/);
 });

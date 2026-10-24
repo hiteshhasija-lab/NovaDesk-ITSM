@@ -320,3 +320,17 @@ test('0006: a delivery is unique per webhook and event, deliveries go with their
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM webhook_deliveries`)).rows[0].c), 1, 'the other webhook keeps its delivery');
   });
 });
+
+test('0007: accounts get a failed-sign-in counter and a lock time, and the audit log keeps its rows when the person goes', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const [{ id }] = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('s', 'x', 'S', 'agent') RETURNING id`)).rows;
+    const u = (await knex.raw(`SELECT failed_logins, locked_until FROM users WHERE id = ?`, [id])).rows[0];
+    assert.deepStrictEqual([u.failed_logins, u.locked_until], [0, null]);
+    await knex.raw(`INSERT INTO audit_log (actor_id, actor_name, action, target_type, target_id, target_name, detail, ip) VALUES (?, 'S', 'user.updated', 'user', ?, 's', 'role agent to admin', '10.0.0.1')`, [id, id]);
+    const row = (await knex.raw(`SELECT * FROM audit_log`)).rows[0];
+    assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(row.at) && row.action === 'user.updated' && row.ip === '10.0.0.1');
+    await knex.raw(`DELETE FROM users WHERE id = ?`, [id]);
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM audit_log`)).rows[0].c), 1, 'the record outlives the person');
+  });
+});

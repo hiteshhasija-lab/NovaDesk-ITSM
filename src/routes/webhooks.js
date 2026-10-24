@@ -3,6 +3,7 @@ const { db } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const webhooks = require('../webhooks');
+const { audit } = require('../audit');
 const { WebhookUrlError } = require('../webhookNet');
 const { requireFields } = require('../validate');
 
@@ -35,6 +36,7 @@ router.post('/', async (req, res) => {
   const form = { name: String(req.body.name).trim().slice(0, 80), url: String(req.body.url).trim(), events: [].concat(req.body.events || []) };
   try {
     const made = await webhooks.createWebhook(req.session.user, form);
+    await audit(req, req.session.user, 'webhook.created', { targetType: 'webhook', targetId: made.id, targetName: form.name, detail: `${form.url}; events: ${form.events.join(', ')}` });
     res.render('webhooks/index', await view(req, { newSecret: made.secret, success: `Webhook "${form.name}" added. Copy the signing secret now: it is shown only this once.` }));
   } catch (err) {
     if (!(err instanceof WebhookUrlError)) throw err;
@@ -46,6 +48,7 @@ router.post('/:id/toggle', async (req, res) => {
   const hook = await db.prepare('SELECT id, active FROM webhooks WHERE id = ?').get(Number(req.params.id) || 0);
   if (!hook) return res.status(404).render('error', { title: 'Not Found', message: 'Webhook not found.' });
   await webhooks.setActive(hook.id, !hook.active);
+  await audit(req, req.session.user, 'webhook.toggled', { targetType: 'webhook', targetId: hook.id, detail: hook.active ? 'switched off' : 'switched on' });
   res.render('webhooks/index', await view(req, { success: hook.active ? 'Webhook switched off.' : 'Webhook switched on.' }));
 });
 
@@ -58,11 +61,14 @@ router.post('/:id/test', async (req, res) => {
 router.post('/:id/rotate', async (req, res) => {
   const secret = await webhooks.rotateSecret(Number(req.params.id) || 0);
   if (!secret) return res.status(404).render('error', { title: 'Not Found', message: 'Webhook not found.' });
+  await audit(req, req.session.user, 'webhook.secret_replaced', { targetType: 'webhook', targetId: Number(req.params.id) });
   res.render('webhooks/index', await view(req, { newSecret: secret, success: 'New signing secret made. The old one stopped working; give the new one to the receiver. It is shown only this once.' }));
 });
 
 router.post('/:id/delete', async (req, res) => {
+  const gone = await db.prepare('SELECT id, name, url FROM webhooks WHERE id = ?').get(Number(req.params.id) || 0);
   await db.prepare('DELETE FROM webhooks WHERE id = ?').run(Number(req.params.id) || 0);
+  if (gone) await audit(req, req.session.user, 'webhook.deleted', { targetType: 'webhook', targetId: gone.id, targetName: gone.name, detail: gone.url });
   res.render('webhooks/index', await view(req, { success: 'Webhook deleted, with its delivery log.' }));
 });
 

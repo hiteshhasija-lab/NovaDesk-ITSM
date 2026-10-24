@@ -154,7 +154,7 @@ async function resolveUser(claims) {
     if (!user.active) throw new SsoError('Your NovaDesk account is turned off. Ask an administrator.');
     await db.prepare('INSERT INTO user_identities (user_id, issuer, subject, email, last_login_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (issuer, subject) DO NOTHING').run(user.id, issuer, claims.sub, email, nowStr());
     console.log(`[SSO] linked ${user.username} to ${issuer} (matched by email)`);
-    return { user };
+    return { user, linked: true };
   }
 
   if (config.autoCreate && verified) {
@@ -164,7 +164,7 @@ async function resolveUser(claims) {
     `).run(username, bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10), String(claims.name || email.split('@')[0]).slice(0, 100), email, config.defaultRole);
     await db.prepare('INSERT INTO user_identities (user_id, issuer, subject, email, last_login_at) VALUES (?, ?, ?, ?, ?)').run(created.lastInsertRowid, issuer, claims.sub, email, nowStr());
     console.log(`[SSO] created ${username} (${config.defaultRole}) from ${issuer}`);
-    return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(created.lastInsertRowid) };
+    return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(created.lastInsertRowid), created: true };
   }
   throw new SsoError(`There is no NovaDesk account for ${email}. Ask an administrator to create one.`);
 }

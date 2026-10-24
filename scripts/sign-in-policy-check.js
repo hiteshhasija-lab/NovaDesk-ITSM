@@ -32,13 +32,20 @@ async function waitHealthy(port, srv) {
 }
 
 class Person {
-  constructor(base) { this.base = base; this.cookie = ''; }
-  async req(method, p, form) {
+  constructor(base) { this.base = base; this.cookie = ''; this.csrf = null; }
+  async refreshCsrf() { for (const p of ['/login', '/profile']) { await this.req('GET', p); if (this.csrf) return; } }
+  async req(method, p, form, retried = false) {
+    const unsafe = !['GET', 'HEAD'].includes(method);
+    if (unsafe && !this.csrf && !retried) await this.refreshCsrf();
     const headers = { Cookie: this.cookie }; let body;
-    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = (() => { const sp = new URLSearchParams(); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); return sp.toString(); })(); }
+    if (form || (unsafe && this.csrf)) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; const sp = new URLSearchParams(); if (unsafe && this.csrf) sp.append('_csrf', this.csrf); for (const [k, v] of Object.entries(form || {})) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); body = sp.toString(); }
     const res = await fetch(this.base + p, { method, headers, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie()) { const kv = c.split(';')[0]; const jar = Object.fromEntries(this.cookie.split('; ').filter(Boolean).map((x) => [x.split('=')[0], x])); jar[kv.split('=')[0]] = kv; this.cookie = Object.values(jar).join('; '); }
-    return { status: res.status, loc: res.headers.get('location'), text: await res.text() };
+    const text = await res.text();
+    if (res.headers.getSetCookie().length) this.csrf = null;
+    const meta = text.match(/<meta name="csrf-token" content="([^"]+)"/); if (meta) this.csrf = meta[1];
+    if (res.status === 403 && unsafe && !retried && /reload the page/i.test(text)) { this.csrf = null; await this.refreshCsrf(); return this.req(method, p, form, true); }
+    return { status: res.status, loc: res.headers.get('location'), text };
   }
   get(p) { return this.req('GET', p); }
   post(p, f) { return this.req('POST', p, f || {}); }

@@ -22,13 +22,17 @@ async function step(name, fn) { try { const r = await fn(); log(r !== false, nam
 const must = (cond, msg) => { if (!cond) throw new Error(msg); return true; };
 
 class Person {
-  constructor(name) { this.name = name; this.cookie = ''; this.user = null; }
-  async req(method, path, { form, json, multipart, headers = {} } = {}) {
+  constructor(name) { this.name = name; this.cookie = ''; this.user = null; this.csrf = null; }
+  // The anti-forgery token the page carries (what a browser sends back with every change); old releases have none.
+  async refreshCsrf() { for (const p of ['/login', '/profile']) { await this.req('GET', p); if (this.csrf) return; } }
+  async req(method, path, { form, json, multipart, headers = {} } = {}, retried = false) {
+    const unsafe = !['GET', 'HEAD'].includes(method);
+    if (unsafe && !this.csrf && !retried) await this.refreshCsrf();
     const h = { ...headers, Cookie: this.cookie };
     let body;
-    if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
-    else if (form) { h['Content-Type'] = 'application/x-www-form-urlencoded'; body = (() => { const sp = new URLSearchParams(); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); return sp.toString(); })(); }
-    else if (multipart) body = multipart;
+    if (json !== undefined) { h['Content-Type'] = 'application/json'; if (unsafe && this.csrf) h['X-CSRF-Token'] = this.csrf; body = JSON.stringify(json); }
+    else if (form) { h['Content-Type'] = 'application/x-www-form-urlencoded'; const sp = new URLSearchParams(); if (unsafe && this.csrf && !('_csrf' in form)) sp.append('_csrf', this.csrf); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); body = sp.toString(); }
+    else if (multipart) { if (unsafe && this.csrf) { const out = new FormData(); out.append('_csrf', this.csrf); for (const [k, v] of multipart.entries()) out.append(k, v); body = out; } else body = multipart; }
     const res = await fetch(BASE + path, { method, headers: h, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie ? res.headers.getSetCookie() : []) {
       const kv = c.split(';')[0]; const k = kv.split('=')[0];
@@ -36,6 +40,9 @@ class Person {
       jar[k] = kv; this.cookie = Object.values(jar).join('; ');
     }
     const text = await res.text();
+    if ((res.headers.getSetCookie ? res.headers.getSetCookie() : []).length) this.csrf = null;   // a new session: the old token no longer fits
+    const meta = text.match(/<meta name="csrf-token" content="([^"]+)"/); if (meta) this.csrf = meta[1];
+    if (res.status === 403 && unsafe && !retried && /reload the page/i.test(text)) { this.csrf = null; await this.refreshCsrf(); return this.req(method, path, { form, json, multipart, headers }, true); }
     let data = null; try { data = JSON.parse(text); } catch { /* html */ }
     return { status: res.status, text, data, loc: res.headers.get('location'), headers: res.headers };
   }
@@ -82,13 +89,13 @@ const has = (r, re) => re.test(r.text);
   await step('sign out ends the session', async () => { const p = new Person('lo'); await p.login('mchen', 'user123'); await p.post('/logout'); const r = await p.get('/incidents'); return must(r.status === 302, 'status ' + r.status); });
   await step('self-registration creates an end user who can sign in', async () => {
     const p = new Person('reg');
-    const r = await p.req('POST', '/register', { form: { full_name: 'Reggie Reg', username: 'reg' + tag, email: `reg${tag}@corp.local`, password: 'Reg-pass-1', confirm_password: 'Reg-pass-1' } });
+    const r = await p.req('POST', '/register', { form: { full_name: 'Reggie Reg', username: 'reg' + tag, email: `reg${tag}@corp.local`, password: 'Maple-Ribbon-Cloud-5', confirm_password: 'Maple-Ribbon-Cloud-5' } });
     must(r.status === 302, `register ${r.status} ${r.text.slice(0, 120)}`);
     const d = await p.get('/'); return must(d.status === 200, 'dashboard ' + d.status);
   });
   await step('registration refuses a taken username and mismatched passwords', async () => {
-    const dup = await new Person('d').req('POST', '/register', { form: { full_name: 'X', username: 'admin', email: 'x@x.x', password: 'abcdefgh1', confirm_password: 'abcdefgh1' } });
-    const mism = await new Person('m').req('POST', '/register', { form: { full_name: 'X', username: 'zz' + tag, email: 'x@x.x', password: 'abcdefgh1', confirm_password: 'different1' } });
+    const dup = await new Person('d').req('POST', '/register', { form: { full_name: 'X', username: 'admin', email: 'x@x.x', password: 'Quiet-Harbor-Lamp-77', confirm_password: 'Quiet-Harbor-Lamp-77' } });
+    const mism = await new Person('m').req('POST', '/register', { form: { full_name: 'X', username: 'zz' + tag, email: 'x@x.x', password: 'Quiet-Harbor-Lamp-77', confirm_password: 'Different-Harbor-Lamp-77' } });
     return must(dup.status !== 302 && mism.status !== 302, `${dup.status}/${mism.status}`);
   });
   await step('the dashboard renders for every role', async () => {
@@ -339,17 +346,17 @@ const has = (r, re) => re.test(r.text);
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {
-    const r = await admin.post('/users', { username: 'wk' + tag, full_name: 'Wendy Walk', email: `wk${tag}@corp.local`, password: 'Wendy-pass-1', role: 'agent', department: 'QA', active: '1' });
+    const r = await admin.post('/users', { username: 'wk' + tag, full_name: 'Wendy Walk', email: `wk${tag}@corp.local`, password: 'Orbit-Lantern-42x', role: 'agent', department: 'QA', active: '1' });
     must(r.status === 302, `create ${r.status} ${r.text.slice(0, 120)}`);
-    const dup = await admin.post('/users', { username: 'wk' + tag, full_name: 'Again', email: 'a@a.a', password: 'Wendy-pass-1', role: 'agent' }); must(dup.status !== 302, 'duplicate accepted');
-    const p = new Person('w'); const l = await p.login('wk' + tag, 'Wendy-pass-1'); must(l.status === 302, 'new user login ' + l.status);
+    const dup = await admin.post('/users', { username: 'wk' + tag, full_name: 'Again', email: 'a@a.a', password: 'Orbit-Lantern-42x', role: 'agent' }); must(dup.status !== 302, 'duplicate accepted');
+    const p = new Person('w'); const l = await p.login('wk' + tag, 'Orbit-Lantern-42x'); must(l.status === 302, 'new user login ' + l.status);
     const list = await admin.get(`/users`); const m = list.text.match(new RegExp(`/users/(\\d+)/edit[\\s\\S]{0,400}wk${tag}|wk${tag}[\\s\\S]{0,600}?/users/(\\d+)/edit`)); newUserId = m && (m[1] || m[2]); return must(newUserId, 'not in list');
   });
   await step('role change takes effect; a deactivated user cannot sign in', async () => {
     const e = await admin.post(`/users/${newUserId}/update`, { username: 'wk' + tag, full_name: 'Wendy Walk', email: `wk${tag}@corp.local`, role: 'user', department: 'QA', active: 'on' }); must(e.status === 302, 'role ' + e.status);
-    const p = new Person('w2'); await p.login('wk' + tag, 'Wendy-pass-1'); const x = await p.get('/users'); must(x.status === 403, 'now an end user: ' + x.status);
+    const p = new Person('w2'); await p.login('wk' + tag, 'Orbit-Lantern-42x'); const x = await p.get('/users'); must(x.status === 403, 'now an end user: ' + x.status);
     await admin.post(`/users/${newUserId}/update`, { username: 'wk' + tag, full_name: 'Wendy Walk', email: `wk${tag}@corp.local`, role: 'user', department: 'QA' });   // no active flag: deactivates
-    const off = await new Person('w3').login('wk' + tag, 'Wendy-pass-1');
+    const off = await new Person('w3').login('wk' + tag, 'Orbit-Lantern-42x');
     return must(off.status !== 302, 'a deactivated user signed in: ' + off.status);
   });
   await step('profile: details, preferences, theme; password change needs the current password', async () => {
@@ -764,9 +771,9 @@ const has = (r, re) => re.test(r.text);
     const r = await p.post('/login', { username: 'jdoe', password: 'agent123' });
     return must(r.status === 302 && !/^(\/\/|\/\\|https?:)/.test(r.loc || ''), 'redirected to ' + r.loc);
   });
-  await step('the session cookie is HttpOnly and SameSite', async () => {
-    const r = await fetch(BASE + '/login', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ username: 'admin', password: 'admin123' }), redirect: 'manual' });
-    const c = r.headers.getSetCookie()[0] || ''; return must(/HttpOnly/i.test(c) && /SameSite=(Lax|Strict)/i.test(c), c.replace(/=[^;]*/, '=…'));
+  await step('the session cookie is HttpOnly and SameSite (and not Secure over plain http, so sign-in works there)', async () => {
+    const p = new Person('flags'); const r = await p.post('/login', { username: 'admin', password: 'admin123' });
+    const c = (r.headers.getSetCookie ? r.headers.getSetCookie() : [])[0] || ''; return must(/HttpOnly/i.test(c) && /SameSite=(Lax|Strict)/i.test(c) && !/;\s*Secure/i.test(c), c.replace(/=[^;]*/, '=…'));
   });
   await step('basic hardening headers are sent', async () => {
     const r = await anon.get('/login'); const h = r.headers;

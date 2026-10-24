@@ -37,7 +37,7 @@ function sessionSecret(env) {
 
 // What to do when the database starts out empty (an existing database is never touched):
 //   'demo'  SEED_DEMO=true: the demonstration workspace (users, assets, tickets, catalog, articles)
-//   'admin' ADMIN_USERNAME + ADMIN_PASSWORD (at least 8 characters): one administrator, nothing else
+//   'admin' ADMIN_USERNAME + ADMIN_PASSWORD (at least PASSWORD_MIN_LENGTH, default 10, characters): one administrator, nothing else
 //   'none'  neither: nobody can sign in until one of them is set; `problem` says what is wrong
 function seedPlan(env, userCount) {
   if (userCount > 0) return { action: 'skip' };
@@ -45,7 +45,8 @@ function seedPlan(env, userCount) {
   const username = (env.ADMIN_USERNAME || '').trim();
   const password = env.ADMIN_PASSWORD || '';
   if (username && password) {
-    if (password.length < 8) return { action: 'none', problem: 'ADMIN_PASSWORD must be at least 8 characters.' };
+    const min = securitySettings(env).passwordMinLength;
+    if (password.length < min) return { action: 'none', problem: `ADMIN_PASSWORD must be at least ${min} characters.` };
     return { action: 'admin', username, password, fullName: (env.ADMIN_FULL_NAME || '').trim() || username, email: (env.ADMIN_EMAIL || '').trim() || null };
   }
   return { action: 'none', problem: 'There are no accounts yet: set ADMIN_USERNAME and ADMIN_PASSWORD (a first administrator), or SEED_DEMO=true (the demonstration workspace), and restart.' };
@@ -144,7 +145,8 @@ function trustProxy(env) {
 }
 
 // Allowances per minute. RATE_LIMIT_IP_PER_MIN: all routes, per address. RATE_LIMIT_API_PER_MIN: API reads, per key.
-// RATE_LIMIT_API_WRITE_PER_MIN: API creates and changes, per key. 0 turns a limit off.
+// RATE_LIMIT_API_WRITE_PER_MIN: API creates and changes, per key. RATE_LIMIT_LOGIN_FAILURES: refused sign-ins per address per
+// 15 minutes (default 20). 0 turns a limit off.
 function rateLimits(env) {
   const num = (name, fallback) => {
     const raw = (env[name] || '').trim();
@@ -153,7 +155,24 @@ function rateLimits(env) {
     if (!Number.isInteger(n) || n < 0 || n > 1000000) throw new Error(`${name} must be a whole number of requests per minute (0 turns the limit off).`);
     return n;
   };
-  return { ipPerMinute: num('RATE_LIMIT_IP_PER_MIN', 1200), apiPerMinute: num('RATE_LIMIT_API_PER_MIN', 300), apiWritePerMinute: num('RATE_LIMIT_API_WRITE_PER_MIN', 60) };
+  return { ipPerMinute: num('RATE_LIMIT_IP_PER_MIN', 1200), apiPerMinute: num('RATE_LIMIT_API_PER_MIN', 300), apiWritePerMinute: num('RATE_LIMIT_API_WRITE_PER_MIN', 60), loginFailuresPer15Min: num('RATE_LIMIT_LOGIN_FAILURES', 20) };
 }
 
-module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, trustProxy, rateLimits, DEV_SESSION_SECRET };
+// Password and lockout rules. PASSWORD_MIN_LENGTH (8 to 64, default 10). LOCKOUT_AFTER wrong passwords in a row lock
+// the account for LOCKOUT_MINUTES (defaults 10 and 15; LOCKOUT_AFTER=0 turns locking off).
+function securitySettings(env) {
+  const whole = (name, fallback, min, max) => {
+    const raw = (env[name] || '').trim();
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}.`);
+    return n;
+  };
+  return {
+    passwordMinLength: whole('PASSWORD_MIN_LENGTH', 10, 8, 64),
+    lockoutAfter: whole('LOCKOUT_AFTER', 10, 0, 1000),
+    lockoutMinutes: whole('LOCKOUT_MINUTES', 15, 1, 10080),
+  };
+}
+
+module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, trustProxy, rateLimits, securitySettings, DEV_SESSION_SECRET };

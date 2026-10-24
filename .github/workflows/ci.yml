@@ -123,6 +123,10 @@ jobs:
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/sign-in-policy-check.js
+      - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/security-check.js
       - name: Server log (on failure)
         if: failure()
         run: tail -80 server.log
@@ -204,7 +208,9 @@ jobs:
           for t in incidents changes problems cmdb_ci catalog_items kb_articles service_requests; do
             test "$(sql "select count(*) from $t")" = 0 || { echo "$t is not empty"; exit 1; }
           done
-          login() { curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=$1" --data-urlencode "password=$2" http://127.0.0.1:8080/login; }
+          # A browser loads a page first and sends back the anti-forgery token it carries; so does this.
+          token() { curl -s -c "$1" -b "$1" "$2" | grep -oE 'name="csrf-token" content="[^"]+"' | head -1 | sed 's/.*content="//; s/"$//'; }
+          login() { local jar; jar=$(mktemp); curl -s -o /dev/null -w '%{http_code}' -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$(token "$jar" http://127.0.0.1:8080/login)" -d "username=$1" --data-urlencode "password=$2" http://127.0.0.1:8080/login; }
           test "$(login owner "$ADMIN_PASSWORD")" = 302
           test "$(login admin admin123)" = 401
           test "$(login jdoe agent123)" = 401
@@ -271,18 +277,26 @@ jobs:
           for t in incidents changes problems cmdb_ci catalog_items kb_articles service_requests; do
             test "$(sql "select count(*) from $t")" = 0 || { echo "$t is not empty"; exit 1; }
           done
-          login() { curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=$1" --data-urlencode "password=$2" http://localhost:8080/login; }
+          # A browser loads a page first and sends back the anti-forgery token it carries; so does this.
+          token() { curl -s -c "$1" -b "$1" "$2" | grep -oE 'name="csrf-token" content="[^"]+"' | head -1 | sed 's/.*content="//; s/"$//'; }
+          login() { local jar; jar=$(mktemp); curl -s -o /dev/null -w '%{http_code}' -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$(token "$jar" http://localhost:8080/login)" -d "username=$1" --data-urlencode "password=$2" http://localhost:8080/login; }
           test "$(login admin "$ADMIN_PASSWORD")" = 302
           test "$(login admin admin123)" = 401
           test "$(login jdoe agent123)" = 401
 
       - name: Put data in (an incident with an attachment)
         run: |
-          curl -s -o /dev/null -c jar.txt -X POST -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login
-          loc=$(curl -s -o /dev/null -w '%{redirect_url}' -b jar.txt -X POST -d "short_description=ci kit incident&category=other&impact=3&urgency=2" http://localhost:8080/incidents)
+          token() { curl -s -c jar.txt -b jar.txt "$1" | grep -oE 'name="csrf-token" content="[^"]+"' | head -1 | sed 's/.*content="//; s/"$//'; }
+          rm -f jar.txt
+          curl -s -o /dev/null -c jar.txt -b jar.txt -X POST --data-urlencode "_csrf=$(token http://localhost:8080/login)" -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login
+          t=$(token http://localhost:8080/incidents)
+          test -n "$t"
+          loc=$(curl -s -o /dev/null -w '%{redirect_url}' -b jar.txt -c jar.txt -X POST --data-urlencode "_csrf=$t" -d "short_description=ci kit incident&category=other&impact=3&urgency=2" http://localhost:8080/incidents)
           echo "$loc" > incident.loc
           head -c 300000 /dev/urandom > attach.bin
-          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt -F "file=@attach.bin;filename=ci.bin" "$loc/attachments")" = 302
+          # an upload carries the token as its first field; without it the upload is refused
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt -F "file=@attach.bin;filename=ci.bin" "$loc/attachments")" = 403
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt -F "_csrf=$t" -F "file=@attach.bin;filename=ci.bin" "$loc/attachments")" = 302
           attid=$(curl -s -b jar.txt "$loc" | grep -oE '/attachments/[0-9]+/download' | head -1 | grep -oE '[0-9]+')
           echo "$attid" > attachment.id
           curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"
@@ -313,7 +327,9 @@ jobs:
           docker compose up -d novadesk
           for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done
           loc=$(cat incident.loc); attid=$(cat attachment.id)
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login)" = 302
+          tk() { curl -s -c rjar.txt -b rjar.txt http://localhost:8080/login | grep -oE 'name="csrf-token" content="[^"]+"' | head -1 | sed 's/.*content="//; s/"$//'; }
+          rm -f rjar.txt
+          test "$(curl -s -o /dev/null -w '%{http_code}' -c rjar.txt -b rjar.txt -X POST --data-urlencode "_csrf=$(tk)" -d "username=admin" --data-urlencode "password=$ADMIN_PASSWORD" http://localhost:8080/login)" = 302
           test "$(curl -s -o /dev/null -w '%{http_code}' -b jar.txt "$loc")" = 200
           curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"; cmp attach.bin back.bin
           docker compose logs novadesk > restored.log

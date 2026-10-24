@@ -202,6 +202,24 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **CMDB** — servers, network devices, applications, databases, workstations, storage. Tracks IP, OS, hardware specs, location, owner, warranty/lifecycle dates, and CI-to-CI relationships (depends on / runs on / connects to). Related incidents and changes show up on each CI's page.
 - **Users** — admin-only user management with roles and departments.
 
+## Security
+
+- **Forged requests (CSRF):** every form and every in-page request carries a per-session token, and a page change
+  made without it is refused with "Please reload the page". The REST API is not affected: it uses keys, not cookies.
+- **Passwords:** at least `PASSWORD_MIN_LENGTH` characters (default 10), not a common password, not containing the
+  person's own name or user name. Administrators must give a password when they create a user (there is no default).
+- **Lockout:** `LOCKOUT_AFTER` wrong passwords in a row lock the account for `LOCKOUT_MINUTES`; an administrator can
+  unlock it from the user's page. The sign-in page also limits failed attempts per address (`RATE_LIMIT_LOGIN_FAILURES`).
+- **Audit log:** administrators see who signed in, failed to, changed a user, a password, an API key, a webhook or the
+  SLA settings under Settings, Audit log, and can export it as CSV. Typed passwords and unknown user names are never stored.
+- **Cookies and headers:** the session cookie is `Secure` automatically when the request arrived over https (set
+  `TRUST_PROXY` behind a proxy); the pages send `Permissions-Policy`, `Cross-Origin-Opener-Policy` and the other
+  usual hardening headers.
+- **Last administrator:** the only active administrator cannot be demoted, deactivated or deleted.
+
+Checked by `node scripts/security-check.js` (runs in CI): forged posts and uploads, headers, password rules,
+lockout and unlock, the last-administrator guard and the audit log.
+
 ## Notes
 
 - End users (`role: user`) only see and create their own incidents/changes, and cannot edit CMDB or see internal work notes.
