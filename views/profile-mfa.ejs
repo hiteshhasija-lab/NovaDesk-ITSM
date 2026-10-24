@@ -38,9 +38,19 @@
 
       <% } else if (setup) { %>
         <h6 class="section-title">1. Add NovaDesk to your authenticator app</h6>
-        <p class="small text-muted">In Microsoft Authenticator, Google Authenticator, Authy or 1Password, add an account and choose <em>enter a setup key</em>. Use this key (spaces do not matter):</p>
-        <p><code id="mfaKey" class="fs-5 user-select-all"><%= setup.secret.match(/.{1,4}/g).join(' ') %></code></p>
-        <p class="small text-muted">On your phone you can also <a href="<%= setup.uri %>">open the setup link</a> in your authenticator app.</p>
+        <div class="d-flex flex-wrap gap-4 align-items-start mb-2">
+          <% if (setup.qrSvg) { %>
+          <div class="mfa-qr flex-shrink-0">
+            <div class="border rounded bg-white p-1" style="width:200px; max-width:100%;"><%- setup.qrSvg %></div>
+            <div class="small text-muted mt-1" style="max-width:200px;">Scan with your phone's authenticator app.</div>
+          </div>
+          <% } %>
+          <div class="flex-grow-1" style="min-width:220px;">
+            <p class="small text-muted"><% if (setup.qrSvg) { %>Open Microsoft Authenticator, Google Authenticator, Authy or 1Password, add an account and scan the code. <% } else { %>In Microsoft Authenticator, Google Authenticator, Authy or 1Password, add an account and choose <em>enter a setup key</em>. <% } %>Cannot scan? Choose <em>enter a setup key</em> and type this key (spaces do not matter):</p>
+            <p><code id="mfaKey" class="fs-5 user-select-all"><%= setup.secret.match(/.{1,4}/g).join(' ') %></code></p>
+            <p class="small text-muted mb-0">On your phone you can also <a href="<%= setup.uri %>">open the setup link</a> in your authenticator app.</p>
+          </div>
+        </div>
         <h6 class="section-title mt-4">2. Enter the code it shows</h6>
         <form method="POST" action="/profile/mfa/confirm" class="row g-2 align-items-end">
           <div class="col-md-6"><label class="form-label small" for="code_confirm">6-digit code</label><input type="text" id="code_confirm" name="code" class="form-control" inputmode="numeric" autocomplete="one-time-code" required autofocus></div>

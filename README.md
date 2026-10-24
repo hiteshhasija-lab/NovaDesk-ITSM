@@ -103,9 +103,10 @@ login page then shows a *Sign in with…* button.
 - People who sign in through the provider answer to the provider's own multi-factor rules.
 
 **Two-step verification.** Anyone can add a second step to signing in with their password: under the user menu,
-*Two-step verification*, add the key to an authenticator app (Microsoft Authenticator, Google Authenticator,
-Authy, 1Password), confirm with a code, and keep the ten recovery codes shown once. The password then leads to a
-code page. Each code works once; five wrong codes lock the code step for that person for ten minutes; a recovery code
+*Two-step verification*, scan the QR code with an authenticator app (Microsoft Authenticator, Google Authenticator,
+Authy, 1Password) or type the key shown beside it, confirm with a code, and keep the ten recovery codes shown once. The password then leads to a
+code page. The QR code is drawn by NovaDesk itself (`src/qr.js`, no outside service, so the key never leaves the server)
+and those pages are never cached. Each code works once; five wrong codes lock the code step for that person for ten minutes; a recovery code
 works once. Whoever loses their phone and their recovery codes asks an administrator: *Users*, the person,
 *Reset two-step verification*. `MFA_REQUIRE=admins` (or `all`) makes it compulsory: until it is set up, only its
 setup page and sign-out open. The stored keys are encrypted with `MFA_ENCRYPTION_KEY` (default: derived from

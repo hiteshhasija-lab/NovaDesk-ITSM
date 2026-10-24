@@ -4,11 +4,14 @@ const { db } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const mfa = require('../mfa');
+const qr = require('../qr');
 const { audit } = require('../audit');
 const { authPolicy } = require('../settings');
 
 const router = createAsyncRouter();
 router.use(requireAuth);
+// These pages show the setup key and the recovery codes: neither the browser nor a proxy keeps a copy.
+router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 const policy = authPolicy(process.env);
 
 // What the page shows; each route renders it with `res.render('profile-mfa', ...)`.
@@ -16,6 +19,8 @@ async function view(req, extra = {}) {
   const user = await db.prepare('SELECT id, username, full_name, email, role FROM users WHERE id = ?').get(req.session.user.id);
   const state = await mfa.status(user.id);
   const setup = state.pending ? await mfa.pendingSetup(user).catch(() => null) : null;
+  // Drawn here, so the key never goes to an outside QR service. Null if the link were ever too long: the typed key still works.
+  if (setup) setup.qrSvg = qr.toSvg(setup.uri, { label: 'QR code for the NovaDesk setup key' });
   const required = mfa.requiredFor(policy, user.role) && req.session.user.via !== 'sso';
   return { title: 'Two-step verification', state, setup, required, forced: Boolean(req.query.required) && required && !state.enabled, error: null, success: null, recoveryCodes: null, ...extra };
 }
