@@ -1,10 +1,11 @@
 const fs = require('fs');
-const { db, nextNumber, nowStr, logActivity } = require('../db');
+const { db, nowStr, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 const { requireFields } = require('../validate');
+const cmdbActions = require('../cmdbActions');
 const { TRACKER_PATH, readTrackerForDownload } = require('../decomTracker');
 
 const router = createAsyncRouter();
@@ -127,40 +128,8 @@ router.get('/decommissioned-tracker.xlsx', requireAuth, requireRole('admin', 'ag
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
-  const b = req.body;
-  const ci_number = await nextNumber('ci', 'CI');
-  const info = await db.prepare(`
-    INSERT INTO cmdb_ci (ci_number, name, ci_type, environment, status, ip_address, os, manufacturer, model,
-      serial_number, location, owner_id, support_group, cpu, ram, disk, purchase_date, warranty_expiry,
-      install_date, notes, created_by)
-    VALUES (@ci_number, @name, @ci_type, @environment, @status, @ip_address, @os, @manufacturer, @model,
-      @serial_number, @location, @owner_id, @support_group, @cpu, @ram, @disk, @purchase_date, @warranty_expiry,
-      @install_date, @notes, @created_by)
-    RETURNING id
-  `).run({
-    ci_number,
-    name: b.name,
-    ci_type: b.ci_type,
-    environment: b.environment || 'production',
-    status: b.status || 'in_use',
-    ip_address: b.ip_address || null,
-    os: b.os || null,
-    manufacturer: b.manufacturer || null,
-    model: b.model || null,
-    serial_number: b.serial_number || null,
-    location: b.location || null,
-    owner_id: b.owner_id || null,
-    support_group: b.support_group || null,
-    cpu: b.cpu || null,
-    ram: b.ram || null,
-    disk: b.disk || null,
-    purchase_date: b.purchase_date || null,
-    warranty_expiry: b.warranty_expiry || null,
-    install_date: b.install_date || null,
-    notes: b.notes || null,
-    created_by: req.session.user.id
-  });
-  res.redirect(`/cmdb/${info.lastInsertRowid}`);
+  const created = await cmdbActions.createCi({ actor: req.session.user, fields: req.body });
+  res.redirect(`/cmdb/${created.id}`);
 });
 
 router.get('/:id', requireAuth, async (req, res) => {
@@ -250,37 +219,9 @@ router.get('/:id/edit', requireAuth, requireRole('admin', 'agent'), async (req, 
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
-  const b = req.body;
-  await db.prepare(`
-    UPDATE cmdb_ci SET name=@name, ci_type=@ci_type, environment=@environment, status=@status, ip_address=@ip_address,
-      os=@os, manufacturer=@manufacturer, model=@model, serial_number=@serial_number, location=@location,
-      owner_id=@owner_id, support_group=@support_group, cpu=@cpu, ram=@ram, disk=@disk,
-      purchase_date=@purchase_date, warranty_expiry=@warranty_expiry, install_date=@install_date, notes=@notes,
-      updated_at=@updated_at
-    WHERE id=@id
-  `).run({
-    id: req.params.id,
-    name: b.name,
-    ci_type: b.ci_type,
-    environment: b.environment || 'production',
-    status: b.status || 'in_use',
-    ip_address: b.ip_address || null,
-    os: b.os || null,
-    manufacturer: b.manufacturer || null,
-    model: b.model || null,
-    serial_number: b.serial_number || null,
-    location: b.location || null,
-    owner_id: b.owner_id || null,
-    support_group: b.support_group || null,
-    cpu: b.cpu || null,
-    ram: b.ram || null,
-    disk: b.disk || null,
-    purchase_date: b.purchase_date || null,
-    warranty_expiry: b.warranty_expiry || null,
-    install_date: b.install_date || null,
-    notes: b.notes || null,
-    updated_at: nowStr()
-  });
+  const existing = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Configuration item not found.' });
+  await cmdbActions.updateCi({ existing, fields: req.body });
   res.redirect(`/cmdb/${req.params.id}`);
 });
 

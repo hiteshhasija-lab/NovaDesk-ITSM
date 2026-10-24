@@ -20,6 +20,8 @@ const userRoutes = require('./routes/users');
 const notificationRoutes = require('./routes/notifications');
 const slaRoutes = require('./routes/sla');
 const mfaRoutes = require('./routes/mfa');
+const apiKeyRoutes = require('./routes/apiKeys');
+const api = require('./api');
 const searchRoutes = require('./routes/search');
 const profileRoutes = require('./routes/profile');
 const myWorkRoutes = require('./routes/mywork');
@@ -30,8 +32,8 @@ const reportRoutes = require('./routes/reports');
 const integrationRoutes = require('./routes/integrations');
 const { startScheduler } = require('./scheduler');
 const { reportMailSetup } = require('./mailer');
-const { createLimiter } = require('./rateLimit');
-const { sessionSecret } = require('./settings');
+const { createLimiter, createIpLimiter } = require('./rateLimit');
+const { sessionSecret, trustProxy, rateLimits } = require('./settings');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -41,6 +43,8 @@ const TLS_KEY_PATH = process.env.TLS_KEY_PATH || path.join(__dirname, '..', 'cer
 const TLS_CERT_PATH = process.env.TLS_CERT_PATH || path.join(__dirname, '..', 'certs', 'cert.pem');
 
 app.disable('x-powered-by');
+// Behind a reverse proxy (TRUST_PROXY=1): read the client's address from X-Forwarded-For, for rate limits and sign-in throttling.
+app.set('trust proxy', trustProxy(process.env));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
 
@@ -70,6 +74,13 @@ app.use((req, res, next) => {
   next();
 });
 
+// Every route, per address (RATE_LIMIT_IP_PER_MIN, default 1200 a minute): a safety net against a runaway client.
+app.use(createIpLimiter({ perMinute: rateLimits(process.env).ipPerMinute }));
+
+// The REST API has its own body parsing, authentication (API keys, never the browser session), per-key rate limits
+// and JSON errors, so it sits before the page machinery.
+app.use('/api/v1', api.router);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(methodOverride('_method'));
@@ -93,6 +104,11 @@ app.post('/register', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, countSu
 app.post('/login/mfa', createLimiter({ windowMs: 15 * 60 * 1000, max: 20, message: 'Too many wrong codes. Please wait 15 minutes and try again.' }));
 app.get('/auth/oidc/callback', createLimiter({ windowMs: 15 * 60 * 1000, max: 30, message: 'Too many failed sign-in attempts. Please wait 15 minutes and try again.' }));
 
+// The API guide (public: it describes the API and holds no data).
+app.get('/api/docs', (req, res) => {
+  res.render('api-docs', { title: 'NovaDesk API', specPath: '/api/v1/openapi.json', spec: api.openApi(), publicUrl: (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, ''), limits: api.limits });
+});
+
 app.use('/api/integrations', integrationRoutes);
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
@@ -105,6 +121,7 @@ app.use('/notifications', notificationRoutes);
 app.use('/settings/sla', slaRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
+app.use('/profile/api-keys', apiKeyRoutes);
 app.use('/profile', profileRoutes);
 app.use('/my-work', myWorkRoutes);
 app.use('/catalog', catalogRoutes);

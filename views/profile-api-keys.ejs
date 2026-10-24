@@ -1,0 +1,54 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-key text-secondary me-1"></i>API keys</h4>
+
+  <div class="card mb-3" style="max-width:760px;">
+    <div class="card-body">
+      <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
+      <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+
+      <% if (newKey) { %>
+      <h6 class="section-title">Your new key</h6>
+      <pre class="border rounded p-3 mb-2 user-select-all" id="newApiKey" style="white-space: pre-wrap; word-break: break-all;"><%= newKey %></pre>
+      <p class="small text-muted">Keep it secret, like a password: anyone with it can act as you. Use it as <code>Authorization: Bearer &lt;key&gt;</code>. For example:</p>
+      <pre class="border rounded p-3 small"><%= 'curl -H "Authorization: Bearer ' + newKey + '" ' + (publicUrl || 'https://<your NovaDesk>') + '/api/v1/me' %></pre>
+      <hr>
+      <% } %>
+
+      <p class="small text-muted">A personal API key lets a script or another system use NovaDesk as you, with your role and your access. Read-only keys can only look; write keys can also create and change records. Details: <a href="/api/docs">API guide</a>.</p>
+
+      <h6 class="section-title">Make a key</h6>
+      <form method="POST" action="/profile/api-keys" class="row g-2 align-items-end mb-4">
+        <div class="col-md-4"><label class="form-label small" for="key_name">Name</label><input type="text" class="form-control" id="key_name" name="name" maxlength="80" placeholder="Monitoring script" required></div>
+        <div class="col-md-3"><label class="form-label small" for="key_scope">Access</label>
+          <select class="form-select" id="key_scope" name="scope"><option value="read">Read only</option><option value="write">Read and write</option></select></div>
+        <div class="col-md-3"><label class="form-label small" for="key_expires">Expires</label>
+          <select class="form-select" id="key_expires" name="expires"><option value="30">in 30 days</option><option value="90" selected>in 90 days</option><option value="365">in a year</option><option value="never">never</option></select></div>
+        <div class="col-md-2"><button type="submit" class="btn btn-primary w-100">Make key</button></div>
+      </form>
+
+      <h6 class="section-title">Your keys <span class="text-muted small">(up to <%= max %> active)</span></h6>
+      <% if (!keys.length) { %><p class="text-muted small mb-0">No keys yet.</p><% } else { %>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light"><tr><th>Name</th><th>Key</th><th>Access</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+          <tbody>
+            <% keys.forEach(k => { %>
+            <tr>
+              <td><%= k.name %></td>
+              <td><code><%= k.prefix %>…</code></td>
+              <td><span class="badge bg-<%= k.scope === 'write' ? 'warning text-dark' : 'secondary' %>"><%= k.scope === 'write' ? 'Read and write' : 'Read only' %></span></td>
+              <td class="small text-muted"><%- k.last_used_at ? h.fmtDate(k.last_used_at) : 'never' %></td>
+              <td class="small text-muted"><% if (k.revoked_at) { %><span class="badge bg-danger">Revoked</span><% } else if (k.expires_at) { %><%- h.fmtDateShort(k.expires_at) %><% } else { %>never<% } %></td>
+              <td class="text-end"><% if (!k.revoked_at) { %><form method="POST" action="/profile/api-keys/<%= k.id %>/revoke" class="m-0"><button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button></form><% } %></td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('partials/foot') %>

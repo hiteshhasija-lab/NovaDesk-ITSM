@@ -111,6 +111,21 @@ works once. Whoever loses their phone and their recovery codes asks an administr
 setup page and sign-out open. The stored keys are encrypted with `MFA_ENCRYPTION_KEY` (default: derived from
 `SESSION_SECRET`; if that changes without a fixed `MFA_ENCRYPTION_KEY`, people use a recovery code or get a reset).
 
+**REST API.** Scripts and other systems can read and create incidents, service requests and configuration items
+through `/api/v1`, with a personal API key. Each person makes keys under the user menu, *API keys* (shown once;
+read-only or read and write; they expire after 30 days, 90 days, a year or never; ten at most). A key acts as its
+owner, with the owner's role: end users see only their own incidents and requests. The guide, with examples, is at
+`/api/docs` and the OpenAPI document at `/api/v1/openapi.json`. Changes, approvals and the decommission workflow
+are read-only in the API. A leaked key can be revoked by its owner, or by an administrator for all of a person's
+keys (*Users*, the person, *Revoke all API keys*). Keys are not covered by two-step verification, like any token.
+Writes made through the API run the same rules as the pages (SLA clocks, activity log, emails).
+- Rate limits: `RATE_LIMIT_API_PER_MIN` (default 300) reads and `RATE_LIMIT_API_WRITE_PER_MIN` (default 60) writes
+  per key per minute, and `RATE_LIMIT_IP_PER_MIN` (default 1200) for every page and API route per address; `0`
+  turns one off. Answers carry `X-RateLimit-*` headers and, over the limit, `429` with `Retry-After`.
+- Behind a reverse proxy set `TRUST_PROXY` to the number of proxies (for example `1`), otherwise every client shares
+  the proxy's address and its limits.
+- Send an `Idempotency-Key` header with a `POST` to make a retry safe.
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

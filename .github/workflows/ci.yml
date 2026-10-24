@@ -105,6 +105,10 @@ jobs:
             if (bad.length) { console.log([...new Set(bad)].join("\n")); process.exit(1); }
             console.log("sender, subject and both parts are right on all " + msgs.length + " messages");
           '
+      - name: REST API (keys, roles, validation, idempotency, shapes, rate limits, proxy addresses)
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          BASE_URL=http://127.0.0.1:8080 node scripts/api-check.js
       - name: Sign-in policies (MFA_REQUIRE, LOCAL_LOGIN=false, settings that are refused)
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk

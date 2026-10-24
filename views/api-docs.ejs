@@ -1,0 +1,81 @@
+<%- include('partials/head') %>
+<%
+  const base = (publicUrl || 'https://your-novadesk') + '/api/v1';
+  const tags = spec.tags.map(t => t.name);
+  const ops = [];
+  Object.entries(spec.paths).forEach(([path, methods]) => Object.entries(methods).forEach(([method, op]) => ops.push({ path, method: method.toUpperCase(), op })));
+  const badge = { GET: 'success', POST: 'primary', PATCH: 'warning text-dark', DELETE: 'danger' };
+  const typeOf = (s) => (s.enum ? s.enum.join(' | ') : (s.format ? s.type + ' (' + s.format + ')' : s.type)) + (s.nullable ? ', may be null' : '');
+%>
+<div class="container py-4" style="max-width: 980px;">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0"><i class="bi bi-braces text-primary me-2"></i>NovaDesk API</h3>
+    <a href="/" class="btn btn-sm btn-outline-secondary">&larr; Back to NovaDesk</a>
+  </div>
+  <p class="text-muted">Create and read incidents, service requests and configuration items from your own scripts and tools. JSON over HTTPS, one personal API key per integration. The machine-readable description is at <a href="<%= specPath %>"><%= specPath %></a> (OpenAPI 3).</p>
+
+  <div class="card mb-4"><div class="card-body">
+    <h5>Getting started</h5>
+    <ol class="mb-2">
+      <li>Open <a href="/profile/api-keys">your profile menu, API keys</a> and make a key. Choose <em>Read only</em> unless the integration must create or change records. The key is shown once.</li>
+      <li>Send it with every request: <code>Authorization: Bearer ndk_…</code>.</li>
+    </ol>
+<pre class="border rounded p-3 small mb-2">curl -H "Authorization: Bearer $NOVADESK_KEY" <%= base %>/me
+
+curl -H "Authorization: Bearer $NOVADESK_KEY" \
+     "<%= base %>/incidents?status=open&amp;priority=1"
+
+curl -X POST <%= base %>/incidents \
+     -H "Authorization: Bearer $NOVADESK_KEY" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: 3f1c0c1e-8a52-4e4e-9a31-0b5d5b1c1111" \
+     -d '{"short_description": "Disk full on PRD-DB-01", "impact": 2, "urgency": 1}'
+
+curl -X PATCH <%= base %>/incidents/42 \
+     -H "Authorization: Bearer $NOVADESK_KEY" -H "Content-Type: application/json" \
+     -d '{"status": "on_hold"}'</pre>
+    <p class="small text-muted mb-0">A key acts as the person who made it, with their role: an end user sees and creates only their own incidents and requests; agents and administrators see everything. A key stops working when it expires, is revoked, or its owner is turned off. Keys are not subject to two-step verification, so treat them like passwords and use as little access as the job needs.</p>
+  </div></div>
+
+  <div class="card mb-4"><div class="card-body">
+    <h5>Conventions</h5>
+    <dl class="row small mb-0">
+      <dt class="col-sm-3">Format</dt><dd class="col-sm-9">Requests with a body use <code>Content-Type: application/json</code> (up to 256 KB). Dates and times in answers are ISO 8601 in UTC. Fields you send that the API does not know are refused, so a typo fails loudly.</dd>
+      <dt class="col-sm-3">Lists</dt><dd class="col-sm-9">Newest first. <code>page</code> (from 1) and <code>per_page</code> (1 to 200, default 50). The answer is <code>{ "data": [...], "page", "per_page", "total" }</code>, and the total is also in <code>X-Total-Count</code>.</dd>
+      <dt class="col-sm-3">Creating</dt><dd class="col-sm-9">Answers <code>201</code> with the new record and a <code>Location</code> header.</dd>
+      <dt class="col-sm-3">Changing</dt><dd class="col-sm-9"><code>PATCH</code> takes only the fields to change; <code>null</code> clears a field that allows it. A change goes through the same rules as one made in the browser: priorities and SLA clocks are recalculated, the activity log is written and the right people are emailed.</dd>
+      <dt class="col-sm-3">Safe retries</dt><dd class="col-sm-9">Add an <code>Idempotency-Key</code> header (any unique string, such as a UUID) to a <code>POST</code>. Repeating the same request with the same key within 24 hours returns the first answer (with <code>Idempotent-Replay: true</code>) and creates nothing new. Using the key for a different request is refused with <code>422</code>.</dd>
+      <dt class="col-sm-3">Errors</dt><dd class="col-sm-9"><code>{ "error": { "code", "message", "details": [{ "field", "message" }] } }</code> with the matching HTTP status: 400 invalid request, 401 no valid key, 403 not allowed (a read-only key, or your role), 404 not found, 409 an identical request is still running, 413 body too large, 415 not JSON, 422 a field refers to something that does not exist, 429 too many requests.</dd>
+      <dt class="col-sm-3">Rate limits</dt><dd class="col-sm-9"><% if (limits.apiPerMinute) { %><%= limits.apiPerMinute %> reads and <%= limits.apiWritePerMinute %> writes per key per minute<% } else { %>No per-key limit is set<% } %>; every answer carries <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code> and <code>X-RateLimit-Reset</code> (seconds). Over the limit you get <code>429</code> and <code>Retry-After</code>. An address is also limited as a whole, and repeated bad keys from one address are blocked for a while.</dd>
+    </dl>
+  </div></div>
+
+  <h5 class="mb-3">Endpoints</h5>
+  <% tags.forEach(tag => { %>
+  <h6 class="text-uppercase text-muted mt-4 mb-2" style="letter-spacing:.06em;"><%= tag %></h6>
+  <% ops.filter(o => o.op.tags[0] === tag).forEach(o => { %>
+  <div class="card mb-2"><div class="card-body py-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-<%= badge[o.method] || 'secondary' %>" style="min-width:3.8em;"><%= o.method %></span>
+      <code class="fs-6">/api/v1<%= o.path %></code>
+      <span class="ms-2"><%= o.op.summary %></span>
+    </div>
+    <% if (o.op.description) { %><p class="small text-muted mb-1 mt-1"><%= o.op.description %></p><% } %>
+    <% const params = (o.op.parameters || []); if (params.length) { %>
+    <table class="table table-sm small mb-1 mt-2"><thead><tr><th>Parameter</th><th>In</th><th>Values</th><th></th></tr></thead><tbody>
+      <% params.forEach(p => { %><tr><td><code><%= p.name %></code></td><td><%= p.in %></td><td><%= typeOf(p.schema) %></td><td class="text-muted"><%= p.description || '' %></td></tr><% }) %>
+    </tbody></table>
+    <% } %>
+    <% if (o.op.requestBody) { const sch = o.op.requestBody.content['application/json'].schema; %>
+    <table class="table table-sm small mb-1 mt-2"><thead><tr><th>Body field</th><th>Required</th><th>Values</th><th></th></tr></thead><tbody>
+      <% Object.entries(sch.properties).forEach(([name, s]) => { %><tr><td><code><%= name %></code></td><td><%= sch.required.includes(name) ? 'yes' : '' %></td><td><%= typeOf(s) %></td><td class="text-muted"><%= s.description || '' %></td></tr><% }) %>
+    </tbody></table>
+    <% } %>
+    <div class="small text-muted mt-1">Answer: <code><%= Object.values(o.op.responses)[0].content['application/json'].schema.$ref.split('/').pop() %></code><%= o.op.responses[403] ? ' · needs ' + (o.method === 'GET' ? 'a role that may see it' : 'a write key') : '' %></div>
+  </div></div>
+  <% }) %>
+  <% }) %>
+
+  <p class="small text-muted mt-4">Changes, approvals and the decommission workflow are read-only here: approving, rejecting and cancelling follow their own rules in the NovaDesk pages.</p>
+</div>
+<%- include('partials/foot') %>

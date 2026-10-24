@@ -199,3 +199,21 @@ test('0004 adds sign-in links, two-step secrets and recovery codes that go away 
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM user_identities WHERE user_id = ?`, [b])).rows[0].c), 1, 'the other person is untouched');
   });
 });
+
+test('0005 adds API keys (hash only, unique, read or write) and idempotency records that go away with the key or the person', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const [{ id: u }] = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('k', 'x', 'K', 'agent') RETURNING id`)).rows;
+    const [{ id: k }] = (await knex.raw(`INSERT INTO api_keys (user_id, name, prefix, token_hash, scope) VALUES (?, 'ci', 'ndk_abcd', 'hash-1', 'write') RETURNING id`, [u])).rows;
+    await assert.rejects(knex.raw(`INSERT INTO api_keys (user_id, name, prefix, token_hash) VALUES (?, 'dup', 'ndk_abcd', 'hash-1')`, [u]), /duplicate key|unique/i, 'two keys cannot share a hash');
+    await assert.rejects(knex.raw(`INSERT INTO api_keys (user_id, name, prefix, token_hash, scope) VALUES (?, 'bad', 'ndk_efgh', 'hash-2', 'admin')`, [u]), /check constraint|violates/i, 'scope is read or write');
+    assert.strictEqual((await knex.raw(`SELECT scope FROM api_keys WHERE user_id = ? AND name = 'ci'`, [u])).rows[0].scope, 'write');
+    await knex.raw(`INSERT INTO api_idempotency (key_id, idem_key, request_hash) VALUES (?, 'abc', 'h')`, [k]);
+    await assert.rejects(knex.raw(`INSERT INTO api_idempotency (key_id, idem_key, request_hash) VALUES (?, 'abc', 'h2')`, [k]), /duplicate key|unique/i, 'one record per key and Idempotency-Key');
+    const [{ id: k2 }] = (await knex.raw(`INSERT INTO api_keys (user_id, name, prefix, token_hash) VALUES (?, 'other', 'ndk_zzzz', 'hash-3') RETURNING id`, [u])).rows;
+    await knex.raw(`INSERT INTO api_idempotency (key_id, idem_key, request_hash) VALUES (?, 'abc', 'h')`, [k2]);   // the same string under another key is a different request
+    await knex.raw(`DELETE FROM users WHERE id = ?`, [u]);
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM api_keys`)).rows[0].c), 0, 'keys go with the person');
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM api_idempotency`)).rows[0].c), 0, 'so do their idempotency records');
+  });
+});

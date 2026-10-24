@@ -77,6 +77,10 @@
         <dt class="col-sm-4">Single sign-on</dt>
         <dd class="col-sm-8"><% if (identities.length) { %><% identities.forEach(i => { %><div><%= i.issuer %><% if (i.email) { %> <span class="text-muted">(<%= i.email %>)</span><% } %></div><% }) %><% } else { %>Not linked<% } %></dd>
       </dl>
+      <dl class="row mb-2 small"><dt class="col-sm-4">API keys</dt><dd class="col-sm-8"><%= apiKeyCount %> active</dd></dl>
+      <% if (apiKeyCount) { %>
+      <form method="POST" action="/users/<%= user.id %>/api-keys/revoke" class="m-0 mb-2"><button type="submit" class="btn btn-outline-danger btn-sm">Revoke all API keys</button> <span class="small text-muted ms-2">For a leaked key, or someone who is leaving.</span></form>
+      <% } %>
       <% if (mfaStatus.enabled || mfaStatus.pending) { %>
       <form method="POST" action="/users/<%= user.id %>/mfa/reset" class="m-0"><button type="submit" class="btn btn-outline-danger btn-sm">Reset two-step verification</button> <span class="small text-muted ms-2">For someone who lost their phone and recovery codes.</span></form>
       <% } %>

@@ -27,4 +27,40 @@ function createLimiter({ windowMs, max, countSuccess = false, message }) {
   };
 }
 
-module.exports = { createLimiter };
+// A fixed-window counter per key, with the numbers an API needs to tell a client how it is doing.
+//   const w = createWindowCounter({ windowMs: 60000, max: 300 });  w.hit(key) -> { allowed, limit, remaining, resetSeconds }
+// A max of 0 means "no limit". Old windows are dropped as time passes, so memory stays small.
+function createWindowCounter({ windowMs, max }) {
+  const windows = new Map();                      // key -> { count, resetAt }
+  const timer = setInterval(() => { const now = Date.now(); for (const [k, w] of windows) if (now >= w.resetAt) windows.delete(k); }, Math.max(windowMs, 1000));
+  if (timer.unref) timer.unref();
+  return {
+    hit(key, now = Date.now()) {
+      if (!max) return { allowed: true, limit: 0, remaining: 0, resetSeconds: 0 };
+      let w = windows.get(key);
+      if (!w || now >= w.resetAt) { w = { count: 0, resetAt: now + windowMs }; windows.set(key, w); }
+      w.count += 1;
+      return { allowed: w.count <= max, limit: max, remaining: Math.max(0, max - w.count), resetSeconds: Math.max(1, Math.ceil((w.resetAt - now) / 1000)) };
+    },
+    size: () => windows.size,
+  };
+}
+
+// Every route, per address: a safety net against a runaway client or a flood. Static files and /health are left
+// out. RATE_LIMIT_IP_PER_MIN sets the allowance (0 turns it off).
+const UNLIMITED = /^\/(health|css\/|js\/|img\/|fonts\/|favicon)/;
+function createIpLimiter({ perMinute }) {
+  const counter = createWindowCounter({ windowMs: 60 * 1000, max: perMinute });
+  return function ipLimiter(req, res, next) {
+    if (!perMinute || UNLIMITED.test(req.path)) return next();
+    const r = counter.hit(req.ip);
+    if (r.allowed) return next();
+    res.set('Retry-After', String(r.resetSeconds));
+    if (req.path.startsWith('/api/')) {
+      return res.status(429).json({ error: { code: 'rate_limited', message: `Too many requests from this address. Try again in ${r.resetSeconds} seconds.` } });
+    }
+    res.status(429).render('error', { title: 'Too Many Requests', message: 'Too many requests from this address. Please wait a moment and try again.' });
+  };
+}
+
+module.exports = { createLimiter, createWindowCounter, createIpLimiter };

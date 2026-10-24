@@ -131,4 +131,29 @@ function authPolicy(env) {
   return { oidc, localLogin, mfaRequire };
 }
 
-module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, DEV_SESSION_SECRET };
+// Running behind a reverse proxy: how many proxies sit in front of NovaDesk, so that the client's address (used for
+// rate limits and sign-in throttling) is read from X-Forwarded-For and cannot be forged by the client.
+// TRUST_PROXY=1 (one proxy), 2, ... or loopback / linklocal / uniquelocal or a list of addresses. Not "true":
+// that would believe whatever the client writes.
+function trustProxy(env) {
+  const v = (env.TRUST_PROXY || '').trim();
+  if (!v || v.toLowerCase() === 'false' || v === '0') return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  if (v.toLowerCase() === 'true') throw new Error('TRUST_PROXY=true would believe any address a client claims. Use the number of proxies in front of NovaDesk (for example 1), or the proxy\'s address (for example loopback or 10.0.0.5).');
+  return v;
+}
+
+// Allowances per minute. RATE_LIMIT_IP_PER_MIN: all routes, per address. RATE_LIMIT_API_PER_MIN: API reads, per key.
+// RATE_LIMIT_API_WRITE_PER_MIN: API creates and changes, per key. 0 turns a limit off.
+function rateLimits(env) {
+  const num = (name, fallback) => {
+    const raw = (env[name] || '').trim();
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > 1000000) throw new Error(`${name} must be a whole number of requests per minute (0 turns the limit off).`);
+    return n;
+  };
+  return { ipPerMinute: num('RATE_LIMIT_IP_PER_MIN', 1200), apiPerMinute: num('RATE_LIMIT_API_PER_MIN', 300), apiWritePerMinute: num('RATE_LIMIT_API_WRITE_PER_MIN', 60) };
+}
+
+module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, trustProxy, rateLimits, DEV_SESSION_SECRET };

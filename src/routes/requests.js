@@ -1,7 +1,7 @@
 const { db, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { REQUEST_STATUS_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
-const { sendNotification } = require('../mailer');
+const { REQUEST_STATUS_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
+const requestActions = require('../requestActions');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -132,41 +132,9 @@ router.get('/:id', requireAuth, async (req, res) => {
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
-  const { status, assigned_to, assignment_group } = req.body;
   const existing = await db.prepare('SELECT * FROM service_requests WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Request not found.' });
-
-  let fulfilled_at = existing.fulfilled_at;
-  if (status === 'fulfilled') {
-    if (existing.status !== 'fulfilled') fulfilled_at = nowStr();
-  } else {
-    fulfilled_at = null;
-  }
-
-  await db.prepare(`
-    UPDATE service_requests SET status = ?, assigned_to = ?, assignment_group = ?, fulfilled_at = ?, updated_at = ? WHERE id = ?
-  `).run(status, assigned_to || null, assignment_group || null, fulfilled_at, nowStr(), req.params.id);
-
-  if (status !== existing.status) {
-    await logActivity('request', existing.id, req.session.user.id,
-      `Status changed from ${REQUEST_STATUS_LABELS[existing.status]} to ${REQUEST_STATUS_LABELS[status]}`);
-  }
-
-  if (['fulfilled', 'rejected'].includes(status) && status !== existing.status) {
-    const requester = await db.prepare('SELECT full_name, email, email_notifications FROM users WHERE id = ?').get(existing.requested_by);
-    const item = await db.prepare('SELECT name FROM catalog_items WHERE id = ?').get(existing.catalog_item_id);
-    if (requester && requester.email && requester.email_notifications) {
-      sendNotification({
-        to: requester.email,
-        toName: requester.full_name,
-        subject: `[${existing.number}] Request ${status}: ${item ? item.name : ''}`,
-        html: `<p>Hi ${escapeHtml(requester.full_name)},</p><p>Your request <strong>${existing.number}</strong> has been <strong>${status}</strong>.</p>`,
-        relatedType: 'request',
-        relatedId: existing.id
-      }).catch(() => {});
-    }
-  }
-
+  await requestActions.updateServiceRequest({ actor: req.session.user, existing, fields: req.body });
   res.redirect(`/requests/${req.params.id}`);
 });
 

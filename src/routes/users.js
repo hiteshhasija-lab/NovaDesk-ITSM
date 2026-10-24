@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { db } = require('../db');
 const mfa = require('../mfa');
+const apiKeys = require('../apiKeys');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { ASSIGNMENT_GROUPS } = require('../helpers');
 const createAsyncRouter = require('../asyncRouter');
@@ -25,7 +26,7 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
 });
 
 router.get('/new', requireAuth, requireRole('admin'), (req, res) => {
-  res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, title: 'New User', user: null, error: null, groups: ASSIGNMENT_GROUPS, userGroups: [] });
+  res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, title: 'New User', user: null, error: null, groups: ASSIGNMENT_GROUPS, userGroups: [] });
 });
 
 router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
@@ -39,7 +40,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
     if (created) await saveGroups(created.id, b.groups);
     res.redirect('/users');
   } catch (e) {
-    res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, title: 'New User', user: b, error: 'Username already exists or invalid data.', groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
+    res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, title: 'New User', user: b, error: 'Username already exists or invalid data.', groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
   }
 });
 
@@ -47,7 +48,16 @@ router.get('/:id/edit', requireAuth, requireRole('admin'), async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
   const identities = await db.prepare('SELECT issuer, email, last_login_at FROM user_identities WHERE user_id = ? ORDER BY id').all(user.id);
-  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id), mfaStatus: await mfa.status(user.id), identities, resetMessage: req.query.mfa === 'reset' ? 'Two-step verification was turned off for this person. They can set it up again.' : null });
+  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id), mfaStatus: await mfa.status(user.id), identities, apiKeyCount: (await apiKeys.listKeys(user.id)).filter((k) => !k.revoked_at).length, resetMessage: req.query.mfa === 'reset' ? 'Two-step verification was turned off for this person. They can set it up again.' : (req.query.keys === 'revoked' ? 'All of this person\'s API keys were revoked.' : null) });
+});
+
+// Switch off every API key a person has (a leaked key, or someone leaving).
+router.post('/:id/api-keys/revoke', requireAuth, requireRole('admin'), async (req, res) => {
+  const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
+  const n = await apiKeys.revokeAllKeys(user.id);
+  console.log(`[API] ${req.session.user.username} revoked ${n} API key(s) of ${user.username}`);
+  res.redirect(`/users/${user.id}/edit?keys=revoked`);
 });
 
 // Someone lost their phone and their recovery codes: an administrator turns two-step verification off for them.
@@ -69,7 +79,7 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
       UPDATE users SET username=?, full_name=?, email=?, role=?, department=?, active=? WHERE id=?
     `).run(b.username, b.full_name, b.email || null, b.role, b.department || null, b.active === 'on' ? 1 : 0, req.params.id);
   } catch (e) {
-    return res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null,
+    return res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0,
       title: `Edit ${user.full_name}`,
       user: { ...user, ...b },
       error: 'Username already exists or invalid data.',
