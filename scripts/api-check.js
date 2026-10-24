@@ -2,13 +2,15 @@
 // The REST API (/api/v1) used the way a client uses it, against a running NovaDesk with the demonstration users:
 // keys made on the page, every role, reads and writes, validation, idempotency, revocation, the shapes the
 // documentation promises, and (by starting its own copies) rate limits and reverse-proxy addresses.
-//   BASE_URL=http://127.0.0.1:8080 node scripts/api-check.js     (needs the database settings in the environment too, for the extra copies)
+//   node scripts/api-check.js     starts its own copies of NovaDesk (ports 18210 to 18213) on the database named by PGHOST, PGUSER,
+//                                 PGPASSWORD and PGDATABASE, so it never shares sign-in limits with another run. The database needs
+//                                 the demonstration users (an empty one gets them: SEED_DEMO=true is set for the copies).
 'use strict';
 const { spawn } = require('child_process');
 const path = require('path');
 const { SHAPES, RESPONSES } = require('../src/api/spec');
 
-const BASE = (process.env.BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
+let BASE = 'http://127.0.0.1:18210';
 const ROOT = path.join(__dirname, '..');
 let failed = 0; let section = '';
 const check = (name, ok, extra = '') => { if (!ok) failed++; console.log(`${ok ? 'PASS' : 'FAIL'}  [${section}] ${name}${!ok && extra ? '  -- ' + extra : ''}`); return ok; };
@@ -68,6 +70,16 @@ const shapeOk = (route, body) => {
 const errCode = (r, status, code) => r.status === status && r.json && r.json.error && r.json.error.code === code;
 
 async function main() {
+  const own = start(18210, { SEED_DEMO: 'true' });
+  try {
+    if (!(await healthy(18210, own))) throw new Error(`NovaDesk did not start: ${own.text().slice(-400)}`);
+    await run();
+  } finally { own.child.kill(); await own.exited; }
+  await limits(keys);
+}
+
+let keys = null;
+async function run() {
   const admin = await new Browser().login('admin', 'admin123');
   const jane = await new Browser().login('jdoe', 'agent123');
   const maria = await new Browser().login('mchen', 'user123');
@@ -224,7 +236,7 @@ async function main() {
   check('...and stops when the person is turned off', errCode(await api(tempKey, 'GET', '/me'), 401, 'invalid_token'));
   check('too many keys are refused with a message', await (async () => { let last; for (let i = 0; i < 12; i++) last = await janeKeyAttempt(jane, `bulk ${i}`); return /already have 10 active API keys/.test(last); })());
 
-  await limits({ janeRead, janeWrite, mariaRead });
+  keys = { janeRead, janeWrite, mariaRead };
 }
 
 async function janeKeyAttempt(browser, name) { const r = await browser.post('/profile/api-keys', { name, scope: 'read', expires: '30' }); return r.text; }
