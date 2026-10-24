@@ -107,6 +107,10 @@ jobs:
             if (bad.length) { console.log([...new Set(bad)].join("\n")); process.exit(1); }
             console.log("sender, subject and both parts are right on all " + msgs.length + " messages");
           '
+      - name: Stop the walk-through's copy of the app (the checks below start their own)
+        run: |
+          kill "$(cat server.pid)" 2>/dev/null || true
+          sleep 2
       - name: REST API (keys, roles, validation, idempotency, shapes, rate limits, proxy addresses)
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk

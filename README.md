@@ -138,6 +138,8 @@ with the reason and a Retry button. A receiver whose last 10 deliveries all fail
 (`WEBHOOK_AUTO_DISABLE_AFTER`). Only `https://` addresses that resolve to public addresses are accepted, redirects are
 not followed, and the call connects only to the address that was checked; `WEBHOOK_ALLOW_PRIVATE=true` allows private
 addresses and plain http for a receiver inside your network.
+The signing secrets are stored encrypted with `MFA_ENCRYPTION_KEY` (default: derived from `SESSION_SECRET`), so if you
+change `SESSION_SECRET` without a fixed `MFA_ENCRYPTION_KEY`, press *New secret* on each webhook.
 
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose

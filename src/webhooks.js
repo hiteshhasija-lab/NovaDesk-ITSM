@@ -109,6 +109,14 @@ async function dispatchOutbox({ limit = 100 } = {}) {
 // ---------------------------------------------------------------- delivering
 const secondsFromNow = (s) => new Date(Date.now() + s * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
+// The signing secret is stored encrypted with a key from MFA_ENCRYPTION_KEY, or else from SESSION_SECRET: if that
+// changed since the webhook was made, the secret cannot be read and a new one has to be made.
+function readSecret(webhook) {
+  try { return decryptSecret(webhook.secret_enc); } catch {
+    throw new Error('the signing secret cannot be read (SESSION_SECRET or MFA_ENCRYPTION_KEY has changed since it was made): use "New secret" on this webhook');
+  }
+}
+
 // One try. Resolves { ok, status, error }. Writes the outcome to the delivery row, schedules the next try or gives up.
 async function attempt(delivery, webhook) {
   const delays = net.retryDelays();
@@ -119,7 +127,7 @@ async function attempt(delivery, webhook) {
     const res = await net.postJson(target, {
       'Content-Type': 'application/json', 'User-Agent': 'NovaDesk-Webhooks/1',
       'X-NovaDesk-Event': delivery.event_type, 'X-NovaDesk-Event-Id': delivery.event_id, 'X-NovaDesk-Delivery': String(delivery.id),
-      'X-NovaDesk-Signature': net.sign(decryptSecret(webhook.secret_enc), body),
+      'X-NovaDesk-Signature': net.sign(readSecret(webhook), body),
     }, body);
     status = res.status;
     ok = res.status >= 200 && res.status < 300;
@@ -190,4 +198,4 @@ async function retryDelivery(id) {
   return done.changes === 1;
 }
 
-module.exports = { EVENT_TYPES, RECORDS, OPERATIONS, MAX_WEBHOOKS, subscribes, parseEvents, createWebhook, rotateSecret, setActive, buildPayload, dispatchOutbox, deliverDue, sendTest, retryDelivery, allowPrivate };
+module.exports = { _testing: { readSecret }, EVENT_TYPES, RECORDS, OPERATIONS, MAX_WEBHOOKS, subscribes, parseEvents, createWebhook, rotateSecret, setActive, buildPayload, dispatchOutbox, deliverDue, sendTest, retryDelivery, allowPrivate };

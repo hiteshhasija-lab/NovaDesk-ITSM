@@ -30,3 +30,13 @@ test('a webhook receives an event when it listed it, or listed everything', () =
   assert.ok(!webhooks.subscribes({ events: 'incident.created' }, 'incident.created.extra'), 'whole names only');
   assert.ok(!webhooks.subscribes({ events: 'incident.status_changed' }, 'incident'), 'a prefix is not a match');
 });
+
+test('a signing secret that can no longer be read gives a clear instruction, not a cryptic error', () => {
+  const { encryptSecret } = require('../src/mfaCrypto');
+  const { readSecret } = webhooks._testing;
+  const mine = encryptSecret('whsec_x');                                        // under this process's key
+  assert.strictEqual(readSecret({ secret_enc: mine }), 'whsec_x');
+  const foreign = encryptSecret('whsec_x', { SESSION_SECRET: 'a'.repeat(40) });  // under another copy's key
+  assert.throws(() => readSecret({ secret_enc: foreign }), /signing secret cannot be read.*SESSION_SECRET.*New secret/);
+  assert.throws(() => readSecret({ secret_enc: 'garbage' }), /signing secret cannot be read/);
+});
