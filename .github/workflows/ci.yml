@@ -390,9 +390,12 @@ jobs:
           test "$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc 'select count(*) from users' < /dev/null | head -1)" = 5
           docker compose -p ndup logs novadesk > upgrade.log
           if grep -q "Created the first admin" upgrade.log; then echo "a first admin was created on an existing database"; exit 1; fi
-          # The old release had no migration table: the baseline is recorded (it changed nothing that existed).
-          grep -q "applied 0001_baseline" upgrade.log || { echo "the baseline migration was not applied on upgrade"; grep Database upgrade.log; exit 1; }
-          test "$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc "select count(*) from schema_migrations where name = '0001_baseline'" < /dev/null | head -1)" = 1
+          # Every migration file in this tree is recorded after the upgrade, whichever release it started from.
+          files=$(ls src/migrations/*.sql | wc -l)
+          rows=$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc "select count(*) from schema_migrations" < /dev/null | head -1)
+          test "$rows" = "$files" || { echo "schema_migrations has $rows rows, the tree has $files migration files"; grep Database upgrade.log; exit 1; }
+          # A release from before migrations existed (0.0.35) gets the baseline recorded; it changed nothing that existed.
+          if [ "${{ matrix.ref }}" != auto ]; then grep -q "applied 0001_baseline" upgrade.log || { echo "the baseline migration was not applied on upgrade"; grep Database upgrade.log; exit 1; }; fi
           if grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -1 | grep -q .; then grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -5; exit 1; fi
 
       - name: The same people find everything after the upgrade
