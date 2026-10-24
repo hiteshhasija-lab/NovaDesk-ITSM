@@ -89,6 +89,10 @@ jobs:
             if (!msgs.some((m) => /^Subject: \[(INC|CHG|REQ)/m.test(m.raw))) bad.push("no ticket notice (incident, change or request)");
             if (!msgs.some((m) => /^Subject: \[INC\d+\] SLA at risk/m.test(m.raw))) bad.push("no SLA at-risk email");
             if (!msgs.some((m) => /^Subject: \[INC\d+\] SLA breached/m.test(m.raw))) bad.push("no SLA breach email");
+            if (!msgs.some((m) => /^Subject: \[REQ\d+\] SLA at risk/m.test(m.raw))) bad.push("no request SLA at-risk email");
+            if (!msgs.some((m) => /^Subject: \[REQ\d+\] SLA breached/m.test(m.raw))) bad.push("no request SLA breach email");
+            if (!msgs.some((m) => /^Subject: \[CHG\d+\] SLA at risk, waiting for approval/m.test(m.raw))) bad.push("no change SLA at-risk email");
+            if (!msgs.some((m) => /^Subject: \[CHG\d+\] SLA breached, waiting for approval/m.test(m.raw))) bad.push("no change SLA breach email");
             for (const m of msgs) {
               if (m.from !== "helpdesk@example.test") bad.push("wrong sender " + m.from);
               if (!/Content-Type: text\/plain/.test(m.raw) || !/Content-Type: text\/html/.test(m.raw)) bad.push("missing text or html part");

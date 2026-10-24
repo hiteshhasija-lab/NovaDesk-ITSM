@@ -458,9 +458,76 @@ const has = (r, re) => re.test(r.text);
     const bad = await admin.post('/settings/sla/holidays', { holiday_date: '2030-02-31' }); const badPage = (await admin.get('/settings/sla')).text;
     return must(del.status === 302 && !after.includes(`Winter ${tag}`) && /Choose a date/.test(badPage), 'delete or validation failed');
   });
+  const targetFields = (over = {}) => ({ hours_request: '72', clock_request: 'calendar', warn_request: '75', hours_change: '48', clock_change: 'calendar', warn_change: '75', ...over });
+  const catalogItem = async () => { const c = await maria.get('/catalog'); const m = c.text.match(/\/catalog\/(\d+)\/request/); must(m, 'no catalog item'); return m[1]; };
+  const newRequest = async (note) => { const r = await maria.post(`/catalog/${await catalogItem()}/request`, { notes: note }); const id = idFrom(r.loc, '/requests'); must(id, 'request ' + r.status); return id; };
+  const requestPage = async (id) => (await jane.get(`/requests/${id}`)).text;
+  let reqBefore = null;
+  await step('SLA: request and change targets start switched off, and a request made now has no clock', async () => {
+    const page = (await admin.get('/settings/sla')).text;
+    must(/id="enabled_request" name="enabled_request" >/.test(page) && /id="enabled_change" name="enabled_change" >/.test(page), 'not off by default');
+    reqBefore = await newRequest(`before SLA ${tag}`);
+    return must(!/SLA Due/.test(await requestPage(reqBefore)), 'a clock appeared with the SLA off');
+  });
+  await step('SLA: nonsense for the request and change targets is refused', async () => {
+    for (const bad of [{ hours_request: '0' }, { hours_change: 'x' }, { clock_request: 'x' }, { warn_change: '0' }]) {
+      const r = await admin.post('/settings/sla/targets', targetFields(bad)); const page = (await admin.get('/settings/sla')).text;
+      must(r.status === 302 && /alert alert-danger/.test(page), `${JSON.stringify(bad)} not refused`);
+    }
+    return must(/id="enabled_request" name="enabled_request" >/.test((await admin.get('/settings/sla')).text), 'a refused save switched something on');
+  });
+  await step('SLA: switched on, a new request shows its due time, target and status, and fulfilling it in time meets the SLA', async () => {
+    await admin.post('/settings/sla/targets', targetFields({ enabled_request: 'on' }));
+    const id = await newRequest(`with SLA ${tag}`);
+    const page = await requestPage(id);
+    must(/SLA Due/.test(page) && /SLA Target<\/dt><dd[^>]*>3 days · round the clock/.test(page) && /On Track/.test(page), 'SLA rows missing');
+    must(!/SLA Due/.test(await requestPage(reqBefore)), 'an older request got a clock');
+    const u = await jane.post(`/requests/${id}/update`, { status: 'fulfilled', assigned_to: '', assignment_group: '' });
+    return must(u.status === 302 && /Met SLA/.test(await requestPage(id)), 'not met after fulfilling');
+  });
+  if (process.env.WALK_FAST_SLA === '1') {
+    // Needs SLA_SWEEP_S=2. The change clock is started and stopped by the sweep watching the status.
+    await step('SLA: a change gets its approval clock when submitted, and the decision stops it in time', async () => {
+      await admin.post('/settings/sla/targets', targetFields({ enabled_request: 'on', enabled_change: 'on', hours_change: '1', warn_change: '99' }));
+      const r = await newChange(jane, `SLA change decided ${tag}`); const id = idFrom(r.loc, '/changes');
+      const before = (await jane.get(`/changes/${id}`)).text; must(!/Approval SLA/.test(before), 'a draft has a clock');
+      await jane.post(`/changes/${id}/update`, { short_description: `SLA change decided ${tag}`, change_type: 'normal', risk: 'medium', status: 'submitted', implementation_plan: 'x', backout_plan: 'y' });
+      let page = ''; for (let i = 0; i < 20; i++) { page = (await jane.get(`/changes/${id}`)).text; if (/Approval SLA/.test(page)) break; await sleep(1000); }
+      must(/Approval SLA/.test(page) && /On Track|At Risk/.test(page) && /SLA Target<\/dt><dd[^>]*>1 hour · round the clock/.test(page), 'no approval clock after submit');
+      const a = await bob.post(`/changes/${id}/approve`, { decision: 'approve' }); must(a.status === 302, 'approve ' + a.status);
+      for (let i = 0; i < 20; i++) { page = (await jane.get(`/changes/${id}`)).text; if (/Met SLA/.test(page)) break; await sleep(1000); }
+      return must(/Met SLA/.test(page), 'the decision did not stop the clock');
+    });
+    await step('SLA emails for requests and changes: at risk, then breached, each once', async () => {
+      await admin.post('/settings/sla/targets', targetFields({ enabled_request: 'on', enabled_change: 'on', hours_request: String(1 / 60), warn_request: '1', hours_change: String(1 / 60), warn_change: '1' }));
+      const rid = await newRequest(`SLA mail ${tag}`); const reqNumber = ((await requestPage(rid)).match(/REQ\d{7}/) || [])[0];
+      const cr = await newChange(jane, `SLA change mail ${tag}`); const cid = idFrom(cr.loc, '/changes');
+      await jane.post(`/changes/${cid}/update`, { short_description: `SLA change mail ${tag}`, change_type: 'normal', risk: 'medium', status: 'submitted', implementation_plan: 'x', backout_plan: 'y' });
+      const chgNumber = ((await jane.get(`/changes/${cid}`)).text.match(/CHG\d{7}/) || [])[0];
+      const waitFor = async (re, seconds) => { for (let i = 0; i < seconds; i++) { const l = await admin.get('/notifications'); if (re.test(l.text)) return true; await sleep(1000); } return false; };
+      try {
+        must(await waitFor(new RegExp(`\\[${reqNumber}\\] SLA at risk`), 40), 'no request at-risk email');
+        must(await waitFor(new RegExp(`\\[${chgNumber}\\] SLA at risk, waiting for approval`), 40), 'no change at-risk email');
+        must(await waitFor(new RegExp(`\\[${reqNumber}\\] SLA breached`), 120), 'no request breach email');
+        must(await waitFor(new RegExp(`\\[${chgNumber}\\] SLA breached, waiting for approval`), 120), 'no change breach email');
+        await sleep(6000);
+        const l = (await admin.get('/notifications')).text; const count = (re) => (l.match(re) || []).length;
+        must(count(new RegExp(`\\[${reqNumber}\\] SLA at risk`, 'g')) === 1 && count(new RegExp(`\\[${reqNumber}\\] SLA breached`, 'g')) === 1, 'a request email was sent more than once');
+        must(count(new RegExp(`\\[${chgNumber}\\] SLA at risk`, 'g')) >= 1 && count(new RegExp(`\\[${chgNumber}\\] SLA breached`, 'g')) >= 1, 'change emails missing');
+        // One notice per person who may decide, and nobody twice: every recipient appears once per kind of email.
+        const toList = (re) => [...l.matchAll(re)].length;
+        must(toList(new RegExp(`\\[${chgNumber}\\] SLA breached`, 'g')) === toList(new RegExp(`\\[${chgNumber}\\] SLA at risk`, 'g')), 'unequal change notices');
+        const cpage = (await jane.get(`/changes/${cid}`)).text; const rpage = await requestPage(rid);
+        return must(/SLA at risk: emailed/.test(cpage) && /SLA breached: emailed/.test(cpage) && /Breached/.test(cpage) && /Breached|SLA breached/.test(rpage), 'activity log or badges missing');
+      } finally {
+        await admin.post('/settings/sla/targets', targetFields());
+      }
+    });
+  }
   await step('SLA: settings go back to the defaults', async () => {
+    await admin.post('/settings/sla/targets', targetFields());   // no enabled_* fields: both off
     const r = await admin.post('/settings/sla/policies', slaFields()); const page = (await admin.get('/settings/sla')).text;
-    return must(r.status === 302 && /SLA targets saved/.test(page) && /id="clock_4" name="clock_4">\s*<option value="calendar" selected>/.test(page), 'defaults not restored');
+    return must(r.status === 302 && /SLA targets saved/.test(page) && /id="enabled_request" name="enabled_request" >/.test(page) && /id="clock_4" name="clock_4">\s*<option value="calendar" selected>/.test(page), 'defaults not restored');
   });
   if (process.env.WALK_FAST_SLA === '1') {
     // Needs the app started with SLA_SWEEP_S=2. A one-minute target is warned about almost at once and breached a minute later.

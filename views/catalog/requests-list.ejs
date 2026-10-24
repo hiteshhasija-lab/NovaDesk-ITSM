@@ -81,7 +81,7 @@
             <tr onclick="window.location='/requests/<%= r.id %>'" data-search="<%= [r.number, r.item_name].filter(Boolean).join(' ').toLowerCase() %>">
               <td class="fw-semibold"><%= r.number %></td>
               <td><i class="bi <%= r.item_icon %> me-1"></i><%= r.item_name %></td>
-              <td><span class="badge bg-<%= h.REQUEST_STATUS_BADGE[r.status] %>"><%= h.REQUEST_STATUS_LABELS[r.status] %></span></td>
+              <td><span class="badge bg-<%= h.REQUEST_STATUS_BADGE[r.status] %>"><%= h.REQUEST_STATUS_LABELS[r.status] %></span><% const rsla = h.requestSlaStatus(r); if (['breached','at_risk'].includes(rsla.key) && ['submitted','in_progress'].includes(r.status)) { %> <span class="badge bg-<%= rsla.badge %> ms-1">SLA <%= rsla.label %></span><% } %></td>
               <% if (!isEndUser) { %><td><%= r.requester_name || '—' %></td><% } %>
               <td><%= r.assigned_name || '—' %></td>
               <td class="small text-muted"><%- h.fmtDateShort(r.created_at) %></td>

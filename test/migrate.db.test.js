@@ -132,7 +132,8 @@ test('0002 gives existing incidents their stored target without moving a due tim
     await add('NONE', { priority: 4, status: 'new', created: ts(-1), due: null });                                 // never had an SLA
     const before = Object.fromEntries((await knex.raw('SELECT number, sla_due_at FROM incidents')).rows.map((r) => [r.number, r.sla_due_at]));
 
-    assert.deepStrictEqual((await migrate(knex)).applied, ['0002_sla_engine']);
+    const upTo2 = dirWith(Object.fromEntries(real.filter((m) => m.number <= 2).map((m) => [m.file, m.sql])));
+    assert.deepStrictEqual((await migrate(knex, { dir: upTo2 })).applied, ['0002_sla_engine']);
 
     const rows = Object.fromEntries((await knex.raw('SELECT * FROM incidents')).rows.map((r) => [r.number, r]));
     for (const n of Object.keys(before)) assert.strictEqual(rows[n].sla_due_at, before[n], `${n}: the due time did not move`);
@@ -150,5 +151,30 @@ test('0002 gives existing incidents their stored target without moving a due tim
     const policies = (await knex.raw(`SELECT priority, target_minutes, clock, warn_percent FROM sla_policies WHERE applies_to = 'incident' ORDER BY priority`)).rows;
     assert.deepStrictEqual(policies.map((p) => [p.priority, p.target_minutes, p.clock, p.warn_percent]), [[1, 240, 'calendar', 75], [2, 480, 'calendar', 75], [3, 1440, 'calendar', 75], [4, 4320, 'calendar', 75]]);
     assert.strictEqual((await knex.raw('SELECT count(*) AS c FROM business_calendars')).rows[0].c, '1');
+  });
+});
+
+test('0003 adds request and change policies switched off, and the clock columns, without touching existing rows', { skip }, async () => {
+  await withSchema(async (knex) => {
+    const real = listMigrations(DEFAULT_DIR);
+    const upTo2 = dirWith(Object.fromEntries(real.filter((m) => m.number <= 2).map((m) => [m.file, m.sql])));
+    await migrate(knex, { dir: upTo2 });
+    await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('u', 'x', 'U', 'admin')`);
+    await knex.raw(`INSERT INTO changes (number, short_description, status) VALUES ('CHG1', 'a change', 'submitted')`);
+    await knex.raw(`INSERT INTO service_requests (number, status) VALUES ('REQ1', 'submitted')`);
+    assert.deepStrictEqual((await migrate(knex)).applied, real.filter((m) => m.number > 2).map((m) => m.name));
+    const policies = (await knex.raw(`SELECT applies_to, priority, target_minutes, clock, warn_percent, active, enabled_at FROM sla_policies ORDER BY applies_to, priority`)).rows;
+    const byKind = Object.fromEntries(policies.filter((p) => p.priority === 0).map((p) => [p.applies_to, p]));
+    assert.deepStrictEqual([byKind.request.active, byKind.change.active, byKind.request.enabled_at, byKind.change.enabled_at], [0, 0, null, null], 'both start off');
+    assert.deepStrictEqual([byKind.request.target_minutes, byKind.change.target_minutes], [4320, 2880]);
+    assert.ok(policies.filter((p) => p.applies_to === 'incident').every((p) => p.active === 1), 'incident policies stay on');
+    const ch = (await knex.raw(`SELECT * FROM changes`)).rows[0];
+    const rq = (await knex.raw(`SELECT * FROM service_requests`)).rows[0];
+    for (const col of ['sla_started_at', 'sla_target_minutes', 'sla_clock', 'sla_warn_percent', 'sla_due_at', 'sla_warned_at', 'sla_breach_notified_at']) {
+      assert.ok(col in ch && ch[col] === null, `changes.${col} exists and is empty`);
+      assert.ok(col in rq && rq[col] === null, `service_requests.${col} exists and is empty`);
+    }
+    assert.ok('sla_stopped_at' in ch && ch.sla_stopped_at === null);
+    assert.deepStrictEqual([ch.status, rq.status], ['submitted', 'submitted']);
   });
 });

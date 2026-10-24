@@ -77,6 +77,15 @@ assignee, the assignment group, or the administrators) gets an email when an inc
 when it is breached, once each; this needs email set up (above). A new target applies to incidents created
 from then on and to incidents whose priority changes; a due time already running does not move.
 
+**SLA for service requests and changes.** Under *SLA settings* an administrator can also switch on a target for
+**service requests** (time to fulfil, from submission) and for **changes** (time to a decision while the change is
+Submitted and waiting for approval). Both start switched off. Once on, only requests created and changes
+submitted from then on get a clock, and the same warning and breach emails go out: for a request to its assignee
+(or the assignment group, or the administrators); for a change to the people who may approve it (a
+decommission change's requester and the IRO-Build/Decom group; any other change's assignee or group, or the
+administrators). A change's clock is kept by watching its status, so approving, rejecting or cancelling it works
+as before and stops the clock within a minute.
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

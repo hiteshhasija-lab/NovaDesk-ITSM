@@ -38,6 +38,37 @@
 
   <div class="card mb-4">
     <div class="card-body">
+      <h6 class="section-title">SLA targets for service requests and changes</h6>
+      <p class="text-muted small">Off until you switch them on. Once on, they warn and report the same way as incident targets (warning and breach emails need email set up). Only requests created and changes submitted after you switch them on get a clock.</p>
+      <form method="POST" action="/settings/sla/targets">
+        <div class="table-responsive">
+          <table class="table align-middle mb-3">
+            <thead class="table-light"><tr><th>For</th><th>On</th><th>Target (hours)</th><th>Clock counts</th><th>Warn at (% used)</th></tr></thead>
+            <tbody>
+              <% otherTargets.forEach(t => { %>
+              <tr>
+                <td><%= t.label %><div class="small text-muted"><%= t.help %></div></td>
+                <td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="enabled_<%= t.kind %>" name="enabled_<%= t.kind %>" <%= t.enabled ? 'checked' : '' %>><label class="form-check-label small" for="enabled_<%= t.kind %>">On</label></div></td>
+                <td style="width: 150px;"><input type="number" class="form-control form-control-sm" id="hours_<%= t.kind %>" name="hours_<%= t.kind %>" value="<%= t.hours %>" min="0.02" max="8760" step="any" required></td>
+                <td style="width: 200px;">
+                  <select class="form-select form-select-sm" id="clock_<%= t.kind %>" name="clock_<%= t.kind %>">
+                    <option value="calendar" <%= t.clock === 'calendar' ? 'selected' : '' %>>Round the clock</option>
+                    <option value="business" <%= t.clock === 'business' ? 'selected' : '' %>>Business hours</option>
+                  </select>
+                </td>
+                <td style="width: 150px;"><input type="number" class="form-control form-control-sm" id="warn_<%= t.kind %>" name="warn_<%= t.kind %>" value="<%= t.warn %>" min="1" max="99" step="1" required></td>
+              </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
       <h6 class="section-title">Business hours</h6>
       <p class="text-muted small">Used by every target set to Business hours.</p>
       <form method="POST" action="/settings/sla/calendar">

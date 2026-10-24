@@ -96,7 +96,10 @@ function slaStatus(incident) {
   return sla.incidentSlaState(incident, Date.now(), sla.getActiveCalendar());
 }
 
-// "4 hours · round the clock" (or business hours) for an incident's stored target.
+function requestSlaStatus(request) { return sla.requestSlaState(request, Date.now(), sla.getActiveCalendar()); }
+function changeSlaStatus(change) { return sla.changeSlaState(change, Date.now(), sla.getActiveCalendar()); }
+
+// "4 hours · round the clock" (or business hours) for a stored target.
 function slaTargetText(incident) {
   if (!incident.sla_target_minutes) return '—';
   return `${sla.formatMinutes(incident.sla_target_minutes)} · ${incident.sla_clock === 'business' ? 'business hours' : 'round the clock'}`;
@@ -218,7 +221,7 @@ module.exports = {
   PROBLEM_STATUS_LABELS, PROBLEM_STATUS_BADGE,
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
-  SLA_HOURS, slaStatus, slaTargetText,
+  SLA_HOURS, slaStatus, slaTargetText, requestSlaStatus, changeSlaStatus,
   ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion, appVersion,
   fmtDate, fmtDateShort, fmtDateShortPlain, taskStatusIcon
 };

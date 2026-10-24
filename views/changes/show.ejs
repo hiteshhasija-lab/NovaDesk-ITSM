@@ -18,6 +18,13 @@
     <a href="/changes" class="btn btn-sm btn-outline-secondary">&larr; Back to list</a>
   </div>
 
+  <% const sla = h.changeSlaStatus(change); %>
+  <% if (sla.key === 'breached' && change.status === 'submitted') { %>
+  <div class="alert alert-danger d-flex align-items-center gap-2"><i class="bi bi-exclamation-octagon-fill"></i><span>Approval SLA breached — a decision was due <%- h.fmtDate(change.sla_due_at) %>.</span></div>
+  <% } else if (sla.key === 'at_risk') { %>
+  <div class="alert alert-warning d-flex align-items-center gap-2"><i class="bi bi-hourglass-split"></i><span>Approval SLA at risk — a decision is due <%- h.fmtDate(change.sla_due_at) %>.</span></div>
+  <% } %>
+
   <% if (change.approval_status === 'pending' && !['cancelled','rejected','closed'].includes(change.status) && canDecideApproval) { %>
   <div class="alert alert-info d-flex justify-content-between align-items-center">
     <span><i class="bi bi-hourglass-split me-1"></i> This change is awaiting approval.</span>
@@ -297,6 +304,10 @@
             <dt class="col-sm-6">Assignment Group</dt><dd class="col-sm-6"><%= change.assignment_group || 'Unassigned' %></dd>
             <dt class="col-sm-6">Approval Status</dt><dd class="col-sm-6 text-capitalize"><%= change.approval_status %></dd>
             <dt class="col-sm-6">Approved By</dt><dd class="col-sm-6"><%= change.approver_name || '—' %></dd>
+            <% if (change.sla_due_at) { %>
+            <dt class="col-sm-6">Approval SLA</dt><dd class="col-sm-6"><span class="badge bg-<%= sla.badge %>"><%= sla.label %></span> <span class="text-muted">due <%- h.fmtDate(change.sla_due_at) %></span></dd>
+            <dt class="col-sm-6">SLA Target</dt><dd class="col-sm-6"><%= h.slaTargetText(change) %></dd>
+            <% } %>
             <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%- h.fmtDate(change.created_at) %></dd>
             <dt class="col-sm-6">Closed</dt><dd class="col-sm-6"><%- change.closed_at ? h.fmtDate(change.closed_at) : '—' %></dd>
           </dl>

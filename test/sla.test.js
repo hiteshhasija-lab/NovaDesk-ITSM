@@ -156,3 +156,35 @@ test('an incident from before SLA policies falls back to the old targets', () =>
 test('minutes read as people write them', () => {
   assert.deepStrictEqual([240, 60, 1440, 2880, 90, 45, 1, 4320].map(sla.formatMinutes), ['4 hours', '1 hour', '1 day', '2 days', '1 h 30 min', '45 minutes', '1 minute', '3 days']);
 });
+
+// ---------------------------------------------------------------- service requests and changes
+test('a service request: open until fulfilled, met when fulfilled before the due time', () => {
+  const req = (over) => ({ sla_due_at: '2026-10-26 10:00:00', sla_target_minutes: 4320, sla_clock: 'calendar', sla_warn_percent: 75, status: 'submitted', fulfilled_at: null, ...over });
+  const state = (over, now) => sla.requestSlaState(req(over), at(now), office).key;
+  assert.strictEqual(state({}, '2026-10-23 10:00'), 'on_track');
+  assert.strictEqual(state({}, '2026-10-26 01:00'), 'at_risk');                                  // last 25% of 3 days
+  assert.strictEqual(state({}, '2026-10-26 10:01'), 'breached');
+  assert.strictEqual(state({ status: 'fulfilled', fulfilled_at: '2026-10-26 09:59:00' }, '2026-10-30 10:00'), 'met');
+  assert.strictEqual(state({ status: 'fulfilled', fulfilled_at: '2026-10-26 10:01:00' }, '2026-10-30 10:00'), 'breached');
+  assert.strictEqual(state({ status: 'rejected' }, '2026-10-30 10:00'), 'closed');
+  assert.strictEqual(state({ status: 'cancelled' }, '2026-10-30 10:00'), 'closed');
+  assert.strictEqual(state({ sla_due_at: null }, '2026-10-30 10:00'), 'none');                  // the SLA was off when it was made
+});
+
+test('a change: the clock runs while it is Submitted and stops at the decision', () => {
+  const ch = (over) => ({ sla_due_at: '2026-10-26 10:00:00', sla_target_minutes: 2880, sla_clock: 'calendar', sla_warn_percent: 75, status: 'submitted', sla_stopped_at: null, updated_at: '2026-10-24 10:00:00', ...over });
+  const state = (over, now) => sla.changeSlaState(ch(over), at(now), office).key;
+  assert.strictEqual(state({}, '2026-10-24 12:00'), 'on_track');
+  assert.strictEqual(state({}, '2026-10-26 01:00'), 'at_risk');   // last 25% of 2 days
+  assert.strictEqual(state({}, '2026-10-27 00:00'), 'breached');
+  assert.strictEqual(state({ status: 'approved', sla_stopped_at: '2026-10-25 09:00:00' }, '2026-10-30 10:00'), 'met');
+  assert.strictEqual(state({ status: 'rejected', sla_stopped_at: '2026-10-26 12:00:00' }, '2026-10-30 10:00'), 'breached');
+  assert.strictEqual(state({ status: 'approved', sla_stopped_at: null, updated_at: '2026-10-25 09:00:00' }, '2026-10-30 10:00'), 'met');   // decision not yet stamped: last update stands in
+  assert.strictEqual(state({ sla_due_at: null }, '2026-10-30 10:00'), 'none');
+});
+
+test('a business clock for a request counts working hours only: 8 working hours from Friday 16:00', () => {
+  const c = sla.startIncidentClock(at('2026-10-30 16:00'), { target_minutes: 8 * 60, clock: 'business', warn_percent: 75 }, office);
+  // 1 h left on Friday, then Monday 09:00-16:00 (7 h): due Monday 16:00.
+  assert.strictEqual(c.sla_due_at, '2026-11-02 16:00:00');
+});

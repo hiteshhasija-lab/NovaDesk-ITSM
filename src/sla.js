@@ -242,7 +242,45 @@ function incidentSlaState(inc, nowMs = Date.now(), cal = null) {
   return { key: 'on_track', label: 'On Track', badge: 'success', remainingMinutes: remaining };
 }
 
+// ---------------------------------------------------------------- service requests and changes
+// Same shape as an incident's state, for things that have a start, a due time and a single end.
+//   doneAt   when it was finished (null while open)
+//   isOpen   still running: a request being fulfilled, a change waiting for approval
+function genericSlaState(rec, { doneAt, isOpen }, nowMs = Date.now(), cal = null) {
+  if (!rec.sla_due_at) return { key: 'none', label: '—', badge: 'secondary', remainingMinutes: null };
+  const dueMs = toMs(rec.sla_due_at);
+  if (doneAt) {
+    return toMs(doneAt) > dueMs
+      ? { key: 'breached', label: 'Breached', badge: 'danger', remainingMinutes: null }
+      : { key: 'met', label: 'Met SLA', badge: 'success', remainingMinutes: null };
+  }
+  if (!isOpen) return { key: 'closed', label: '—', badge: 'secondary', remainingMinutes: null };
+  const clock = rec.sla_clock === 'business' && cal ? 'business' : 'calendar';
+  const remaining = clockMinutesBetween(nowMs, dueMs, clock, cal);
+  if (nowMs > dueMs) return { key: 'breached', label: 'Breached', badge: 'danger', remainingMinutes: remaining };
+  const target = rec.sla_target_minutes || 1;
+  const warn = rec.sla_warn_percent || 75;
+  if (remaining <= target * (1 - warn / 100)) return { key: 'at_risk', label: 'At Risk', badge: 'warning', remainingMinutes: remaining };
+  return { key: 'on_track', label: 'On Track', badge: 'success', remainingMinutes: remaining };
+}
+
+// A request is open until it is fulfilled, rejected or cancelled; fulfilling it on time meets the SLA.
+function requestSlaState(request, nowMs = Date.now(), cal = null) {
+  return genericSlaState(request, {
+    doneAt: request.status === 'fulfilled' ? request.fulfilled_at : null,
+    isOpen: ['submitted', 'in_progress'].includes(request.status),
+  }, nowMs, cal);
+}
+
+// A change's clock runs while it waits for approval. The decision time is stamped when the sweep sees it
+// (until then the last update is the best answer).
+function changeSlaState(change, nowMs = Date.now(), cal = null) {
+  const waiting = change.status === 'submitted';
+  return genericSlaState(change, { doneAt: waiting ? null : (change.sla_stopped_at || change.updated_at), isOpen: waiting }, nowMs, cal);
+}
+
 module.exports = {
+  genericSlaState, requestSlaState, changeSlaState,
   MIN, LEGACY_SLA_HOURS,
   isValidTimeZone, makeCalendar, zonedToUtc,
   businessMsBetween, addBusinessMs, addClockMinutes, clockMinutesBetween,
