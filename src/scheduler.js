@@ -1,11 +1,14 @@
 const { db, nowStr } = require('./db');
 const { syncCard, reconcileCards } = require('./cardSync');
 const { resumeInterruptedDecoms } = require('./decomAutomation');
+const { sweep: sweepSla } = require('./slaService');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 // How often the card ledger is retried (cardSync.js); only the test rig changes this.
 const CARD_SYNC_POLL_MS = (Number(process.env.CARD_SYNC_POLL_S) || 30) * 1000;
 const RESUME_POLL_MS = (Number(process.env.DECOM_RESUME_POLL_S) || 30) * 1000;
+// How often SLA warnings and breaches are looked for (only the test rig and CI change this).
+const SLA_SWEEP_MS = (Number(process.env.SLA_SWEEP_S) || 60) * 1000;
 
 // A slow poll (a receiver that takes a while to answer) must not overlap the next one, or the same
 // due action would be processed twice at once.
@@ -82,6 +85,10 @@ function startScheduler() {
   const resume = () => resumeInterruptedDecoms().catch((e) => console.error('Decommission resume failed:', e.message));
   setInterval(resume, RESUME_POLL_MS);
   setTimeout(resume, 50 * 1000);
+  // SLA warning and breach emails.
+  const slaSweep = () => sweepSla().catch((e) => console.error('SLA sweep failed:', e.message));
+  setInterval(slaSweep, SLA_SWEEP_MS);
+  setTimeout(slaSweep, Math.min(20 * 1000, SLA_SWEEP_MS));
 }
 
 module.exports = { startScheduler };

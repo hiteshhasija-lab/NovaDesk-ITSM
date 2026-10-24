@@ -382,6 +382,109 @@ const has = (r, re) => re.test(r.text);
     });
   }
 
+  section = 'SLA';
+  const slaFields = (over = {}) => ({ hours_1: '4', clock_1: 'calendar', warn_1: '75', hours_2: '8', clock_2: 'calendar', warn_2: '75', hours_3: '24', clock_3: 'calendar', warn_3: '75', hours_4: '72', clock_4: 'calendar', warn_4: '75', ...over });
+  const showPage = async (p, id) => (await p.get(`/incidents/${id}`)).text;
+  const updateIncident = (p, id, over) => p.post(`/incidents/${id}/update`, { short_description: `SLA walk ${tag}`, description: 'x', category: 'other', impact: '2', urgency: '2', status: 'in_progress', assigned_to: '', assignment_group: '', ...over });
+  const pageDue = (html) => { const m = html.match(/SLA Due<\/dt><dd[^>]*><time[^>]*datetime="([^"]+)"/); return m ? m[1].replace('T', ' ').replace('Z', '') : null; };
+  let slaInc = null; let slaNumber = null;
+  await step('SLA settings: administrators open the page, agents and end users are refused', async () => {
+    const a = await admin.get('/settings/sla'); const j = await jane.get('/settings/sla'); const m = await maria.get('/settings/sla');
+    return must(a.status === 200 && /SLA targets for incidents/.test(a.text) && j.status === 403 && m.status === 403, `${a.status}/${j.status}/${m.status}`);
+  });
+  await step('SLA settings: nonsense is refused with a message, and nothing is saved', async () => {
+    const before = (await admin.get('/settings/sla')).text.match(/id="hours_3" name="hours_3" value="([^"]*)"/)[1];
+    for (const bad of [{ hours_3: '0' }, { hours_3: 'abc' }, { clock_3: 'sometimes' }, { warn_3: '100' }]) {
+      const r = await admin.post('/settings/sla/policies', slaFields(bad)); const page = (await admin.get('/settings/sla')).text;
+      must(r.status === 302 && /alert alert-danger/.test(page), `${JSON.stringify(bad)} not refused`);
+    }
+    const t = await admin.post('/settings/sla/calendar', { timezone: 'Mars/Olympus', start: '09:00', end: '17:00', work_days: ['1'] }); const tp = (await admin.get('/settings/sla')).text;
+    must(t.status === 302 && /not a time zone/.test(tp), 'bad time zone not refused');
+    const e = await admin.post('/settings/sla/calendar', { timezone: 'UTC', start: '18:00', end: '17:00', work_days: ['1'] }); const ep = (await admin.get('/settings/sla')).text;
+    must(/start before it ends/.test(ep), 'backwards day not refused');
+    const none = await admin.post('/settings/sla/calendar', { timezone: 'UTC', start: '09:00', end: '17:00' }); const np = (await admin.get('/settings/sla')).text;
+    must(/at least one working day/.test(np), 'no working day not refused');
+    const after = (await admin.get('/settings/sla')).text.match(/id="hours_3" name="hours_3" value="([^"]*)"/)[1];
+    return must(before === after, `a refused save changed the target ${before} -> ${after}`);
+  });
+  await step('SLA: a new incident takes its target from the policy and shows it', async () => {
+    const r = await jane.post('/incidents', { short_description: `SLA walk ${tag}`, category: 'other', impact: '2', urgency: '2' });
+    slaInc = idFrom(r.loc, '/incidents'); must(slaInc, 'create ' + r.status);
+    const page = await showPage(jane, slaInc); slaNumber = (page.match(/INC\d{7}/) || [])[0];
+    return must(/SLA Target<\/dt><dd[^>]*>1 day · round the clock/.test(page), 'target text missing');
+  });
+  await step('SLA: a higher priority tightens the target and the change is logged', async () => {
+    const u = await updateIncident(jane, slaInc, { impact: '1', urgency: '1' });
+    const page = await showPage(jane, slaInc);
+    return must(u.status === 302 && /SLA Target<\/dt><dd[^>]*>4 hours · round the clock/.test(page) && /SLA target is now 4 hours \(P1\)/.test(page), 'target or activity entry missing');
+  });
+  await step('SLA: On Hold stops the clock and leaving it resumes it, in the activity log and on the page', async () => {
+    await updateIncident(jane, slaInc, { impact: '1', urgency: '1', status: 'on_hold' });
+    const held = await showPage(jane, slaInc);
+    must(/SLA clock paused since/.test(held) && /SLA clock paused \(On Hold\)/.test(held), 'pause not shown');
+    const list = await jane.get('/incidents?sla=paused'); must(list.text.includes(slaNumber), 'not in the Paused filter');
+    await sleep(1500);
+    await updateIncident(jane, slaInc, { impact: '1', urgency: '1', status: 'in_progress' });
+    const back = await showPage(jane, slaInc);
+    return must(/SLA clock resumed/.test(back) && !/SLA clock paused since/.test(back), 'resume not shown');
+  });
+  await step('SLA: the board and the bulk action pause and resume the clock too', async () => {
+    const paused = async () => /SLA clock paused since/.test(await showPage(jane, slaInc));
+    const board = (status) => jane.req('POST', `/incidents/${slaInc}/status`, { json: { status } });
+    const bulk = (status) => jane.req('POST', '/incidents/bulk-update', { json: { ids: [slaInc], status, assigned_to: '' } });
+    const out = [];
+    out.push((await board('on_hold')).status, await paused());          // board: hold
+    out.push((await bulk('in_progress')).status, await paused());       // bulk: resume
+    out.push((await bulk('on_hold')).status, await paused());           // bulk: hold
+    out.push((await board('in_progress')).status, await paused());      // board: resume
+    return must(out.join() === '200,true,200,false,200,true,200,false', 'unexpected ' + out.join());
+  });
+  await step('SLA: a business-hours target puts the due time inside working hours', async () => {
+    // Monday to Friday 09:00-17:00 UTC, P4 counted in business hours (4 working hours): the due time must fall in the window.
+    await admin.post('/settings/sla/calendar', { timezone: 'UTC', start: '09:00', end: '17:00', work_days: ['1', '2', '3', '4', '5'] });
+    await admin.post('/settings/sla/policies', slaFields({ hours_4: '4', clock_4: 'business' }));
+    const r = await jane.post('/incidents', { short_description: `SLA business ${tag}`, category: 'other', impact: '3', urgency: '4' });
+    const id = idFrom(r.loc, '/incidents'); const page = await showPage(jane, id); const number = (page.match(/INC\d{7}/) || [])[0];
+    const due = pageDue(page); must(due, 'no due time on the page');
+    const d = new Date(due.replace(' ', 'T') + 'Z'); const minutes = d.getUTCHours() * 60 + d.getUTCMinutes(); const day = d.getUTCDay();
+    must(/4 hours · business hours/.test(page), 'target text: ' + (page.match(/SLA Target<\/dt><dd[^>]*>[^<]*/) || [''])[0]);
+    return must(day >= 1 && day <= 5 && minutes >= 9 * 60 && minutes <= 17 * 60, `due ${due} is outside Monday-Friday 09:00-17:00`);
+  });
+  await step('SLA: holidays can be added and removed', async () => {
+    const add = await admin.post('/settings/sla/holidays', { holiday_date: '2030-12-25', name: `Winter ${tag}` });
+    const page = (await admin.get('/settings/sla')).text; must(add.status === 302 && page.includes(`Winter ${tag}`), 'not listed');
+    const id = (page.match(/holidays\/(\d+)\/delete/) || [])[1]; must(id, 'no delete form');
+    const del = await admin.post(`/settings/sla/holidays/${id}/delete`, {}); const after = (await admin.get('/settings/sla')).text;
+    const bad = await admin.post('/settings/sla/holidays', { holiday_date: '2030-02-31' }); const badPage = (await admin.get('/settings/sla')).text;
+    return must(del.status === 302 && !after.includes(`Winter ${tag}`) && /Choose a date/.test(badPage), 'delete or validation failed');
+  });
+  await step('SLA: settings go back to the defaults', async () => {
+    const r = await admin.post('/settings/sla/policies', slaFields()); const page = (await admin.get('/settings/sla')).text;
+    return must(r.status === 302 && /SLA targets saved/.test(page) && /id="clock_4" name="clock_4">\s*<option value="calendar" selected>/.test(page), 'defaults not restored');
+  });
+  if (process.env.WALK_FAST_SLA === '1') {
+    // Needs the app started with SLA_SWEEP_S=2. A one-minute target is warned about almost at once and breached a minute later.
+    await step('SLA emails: at risk, then breached, each once, to the assignee, and the activity log says so', async () => {
+      await admin.post('/settings/sla/policies', slaFields({ hours_3: String(1 / 60), warn_3: '1' }));
+      const me = await meId(jane);
+      const r = await jane.post('/incidents', { short_description: `SLA mail ${tag}`, category: 'other', impact: '2', urgency: '2', assigned_to: me });
+      const id = idFrom(r.loc, '/incidents'); const number = ((await showPage(jane, id)).match(/INC\d{7}/) || [])[0];
+      const waitFor = async (re, seconds) => { for (let i = 0; i < seconds; i++) { const l = await admin.get('/notifications'); if (re.test(l.text)) return true; await sleep(1000); } return false; };
+      try {
+        must(await waitFor(new RegExp(`\\[${number}\\] SLA at risk`), 40), 'no at-risk email within 40 s');
+        must(await waitFor(new RegExp(`\\[${number}\\] SLA breached`), 120), 'no breach email within 120 s');
+        await sleep(6000);
+        const l = (await admin.get('/notifications')).text;
+        const count = (re) => (l.match(re) || []).length;
+        must(count(new RegExp(`\\[${number}\\] SLA at risk`, 'g')) === 1 && count(new RegExp(`\\[${number}\\] SLA breached`, 'g')) === 1, 'an email was sent more than once');
+        const page = await showPage(jane, id);
+        return must(/SLA at risk: emailed/.test(page) && /SLA breached: emailed/.test(page) && /Breached/.test(page), 'activity log or badge missing');
+      } finally {
+        await admin.post('/settings/sla/policies', slaFields());
+      }
+    });
+  }
+
   section = 'input safety';
   await step('script tags in titles, comments, KB and CMDB names are escaped on every page', async () => {
     const x = `<script>alert('${tag}')</script>`;

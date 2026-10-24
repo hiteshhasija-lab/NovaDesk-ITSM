@@ -1,0 +1,95 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1000px;">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-clock-history text-primary me-1"></i>SLA settings</h4>
+  </div>
+  <% if (message) { %><div class="alert alert-<%= message.type %> py-2"><%= message.text %></div><% } %>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h6 class="section-title">SLA targets for incidents</h6>
+      <p class="text-muted small">How long each priority has to be resolved. <strong>Round the clock</strong> counts every minute; <strong>Business hours</strong> counts only the working hours set below. The clock stops while an incident is On Hold. A warning email goes to the assignee when the chosen share of the target has been used, and another when it is missed. Saved targets apply to incidents created from now on and to incidents whose priority changes.</p>
+      <form method="POST" action="/settings/sla/policies">
+        <div class="table-responsive">
+          <table class="table align-middle mb-3">
+            <thead class="table-light"><tr><th>Priority</th><th>Target (hours)</th><th>Clock counts</th><th>Warn at (% used)</th></tr></thead>
+            <tbody>
+              <% policies.forEach(p => { %>
+              <tr>
+                <td><%= p.label %></td>
+                <td style="width: 160px;"><input type="number" class="form-control form-control-sm" id="hours_<%= p.priority %>" name="hours_<%= p.priority %>" value="<%= p.hours %>" min="0.02" max="8760" step="any" required></td>
+                <td style="width: 220px;">
+                  <select class="form-select form-select-sm" id="clock_<%= p.priority %>" name="clock_<%= p.priority %>">
+                    <option value="calendar" <%= p.clock === 'calendar' ? 'selected' : '' %>>Round the clock</option>
+                    <option value="business" <%= p.clock === 'business' ? 'selected' : '' %>>Business hours</option>
+                  </select>
+                </td>
+                <td style="width: 160px;"><input type="number" class="form-control form-control-sm" id="warn_<%= p.priority %>" name="warn_<%= p.priority %>" value="<%= p.warn %>" min="1" max="99" step="1" required></td>
+              </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save targets</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h6 class="section-title">Business hours</h6>
+      <p class="text-muted small">Used by every target set to Business hours.</p>
+      <form method="POST" action="/settings/sla/calendar">
+        <div class="row g-3 mb-3">
+          <div class="col-md-5">
+            <label class="form-label small" for="timezone">Time zone</label>
+            <input class="form-control form-control-sm" id="timezone" name="timezone" list="timezone-list" value="<%= calendar.timezone %>" required autocomplete="off">
+            <datalist id="timezone-list"><% timezones.forEach(z => { %><option value="<%= z %>"></option><% }) %></datalist>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small" for="start">Day starts</label>
+            <input type="time" class="form-control form-control-sm" id="start" name="start" value="<%= calendar.start %>" required>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small" for="end">Day ends</label>
+            <input type="time" class="form-control form-control-sm" id="end" name="end" value="<%= calendar.end %>" required>
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="form-label small">Working days</div>
+          <% DAYS.forEach(([n, label]) => { %>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" id="day_<%= n %>" name="work_days" value="<%= n %>" <%= calendar.workDays.has(n) ? 'checked' : '' %>>
+            <label class="form-check-label small" for="day_<%= n %>"><%= label %></label>
+          </div>
+          <% }) %>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save business hours</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h6 class="section-title">Holidays</h6>
+      <p class="text-muted small">Days with no working hours, in the time zone above.</p>
+      <% if (holidays.length) { %>
+      <ul class="list-group mb-3">
+        <% holidays.forEach(hd => { %>
+        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+          <span><strong><%= hd.holiday_date %></strong><% if (hd.name) { %> <span class="text-muted ms-2"><%= hd.name %></span><% } %></span>
+          <form method="POST" action="/settings/sla/holidays/<%= hd.id %>/delete" class="m-0"><button type="submit" class="btn btn-sm btn-outline-danger">Remove</button></form>
+        </li>
+        <% }) %>
+      </ul>
+      <% } else { %><p class="text-muted small">No holidays yet.</p><% } %>
+      <form method="POST" action="/settings/sla/holidays" class="row g-2 align-items-end">
+        <div class="col-6 col-md-3"><label class="form-label small" for="holiday_date">Date</label><input type="date" class="form-control form-control-sm" id="holiday_date" name="holiday_date" required></div>
+        <div class="col-6 col-md-5"><label class="form-label small" for="holiday_name">Name (optional)</label><input class="form-control form-control-sm" id="holiday_name" name="name" maxlength="100" placeholder="Thanksgiving"></div>
+        <div class="col-12 col-md-4"><button type="submit" class="btn btn-outline-primary btn-sm">Add holiday</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+<%- include('../partials/foot') %>

@@ -63,7 +63,7 @@ router.get('/', requireAuth, async (req, res) => {
 
   const slaBreaches = (await db.prepare(`
     SELECT COUNT(*) as c FROM incidents
-    WHERE status NOT IN ('resolved','closed','cancelled') AND sla_due_at IS NOT NULL AND sla_due_at < ?
+    WHERE status NOT IN ('resolved','closed','cancelled') AND sla_paused_at IS NULL AND sla_due_at IS NOT NULL AND sla_due_at < ?
     ${isEndUser ? 'AND caller_id = ?' : ''}
   `).get(...(isEndUser ? [nowStr(), uid] : [nowStr()]))).c;
 

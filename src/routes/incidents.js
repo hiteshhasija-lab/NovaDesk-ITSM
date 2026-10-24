@@ -2,6 +2,7 @@ const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { priorityFromImpactUrgency, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, SLA_HOURS, toCsv, escapeHtml, slaStatus, reportRangeCutoff } = require('../helpers');
 const { sendNotification } = require('../mailer');
+const slaService = require('../slaService');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
@@ -188,8 +189,10 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
     closed_at = null;
   }
 
-  await db.prepare(`UPDATE incidents SET status = ?, resolved_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
-    .run(status, resolved_at, closed_at, nowStr(), req.params.id);
+  const clockChange = await slaService.incidentClockChanges(existing, { status });
+  await db.prepare(`UPDATE incidents SET status = @status, resolved_at = @resolved_at, closed_at = @closed_at, updated_at = @updated_at${slaService.setSql(clockChange.changes)} WHERE id = @id`)
+    .run({ ...clockChange.changes, status, resolved_at, closed_at, updated_at: nowStr(), id: req.params.id });
+  await slaService.logClockNotes(existing.id, req.session.user.id, clockChange.notes);
 
   if (status !== existing.status) {
     await logActivity('incident', existing.id, req.session.user.id,
@@ -208,16 +211,16 @@ router.post('/', requireAuth, async (req, res) => {
   const number = await nextNumber('incident', 'INC');
   const isEndUser = req.session.user.role === 'user';
 
-  const slaHours = SLA_HOURS[priority] || SLA_HOURS[4];
   const createdAt = nowStr();
-  const slaDueAt = new Date(new Date(createdAt.replace(' ', 'T') + 'Z').getTime() + slaHours * 3600000)
-    .toISOString().slice(0, 19).replace('T', ' ');
+  const clock = await slaService.newIncidentClock(priority, createdAt);
 
   const info = await db.prepare(`
     INSERT INTO incidents (number, short_description, description, category, subcategory, impact, urgency, priority,
-      status, caller_id, assigned_to, assignment_group, affected_ci_id, created_at, sla_due_at)
+      status, caller_id, assigned_to, assignment_group, affected_ci_id, created_at, sla_due_at,
+      sla_started_at, sla_target_minutes, sla_clock, sla_warn_percent, sla_paused_minutes)
     VALUES (@number, @short_description, @description, @category, @subcategory, @impact, @urgency, @priority,
-      'new', @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @created_at, @sla_due_at)
+      'new', @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @created_at, @sla_due_at,
+      @sla_started_at, @sla_target_minutes, @sla_clock, @sla_warn_percent, @sla_paused_minutes)
     RETURNING id
   `).run({
     number,
@@ -231,7 +234,12 @@ router.post('/', requireAuth, async (req, res) => {
     assignment_group: b.assignment_group || null,
     affected_ci_id: b.affected_ci_id || null,
     created_at: createdAt,
-    sla_due_at: slaDueAt
+    sla_due_at: clock.sla_due_at,
+    sla_started_at: clock.sla_started_at,
+    sla_target_minutes: clock.sla_target_minutes,
+    sla_clock: clock.sla_clock,
+    sla_warn_percent: clock.sla_warn_percent,
+    sla_paused_minutes: clock.sla_paused_minutes
   });
 
   await logActivity('incident', info.lastInsertRowid, req.session.user.id, 'Incident created');
@@ -353,13 +361,16 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     closed_at = null;
   }
 
+  const clockChange = await slaService.incidentClockChanges(existing, { status, priority });
+
   await db.prepare(`
     UPDATE incidents SET short_description=@short_description, description=@description, category=@category,
       subcategory=@subcategory, impact=@impact, urgency=@urgency, priority=@priority, status=@status,
       assigned_to=@assigned_to, assignment_group=@assignment_group, affected_ci_id=@affected_ci_id,
-      resolution_notes=@resolution_notes, problem_id=@problem_id, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=@updated_at
+      resolution_notes=@resolution_notes, problem_id=@problem_id, resolved_at=@resolved_at, closed_at=@closed_at, updated_at=@updated_at${slaService.setSql(clockChange.changes)}
     WHERE id=@id
   `).run({
+    ...clockChange.changes,
     id: req.params.id,
     short_description: b.short_description,
     description: b.description || null,
@@ -384,6 +395,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     await logActivity('incident', existing.id, actorId,
       `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]}`);
   }
+  await slaService.logClockNotes(existing.id, actorId, clockChange.notes);
   if (priority !== existing.priority) {
     await logActivity('incident', existing.id, actorId,
       `Priority changed from P${existing.priority} to P${priority}`);
@@ -491,8 +503,10 @@ router.post('/bulk-update', requireAuth, requireRole('admin', 'agent'), async (r
 
     const newAssignedTo = assigned_to !== undefined ? (assigned_to || null) : existing.assigned_to;
 
-    await db.prepare(`UPDATE incidents SET status = ?, assigned_to = ?, resolved_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
-      .run(newStatus, newAssignedTo, resolved_at, closed_at, nowStr(), id);
+    const clockChange = await slaService.incidentClockChanges(existing, { status: newStatus });
+    await db.prepare(`UPDATE incidents SET status = @status, assigned_to = @assigned_to, resolved_at = @resolved_at, closed_at = @closed_at, updated_at = @updated_at${slaService.setSql(clockChange.changes)} WHERE id = @id`)
+      .run({ ...clockChange.changes, status: newStatus, assigned_to: newAssignedTo, resolved_at, closed_at, updated_at: nowStr(), id });
+    await slaService.logClockNotes(id, actorId, clockChange.notes);
 
     if (status && status !== existing.status) {
       await logActivity('incident', id, actorId, `Status changed from ${INCIDENT_STATUS_LABELS[existing.status]} to ${INCIDENT_STATUS_LABELS[status]} (bulk action)`);

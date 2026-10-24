@@ -88,29 +88,18 @@ const ENVIRONMENT_LABELS = {
   production: 'Production', staging: 'Staging', uat: 'UAT', development: 'Development', dr: 'Disaster Recovery'
 };
 
-const SLA_HOURS = { 1: 4, 2: 8, 3: 24, 4: 72 };
+const sla = require('./sla');
+const SLA_HOURS = sla.LEGACY_SLA_HOURS;   // the original fixed targets; policies in the database supersede them
 
+// { key, label, badge, remainingMinutes } for an incident: none, paused, met, breached, closed, at_risk, on_track.
 function slaStatus(incident) {
-  if (!incident.sla_due_at) return { key: 'none', label: '—', badge: 'secondary' };
-  const due = dayjs(incident.sla_due_at.replace(' ', 'T'));
+  return sla.incidentSlaState(incident, Date.now(), sla.getActiveCalendar());
+}
 
-  if (incident.resolved_at) {
-    const resolved = dayjs(incident.resolved_at.replace(' ', 'T'));
-    return resolved.isAfter(due)
-      ? { key: 'breached', label: 'Breached', badge: 'danger' }
-      : { key: 'met', label: 'Met SLA', badge: 'success' };
-  }
-  if (['closed', 'cancelled'].includes(incident.status)) {
-    return { key: 'closed', label: '—', badge: 'secondary' };
-  }
-
-  const now = dayjs();
-  if (now.isAfter(due)) return { key: 'breached', label: 'Breached', badge: 'danger' };
-
-  const totalHours = SLA_HOURS[incident.priority] || SLA_HOURS[4];
-  const warnFrom = due.subtract(totalHours * 0.25, 'hour');
-  if (now.isAfter(warnFrom)) return { key: 'at_risk', label: 'At Risk', badge: 'warning' };
-  return { key: 'on_track', label: 'On Track', badge: 'success' };
+// "4 hours · round the clock" (or business hours) for an incident's stored target.
+function slaTargetText(incident) {
+  if (!incident.sla_target_minutes) return '—';
+  return `${sla.formatMinutes(incident.sla_target_minutes)} · ${incident.sla_clock === 'business' ? 'business hours' : 'round the clock'}`;
 }
 
 const ASSIGNMENT_GROUPS = [
@@ -229,7 +218,7 @@ module.exports = {
   PROBLEM_STATUS_LABELS, PROBLEM_STATUS_BADGE,
   REQUEST_STATUS_LABELS, REQUEST_STATUS_BADGE,
   CI_STATUS_LABELS, CI_STATUS_BADGE, CI_TYPE_LABELS, ENVIRONMENT_LABELS,
-  SLA_HOURS, slaStatus,
+  SLA_HOURS, slaStatus, slaTargetText,
   ASSIGNMENT_GROUPS, toCsv, escapeHtml, withQuery, initials, cssVersion, appVersion,
   fmtDate, fmtDateShort, fmtDateShortPlain, taskStatusIcon
 };

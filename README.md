@@ -68,6 +68,15 @@ fails to send is listed there with the reason. The password is never sent over a
 Without `SMTP_HOST` a production install sends nothing: notices are listed as *Not sent*, and nothing
 leaves the server. A mail server that is down never stops NovaDesk; the notice shows as *Failed*.
 
+**SLA targets.** Each incident has a due time from its priority (P1 4 hours, P2 8, P3 24, P4 72 until you
+change them). An administrator opens *SLA settings* (user menu) to set the target per priority, whether it
+counts round the clock or only **business hours** (working days, daily start and end in a time zone, and
+holidays), and the share of the target used before a warning goes out. The clock stops while an incident is
+**On Hold** and the waiting time is added to the due time when it leaves On Hold. The assignee (or, with no
+assignee, the assignment group, or the administrators) gets an email when an incident is at risk and another
+when it is breached, once each; this needs email set up (above). A new target applies to incidents created
+from then on and to incidents whose priority changes; a due time already running does not move.
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

@@ -193,9 +193,11 @@ async function seedIfEmpty() {
 
   const insertIncident = db.prepare(`
     INSERT INTO incidents (number, short_description, description, category, subcategory, impact, urgency, priority,
-      status, caller_id, assigned_to, assignment_group, affected_ci_id, resolution_notes, resolved_at, closed_at, created_at, sla_due_at)
+      status, caller_id, assigned_to, assignment_group, affected_ci_id, resolution_notes, resolved_at, closed_at, created_at, sla_due_at,
+      sla_started_at, sla_target_minutes, sla_clock, sla_warn_percent, sla_warned_at, sla_breach_notified_at)
     VALUES (@number, @short_description, @description, @category, @subcategory, @impact, @urgency, @priority,
-      @status, @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @resolution_notes, @resolved_at, @closed_at, @created_at, @sla_due_at)
+      @status, @caller_id, @assigned_to, @assignment_group, @affected_ci_id, @resolution_notes, @resolved_at, @closed_at, @created_at, @sla_due_at,
+      @created_at, @sla_target_minutes, 'calendar', 75, @sla_warned_at, @sla_breach_notified_at)
     RETURNING id
   `);
 
@@ -219,6 +221,14 @@ async function seedIfEmpty() {
     const closed_at = inc.closed_at || null;
     const slaHours = SLA_HOURS[priority] || SLA_HOURS[4];
     const sla_due_at = addHoursStr(created_at, slaHours);
+    // Demo incidents that are already late (or inside their warning window) when the demo is created count as
+    // notified, so the demonstration workspace does not send a burst of SLA emails on its first start.
+    const open = !['resolved', 'closed', 'cancelled'].includes(inc.status);
+    const dueMs = new Date(sla_due_at.replace(' ', 'T') + 'Z').getTime();
+    const late = open && dueMs < Date.now();
+    const warnZone = open && dueMs - slaHours * 60 * 15 * 1000 < Date.now();
+    const sla_breach_notified_at = late ? nowStr() : null;
+    const sla_warned_at = warnZone ? nowStr() : null;
     const incInfo = await insertIncident.run({
       number,
       short_description: inc.short_description,
@@ -237,7 +247,10 @@ async function seedIfEmpty() {
       resolved_at,
       closed_at,
       created_at,
-      sla_due_at
+      sla_due_at,
+      sla_target_minutes: slaHours * 60,
+      sla_warned_at,
+      sla_breach_notified_at
     });
     incidentIds[inc.short_description] = incInfo.lastInsertRowid;
   }

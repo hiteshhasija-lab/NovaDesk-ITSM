@@ -21,6 +21,11 @@
     <i class="bi bi-hourglass-split"></i>
     <span>SLA at risk — due <%- h.fmtDate(incident.sla_due_at) %>.</span>
   </div>
+  <% } else if (sla.key === 'paused') { %>
+  <div class="alert alert-info d-flex align-items-center gap-2">
+    <i class="bi bi-pause-circle-fill"></i>
+    <span>SLA clock paused since <%- h.fmtDate(incident.sla_paused_at) %> (On Hold). It restarts when the incident leaves On Hold, and the waiting time is added to the due time.</span>
+  </div>
   <% } %>
 
   <div class="row g-3">
@@ -242,6 +247,7 @@
             <dt class="col-sm-6">Assignment Group</dt><dd class="col-sm-6"><%= incident.assignment_group || '—' %></dd>
             <dt class="col-sm-6">SLA Due</dt><dd class="col-sm-6"><%- incident.sla_due_at ? h.fmtDate(incident.sla_due_at) : '—' %></dd>
             <dt class="col-sm-6">SLA Status</dt><dd class="col-sm-6"><span class="badge bg-<%= sla.badge %>"><%= sla.label %></span></dd>
+            <dt class="col-sm-6">SLA Target</dt><dd class="col-sm-6"><%= h.slaTargetText(incident) %></dd>
             <dt class="col-sm-6">Created</dt><dd class="col-sm-6"><%- h.fmtDate(incident.created_at) %></dd>
             <dt class="col-sm-6">Updated</dt><dd class="col-sm-6"><%- h.fmtDate(incident.updated_at) %></dd>
             <dt class="col-sm-6">Resolved</dt><dd class="col-sm-6"><%- incident.resolved_at ? h.fmtDate(incident.resolved_at) : '—' %></dd>

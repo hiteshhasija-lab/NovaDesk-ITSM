@@ -111,3 +111,44 @@ test('two copies starting at the same moment apply each migration once', { skip 
     assert.strictEqual((await knex.raw('SELECT count(*) AS c FROM a')).rows[0].c, '1');
   });
 });
+
+// 0002 adds the SLA engine to a database that already has incidents. Their due times must not move, nothing
+// already late may trigger an email burst, and one badly formed value must not stop the upgrade.
+test('0002 gives existing incidents their stored target without moving a due time, and marks old breaches as notified', { skip }, async () => {
+  await withSchema(async (knex) => {
+    const real = listMigrations(DEFAULT_DIR);
+    const onlyBaseline = dirWith({ [real[0].file]: real[0].sql });
+    await migrate(knex, { dir: onlyBaseline });
+    const ts = (hoursFromNow) => new Date(Date.now() + hoursFromNow * 3600000).toISOString().slice(0, 19).replace('T', ' ');
+    const add = (number, over) => knex.raw(
+      `INSERT INTO incidents (number, short_description, priority, status, created_at, updated_at, sla_due_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [number, number, over.priority, over.status, over.created, over.updated || over.created, over.due, over.resolved || null]);
+    await add('LATE', { priority: 3, status: 'in_progress', created: ts(-48), due: ts(-24) });                     // open, 24 h overdue
+    await add('FRESH', { priority: 1, status: 'new', created: ts(-1), due: ts(3) });                               // open, 3 h of 4 left
+    await add('WARN', { priority: 3, status: 'new', created: ts(-20), due: ts(4) });                               // open, inside the last 25%
+    await add('HELD', { priority: 2, status: 'on_hold', created: ts(-5), updated: ts(-2), due: ts(3) });           // on hold since it was last touched
+    await add('DONE', { priority: 4, status: 'resolved', created: ts(-100), due: ts(-28), resolved: ts(-30) });    // resolved
+    await add('ODD', { priority: 4, status: 'new', created: ts(-1), due: 'tomorrow' });                            // not a timestamp
+    await add('NONE', { priority: 4, status: 'new', created: ts(-1), due: null });                                 // never had an SLA
+    const before = Object.fromEntries((await knex.raw('SELECT number, sla_due_at FROM incidents')).rows.map((r) => [r.number, r.sla_due_at]));
+
+    assert.deepStrictEqual((await migrate(knex)).applied, ['0002_sla_engine']);
+
+    const rows = Object.fromEntries((await knex.raw('SELECT * FROM incidents')).rows.map((r) => [r.number, r]));
+    for (const n of Object.keys(before)) assert.strictEqual(rows[n].sla_due_at, before[n], `${n}: the due time did not move`);
+    assert.deepStrictEqual([rows.LATE.sla_target_minutes, rows.LATE.sla_clock, rows.LATE.sla_warn_percent, rows.LATE.sla_started_at], [1440, 'calendar', 75, rows.LATE.created_at]);
+    assert.strictEqual(rows.FRESH.sla_target_minutes, 240);
+    assert.ok(rows.LATE.sla_breach_notified_at && rows.LATE.sla_warned_at, 'an old breach counts as notified');
+    assert.ok(rows.WARN.sla_warned_at && !rows.WARN.sla_breach_notified_at, 'inside the warning window: warned, not breached');
+    assert.ok(!rows.FRESH.sla_warned_at && !rows.FRESH.sla_breach_notified_at, 'a healthy incident is still to be watched');
+    assert.strictEqual(rows.HELD.sla_paused_at, rows.HELD.updated_at, 'an On Hold incident counts as paused since it was last touched');
+    assert.ok(!rows.DONE.sla_breach_notified_at, 'a resolved incident is not touched by the notification flags');
+    assert.strictEqual(rows.DONE.sla_target_minutes, 72 * 60, 'a resolved incident keeps the target its due time implies');
+    assert.strictEqual(rows.ODD.sla_target_minutes, null, 'a malformed due time is left alone');
+    assert.strictEqual(rows.NONE.sla_target_minutes, null, 'an incident with no due time stays without a target');
+    // The default policies are the targets NovaDesk always used.
+    const policies = (await knex.raw(`SELECT priority, target_minutes, clock, warn_percent FROM sla_policies WHERE applies_to = 'incident' ORDER BY priority`)).rows;
+    assert.deepStrictEqual(policies.map((p) => [p.priority, p.target_minutes, p.clock, p.warn_percent]), [[1, 240, 'calendar', 75], [2, 480, 'calendar', 75], [3, 1440, 'calendar', 75], [4, 4320, 'calendar', 75]]);
+    assert.strictEqual((await knex.raw('SELECT count(*) AS c FROM business_calendars')).rows[0].c, '1');
+  });
+});

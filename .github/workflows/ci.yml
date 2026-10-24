@@ -68,12 +68,14 @@ jobs:
           nohup node scripts/smtp-sink.js 2525 sink.jsonl > sink.log 2>&1 &
           echo $! > sink.pid
           export SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_FROM='NovaDesk <helpdesk@example.test>'
+          # SLA warning/breach emails are looked for every 2 seconds instead of every minute, for the SLA mail steps.
+          export SLA_SWEEP_S=2
           nohup node src/server.js > server.log 2>&1 &
           echo $! > server.pid
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
           curl -fsS http://127.0.0.1:8080/health
       - name: Walk-through (every module, as the five demo roles)
-        run: BASE_URL=http://127.0.0.1:8080 WALK_EXPECT_MAIL=1 node scripts/walkthrough.js
+        run: BASE_URL=http://127.0.0.1:8080 WALK_EXPECT_MAIL=1 WALK_FAST_SLA=1 node scripts/walkthrough.js
       - name: The mail really went out through the SMTP server
         run: |
           test -s sink.jsonl || { echo "the SMTP sink received nothing"; exit 1; }
@@ -85,6 +87,8 @@ jobs:
             const bad = [];
             if (!msgs.some((m) => /^Subject: NovaDesk test email/m.test(m.raw))) bad.push("no test email");
             if (!msgs.some((m) => /^Subject: \[(INC|CHG|REQ)/m.test(m.raw))) bad.push("no ticket notice (incident, change or request)");
+            if (!msgs.some((m) => /^Subject: \[INC\d+\] SLA at risk/m.test(m.raw))) bad.push("no SLA at-risk email");
+            if (!msgs.some((m) => /^Subject: \[INC\d+\] SLA breached/m.test(m.raw))) bad.push("no SLA breach email");
             for (const m of msgs) {
               if (m.from !== "helpdesk@example.test") bad.push("wrong sender " + m.from);
               if (!/Content-Type: text\/plain/.test(m.raw) || !/Content-Type: text\/html/.test(m.raw)) bad.push("missing text or html part");
