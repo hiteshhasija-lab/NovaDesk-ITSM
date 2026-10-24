@@ -370,9 +370,10 @@ CREATE TABLE IF NOT EXISTS notifications (
   related_type TEXT, -- incident, change
   related_id INTEGER,
   preview_url TEXT,
-  status TEXT NOT NULL DEFAULT 'failed', -- sent, failed
+  status TEXT NOT NULL DEFAULT 'failed', -- sent, failed, not_configured (no mail server set up)
   created_at TEXT NOT NULL ${TS_DEFAULT}
 );
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS error TEXT;
 
 CREATE TABLE IF NOT EXISTS activity_log (
   id SERIAL PRIMARY KEY,

@@ -11,7 +11,7 @@
         <dt class="col-sm-2 text-muted">Subject</dt><dd class="col-sm-10"><%= notification.subject %></dd>
         <dt class="col-sm-2 text-muted">To</dt><dd class="col-sm-10"><%= notification.recipient_name || '' %> &lt;<%= notification.recipient_email %>&gt;</dd>
         <dt class="col-sm-2 text-muted">Sent</dt><dd class="col-sm-10"><%- h.fmtDate(notification.created_at) %></dd>
-        <dt class="col-sm-2 text-muted">Status</dt><dd class="col-sm-10"><span class="badge bg-<%= notification.status === 'sent' ? 'success' : 'secondary' %> text-capitalize"><%= notification.status %></span></dd>
+        <dt class="col-sm-2 text-muted">Status</dt><dd class="col-sm-10"><%- include('../partials/mail-status', { n: notification }) %><% if (notification.error) { %> <span class="text-muted"><%= notification.error %></span><% } %></dd>
         <% if (notification.related_type === 'change' && notification.related_id) { %>
         <dt class="col-sm-2 text-muted">Related</dt><dd class="col-sm-10"><a href="/changes/<%= notification.related_id %>">Change #<%= notification.related_id %></a></dd>
         <% } else if (notification.related_type === 'incident' && notification.related_id) { %>

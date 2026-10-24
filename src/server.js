@@ -27,6 +27,7 @@ const kbRoutes = require('./routes/kb');
 const reportRoutes = require('./routes/reports');
 const integrationRoutes = require('./routes/integrations');
 const { startScheduler } = require('./scheduler');
+const { reportMailSetup } = require('./mailer');
 const { createLimiter } = require('./rateLimit');
 const { sessionSecret } = require('./settings');
 
@@ -130,6 +131,7 @@ initDb()
       console.log(`ITSM app running at http://${HOST}:${PORT}`);
       // The demo logins exist only when the demonstration workspace was asked for; never advertise them otherwise.
       if (process.env.SEED_DEMO === 'true') console.log('Demo logins (SEED_DEMO=true): admin/admin123 (admin), jdoe/agent123 (agent), mchen/user123 (end user)');
+      reportMailSetup();
     }));
 
     if (fs.existsSync(TLS_KEY_PATH) && fs.existsSync(TLS_CERT_PATH)) {

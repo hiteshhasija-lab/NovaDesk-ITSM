@@ -3,8 +3,28 @@
 <div class="container-fluid px-4 py-4">
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0"><i class="bi bi-envelope text-primary me-1"></i>Notifications</h4>
+    <% if (currentUser.role === 'admin') { %>
+    <form method="POST" action="/notifications/test"><button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-send"></i> Send a test email to me</button></form>
+    <% } %>
   </div>
-  <p class="text-muted small">Every email NovaDesk has tried to send. Since this is a demo environment, messages go to a sandbox inbox rather than to real mailboxes. "Preview" shows exactly what was sent, from NovaDesk's own copy.</p>
+  <% if (testResult) { %>
+    <% if (testResult.status === 'sent') { %>
+      <div class="alert alert-success py-2">Test email sent to <strong><%= testResult.to %></strong>. Check that inbox (and its junk folder).</div>
+    <% } else if (testResult.status === 'noemail') { %>
+      <div class="alert alert-warning py-2">Your account has no email address. Add one under Profile, then try again.</div>
+    <% } else if (testResult.status === 'not_configured') { %>
+      <div class="alert alert-warning py-2"><%= testResult.error %></div>
+    <% } else { %>
+      <div class="alert alert-danger py-2">The test email could not be sent: <%= testResult.error %></div>
+    <% } %>
+  <% } %>
+  <% if (mail.mode === 'smtp') { %>
+    <p class="text-muted small">Every email NovaDesk has sent or tried to send, through <strong><%= mail.host %>:<%= mail.port %></strong> from <strong><%= mail.from %></strong>. "Preview" shows exactly what was sent, from NovaDesk's own copy.</p>
+  <% } else if (mail.mode === 'none') { %>
+    <div class="alert alert-warning py-2 small">Email is not set up on this server, so notifications are recorded here but not sent. An administrator sets <code>SMTP_HOST</code> and <code>SMTP_FROM</code> (and <code>SMTP_USER</code> and <code>SMTP_PASSWORD</code> if the server needs them) in <code>.env</code>, then restarts NovaDesk.</div>
+  <% } else { %>
+    <p class="text-muted small">Every email NovaDesk has tried to send. Since this is a demo environment, messages go to a sandbox inbox rather than to real mailboxes. "Preview" shows exactly what was sent, from NovaDesk's own copy.</p>
+  <% } %>
 
   <div class="card">
     <div class="table-responsive">
@@ -30,7 +50,7 @@
                 <a href="/changes/<%= n.related_id %>">Change #<%= n.related_id %></a>
               <% } else { %>—<% } %>
             </td>
-            <td><span class="badge bg-<%= n.status === 'sent' ? 'success' : 'secondary' %> text-capitalize"><%= n.status %></span></td>
+            <td><%- include('../partials/mail-status', { n }) %><% if (n.error) { %><div class="small text-muted"><%= n.error %></div><% } %></td>
             <td>
               <a href="/notifications/<%= n.id %>" class="btn btn-sm btn-outline-primary">Preview</a>
             </td>

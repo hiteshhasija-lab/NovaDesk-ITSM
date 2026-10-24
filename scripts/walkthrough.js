@@ -367,6 +367,20 @@ const has = (r, re) => re.test(r.text);
     const r = await jane.get('/my-work'); return must(mk.status === 302 && r.status === 200, `${mk.status}/${r.status}`);
   });
   await step('notifications page renders for staff', async () => { const l = await jane.get('/notifications'); return must(l.status === 200 || l.status === 403, 'status ' + l.status); });
+  await step('an administrator can send a test email to themselves and sees the result', async () => {
+    const p = await admin.post('/notifications/test', {});
+    const l = await admin.get('/notifications');
+    const shown = /Test email sent to|Email is not set up|could not be sent|has no email address/.test(l.text);
+    must(p.status === 302 && l.status === 200 && shown, `${p.status}/${l.status} shown=${shown}`);
+    // CI starts the app with a local SMTP sink (WALK_EXPECT_MAIL=1): the message must really have gone out.
+    if (process.env.WALK_EXPECT_MAIL === '1') must(/Test email sent to/.test(l.text), 'the test email was not sent');
+  });
+  await step('only an administrator can send the test email', async () => { const r = await jane.post('/notifications/test', {}); return must(r.status === 403, 'status ' + r.status); });
+  if (process.env.WALK_EXPECT_MAIL === '1') {
+    await step('no notice failed to send while the walk-through ran', async () => {
+      const l = await admin.get('/notifications'); return must(!/<span class="badge bg-danger">Failed<\/span>/.test(l.text), 'a notification shows Failed');
+    });
+  }
 
   section = 'input safety';
   await step('script tags in titles, comments, KB and CMDB names are escaped on every page', async () => {

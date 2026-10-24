@@ -60,6 +60,14 @@ to the oldest active administrator if there is none; only the requester or membe
 approve. **ESXi:** `ESXI_USER` and `ESXI_PASSWORD` must name an account that may power off and destroy
 virtual machines on your hosts; without them the automation stops at the first ESXi step and says so.
 
+**Email.** NovaDesk emails people about their tickets (assigned to you, a new comment, approved).
+Set `SMTP_HOST` and `SMTP_FROM` in `.env`, plus `SMTP_USER` and `SMTP_PASSWORD` if your mail server needs a
+sign-in (port 587 uses STARTTLS; for port 465 also set `SMTP_SECURE=true`), then restart NovaDesk. In
+**Notifications**, an administrator can press *Send a test email to me*; every message NovaDesk sends or
+fails to send is listed there with the reason. The password is never sent over an unencrypted connection.
+Without `SMTP_HOST` a production install sends nothing: notices are listed as *Not sent*, and nothing
+leaves the server. A mail server that is down never stops NovaDesk; the notice shows as *Failed*.
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

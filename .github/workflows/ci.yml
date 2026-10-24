@@ -60,12 +60,34 @@ jobs:
           export PORT=8080 HOST=127.0.0.1 SESSION_SECRET=ci-session-secret-$RANDOM$RANDOM
           # The walk-through uses the demonstration users, which are only created when asked for.
           export SEED_DEMO=true
+          # Real email: NovaDesk sends through a local SMTP sink that keeps every message (nothing leaves the runner).
+          nohup node scripts/smtp-sink.js 2525 sink.jsonl > sink.log 2>&1 &
+          echo $! > sink.pid
+          export SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_FROM='NovaDesk <helpdesk@example.test>'
           nohup node src/server.js > server.log 2>&1 &
           echo $! > server.pid
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/health && break; sleep 2; done
           curl -fsS http://127.0.0.1:8080/health
       - name: Walk-through (every module, as the five demo roles)
-        run: BASE_URL=http://127.0.0.1:8080 node scripts/walkthrough.js
+        run: BASE_URL=http://127.0.0.1:8080 WALK_EXPECT_MAIL=1 node scripts/walkthrough.js
+      - name: The mail really went out through the SMTP server
+        run: |
+          test -s sink.jsonl || { echo "the SMTP sink received nothing"; exit 1; }
+          total=$(wc -l < sink.jsonl)
+          echo "$total messages received"
+          node -e '
+            const fs = require("fs");
+            const msgs = fs.readFileSync("sink.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l));
+            const bad = [];
+            if (!msgs.some((m) => /^Subject: NovaDesk test email/m.test(m.raw))) bad.push("no test email");
+            if (!msgs.some((m) => /^Subject: \[(INC|CHG|REQ)/m.test(m.raw))) bad.push("no ticket notice (incident, change or request)");
+            for (const m of msgs) {
+              if (m.from !== "helpdesk@example.test") bad.push("wrong sender " + m.from);
+              if (!/Content-Type: text\/plain/.test(m.raw) || !/Content-Type: text\/html/.test(m.raw)) bad.push("missing text or html part");
+            }
+            if (bad.length) { console.log([...new Set(bad)].join("\n")); process.exit(1); }
+            console.log("sender, subject and both parts are right on all " + msgs.length + " messages");
+          '
       - name: Server log (on failure)
         if: failure()
         run: tail -80 server.log
@@ -77,7 +99,9 @@ jobs:
           fi
       - name: Stop
         if: always()
-        run: kill "$(cat server.pid)" 2>/dev/null || true
+        run: |
+          kill "$(cat server.pid)" 2>/dev/null || true
+          kill "$(cat sink.pid)" 2>/dev/null || true
 
   # A clean install: an empty database with no demo switch gets exactly one administrator from the
   # settings, and no demonstration data; production mode refuses to start without its settings.
