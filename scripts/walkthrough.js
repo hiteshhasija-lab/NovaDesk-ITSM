@@ -813,9 +813,10 @@ const has = (r, re) => re.test(r.text);
     section = 'sign-in protection';
   }
 
+  // Guesses at a name that does not exist, so no real account is locked for the checks that run after this.
   // Last on purpose: it trips the limiter, so this address cannot sign in again for 15 minutes (or until a restart).
   if (!process.env.WALK_SKIP_BRUTE_FORCE) await step('repeated wrong passwords are slowed down (the same person keeps failing)', async () => {
-    let limited = false; for (let i = 0; i < 40; i++) { const r = await new Person('bf').post('/login', { username: 'admin', password: 'wrong' + i }); if (r.status === 429) { limited = true; break; } }
+    let limited = false; for (let i = 0; i < 40; i++) { const r = await new Person('bf').post('/login', { username: 'nobody-' + tag, password: 'wrong' + i }); if (r.status === 429) { limited = true; break; } }
     return must(limited, 'forty wrong passwords in a row were all just answered; nothing limits guessing');
   });
 
