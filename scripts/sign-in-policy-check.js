@@ -35,7 +35,7 @@ class Person {
   constructor(base) { this.base = base; this.cookie = ''; }
   async req(method, p, form) {
     const headers = { Cookie: this.cookie }; let body;
-    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }
+    if (form) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; body = (() => { const sp = new URLSearchParams(); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); return sp.toString(); })(); }
     const res = await fetch(this.base + p, { method, headers, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie()) { const kv = c.split(';')[0]; const jar = Object.fromEntries(this.cookie.split('; ').filter(Boolean).map((x) => [x.split('=')[0], x])); jar[kv.split('=')[0]] = kv; this.cookie = Object.values(jar).join('; '); }
     return { status: res.status, loc: res.headers.get('location'), text: await res.text() };

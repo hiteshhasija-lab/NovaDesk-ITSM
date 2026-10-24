@@ -76,6 +76,57 @@ curl -X PATCH <%= base %>/incidents/42 \
   <% }) %>
   <% }) %>
 
+  <h5 class="mt-5 mb-3" id="webhooks">Webhooks</h5>
+  <div class="card mb-4"><div class="card-body">
+    <p>Instead of asking NovaDesk what changed, let NovaDesk tell you. An administrator adds a webhook under <em>Webhooks</em> in the user menu: an address, the events wanted, and NovaDesk makes a signing secret. From then on every matching event is sent to that address as an HTTP <code>POST</code> with a JSON body.</p>
+    <h6>Events</h6>
+    <p class="small mb-2">For incidents, changes, problems, service requests, configuration items (<code>ci</code>) and knowledge articles: <code>&lt;record&gt;.created</code>, <code>&lt;record&gt;.updated</code> (any other change to the record; the SLA clock bookkeeping and article view counts do not count) and <code>&lt;record&gt;.status_changed</code> (with the previous status); for incidents, changes and problems also <code>&lt;record&gt;.commented</code>. Internal work notes on incidents are never sent. Events are recorded by the database itself, so changes made through the pages, the API, the integrations and the decommission automation all produce them. Moving a record to another status sends <code>status_changed</code> only, not also <code>updated</code>. A test button sends <code>ping</code>.</p>
+    <h6>What you receive</h6>
+<pre class="border rounded p-3 small">POST /your/endpoint
+Content-Type: application/json
+User-Agent: NovaDesk-Webhooks/1
+X-NovaDesk-Event: incident.status_changed
+X-NovaDesk-Event-Id: evt_3b1f6a52-...        (the same for every retry of this event)
+X-NovaDesk-Delivery: 118
+X-NovaDesk-Signature: t=1798761600,v1=5257a869e7ecebeda32affa62cdca3fa51cad7e77a0e56ff536d0ce8e108d8bd
+
+{
+  "id": "evt_3b1f6a52-...",
+  "type": "incident.status_changed",
+  "created_at": "2026-12-01T10:15:00Z",
+  "data": { "incident": { "id": 42, "number": "INC0000042", "status": "on_hold", ... } },
+  "previous": { "status": "in_progress" }
+}</pre>
+    <p class="small">The record is shown exactly as the REST API shows it (see the endpoints above), as it was right after the change that caused the event (not as it is by the time the call arrives, so a quick series of changes each shows its own state). <code>commented</code> events carry a <code>comment</code> object as well.</p>
+    <h6>Checking a call is genuine</h6>
+    <p class="small mb-2">The signature is the hex HMAC-SHA256, with your secret as the key, of the timestamp, a dot and the raw body: <code>HMAC(secret, "&lt;t&gt;." + body)</code>. Compare it in constant time and refuse a timestamp more than five minutes old.</p>
+<pre class="border rounded p-3 small">// Node.js
+const crypto = require('crypto');
+function genuine(secret, header, rawBody) {
+  const m = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header || '');
+  if (!m || Math.abs(Date.now() / 1000 - Number(m[1])) > 300) return false;
+  const expected = crypto.createHmac('sha256', secret).update(m[1] + '.' + rawBody).digest();
+  return crypto.timingSafeEqual(expected, Buffer.from(m[2], 'hex'));
+}
+
+# Python
+import hmac, hashlib, re, time
+def genuine(secret: str, header: str, raw_body: bytes) -> bool:
+    m = re.fullmatch(r"t=(\d+),v1=([0-9a-f]{64})", header or "")
+    if not m or abs(time.time() - int(m[1])) > 300:
+        return False
+    expected = hmac.new(secret.encode(), m[1].encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, m[2])</pre>
+    <h6>Delivery rules</h6>
+    <ul class="small mb-0">
+      <li>Answer with any <code>2xx</code> within 10 seconds. Anything else, a timeout or a refused connection is a failure; redirects are not followed.</li>
+      <li>A failed delivery is tried again after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours, then given up (six tries). The administrator sees every try, can look at what was sent, and can retry by hand.</li>
+      <li>A receiver whose last 10 deliveries all failed is switched off, so it is not called for ever.</li>
+      <li>A retry carries the same <code>X-NovaDesk-Event-Id</code>: use it to ignore a repeat. Order is not guaranteed; use <code>updated_at</code> in the record.</li>
+      <li>Only <code>https://</code> addresses that resolve to public addresses are accepted (so a webhook cannot be aimed at a server's own network). An administrator can allow private addresses and plain http for an internal receiver with <code>WEBHOOK_ALLOW_PRIVATE=true</code>.</li>
+    </ul>
+  </div></div>
+
   <p class="small text-muted mt-4">Changes, approvals and the decommission workflow are read-only here: approving, rejecting and cancelling follow their own rules in the NovaDesk pages.</p>
 </div>
 <%- include('partials/foot') %>

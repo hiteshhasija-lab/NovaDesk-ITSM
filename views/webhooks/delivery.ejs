@@ -1,0 +1,20 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 900px;">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-broadcast text-primary me-1"></i>Delivery <%= d.id %></h4>
+    <a href="/settings/webhooks?webhook=<%= d.webhook_id %>" class="btn btn-sm btn-outline-secondary">&larr; Back</a>
+  </div>
+  <div class="card"><div class="card-body">
+    <dl class="row small mb-3">
+      <dt class="col-sm-3">Webhook</dt><dd class="col-sm-9"><%= d.webhook_name %> <code class="ms-1"><%= d.url %></code></dd>
+      <dt class="col-sm-3">Event</dt><dd class="col-sm-9"><code><%= d.event_type %></code> <span class="text-muted ms-1"><%= d.event_id %></span></dd>
+      <dt class="col-sm-3">Result</dt><dd class="col-sm-9"><%= d.status %><% if (d.last_status_code) { %>, the receiver answered <%= d.last_status_code %><% } %><% if (d.last_error) { %> <span class="text-muted">(<%= d.last_error %>)</span><% } %></dd>
+      <dt class="col-sm-3">Tries</dt><dd class="col-sm-9"><%= d.attempts %><% if (d.status === 'pending') { %>, next at <%- h.fmtDate(d.next_attempt_at) %><% } %></dd>
+      <dt class="col-sm-3">Created</dt><dd class="col-sm-9"><%- h.fmtDate(d.created_at) %><% if (d.delivered_at) { %> · delivered <%- h.fmtDate(d.delivered_at) %><% } %></dd>
+    </dl>
+    <h6 class="section-title">What was sent</h6>
+    <pre class="border rounded p-3 small mb-0" style="max-height: 480px; overflow: auto;"><%= pretty %></pre>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

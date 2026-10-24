@@ -2,12 +2,15 @@ const { db, nowStr } = require('./db');
 const { syncCard, reconcileCards } = require('./cardSync');
 const { resumeInterruptedDecoms } = require('./decomAutomation');
 const { sweep: sweepSla } = require('./slaService');
+const webhooks = require('./webhooks');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 // How often the card ledger is retried (cardSync.js); only the test rig changes this.
 const CARD_SYNC_POLL_MS = (Number(process.env.CARD_SYNC_POLL_S) || 30) * 1000;
 const RESUME_POLL_MS = (Number(process.env.DECOM_RESUME_POLL_S) || 30) * 1000;
 // How often SLA warnings and breaches are looked for (only the test rig and CI change this).
+// How often recorded events are handed to webhooks and due deliveries are sent (only tests and CI change this).
+const WEBHOOK_POLL_MS = (Number(process.env.WEBHOOK_POLL_S) || 5) * 1000;
 const SLA_SWEEP_MS = (Number(process.env.SLA_SWEEP_S) || 60) * 1000;
 
 // A slow poll (a receiver that takes a while to answer) must not overlap the next one, or the same
@@ -85,6 +88,9 @@ function startScheduler() {
   const resume = () => resumeInterruptedDecoms().catch((e) => console.error('Decommission resume failed:', e.message));
   setInterval(resume, RESUME_POLL_MS);
   setTimeout(resume, 50 * 1000);
+  // Webhooks: events recorded by the database triggers go to the receivers, and what failed is tried again.
+  const hooks = () => webhooks.dispatchOutbox().then(() => webhooks.deliverDue()).catch((e) => console.error('Webhook delivery failed:', e.message));
+  setInterval(hooks, WEBHOOK_POLL_MS);
   // SLA warning and breach emails.
   const slaSweep = () => sweepSla().catch((e) => console.error('SLA sweep failed:', e.message));
   setInterval(slaSweep, SLA_SWEEP_MS);

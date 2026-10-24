@@ -1,0 +1,88 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1100px;">
+  <h4 class="mb-3"><i class="bi bi-broadcast text-primary me-1"></i>Webhooks</h4>
+  <p class="text-muted small">NovaDesk can call a web address of yours whenever a record is created, changed, moves to another status or gets a comment, so other systems hear about it at once. Each call is signed with a secret only you and NovaDesk know. How to read and check a call: <a href="/api/docs#webhooks">the guide</a>.</p>
+
+  <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+  <% if (newSecret) { %>
+  <div class="card mb-3 border-warning"><div class="card-body">
+    <h6 class="section-title">Signing secret</h6>
+    <pre class="border rounded p-3 mb-2 user-select-all" id="newWebhookSecret" style="white-space: pre-wrap; word-break: break-all;"><%= newSecret %></pre>
+    <p class="small text-muted mb-0">Give this to the receiver, which uses it to check that a call really came from NovaDesk. Keep it like a password.</p>
+  </div></div>
+  <% } %>
+
+  <div class="card mb-4"><div class="card-body">
+    <h6 class="section-title">Your webhooks <span class="text-muted small">(up to <%= max %>)</span></h6>
+    <% if (!hooks.length) { %><p class="text-muted small mb-0">None yet. Add one below.</p><% } else { %>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>Name</th><th>Address</th><th>Events</th><th>Status</th><th>Last 24 h</th><th></th></tr></thead>
+      <tbody>
+      <% hooks.forEach(w => { %>
+      <tr>
+        <td><a href="/settings/webhooks?webhook=<%= w.id %>"><%= w.name %></a></td>
+        <td class="small text-break"><code><%= w.url %></code></td>
+        <td class="small"><%= w.events === '*' ? 'All events' : w.events.split(',').length + ' events' %></td>
+        <td><% if (w.active) { %><span class="badge bg-success">On</span><% } else { %><span class="badge bg-secondary">Off</span><% } %><% if (w.disabled_reason) { %><div class="small text-danger"><%= w.disabled_reason %></div><% } %></td>
+        <td class="small text-muted"><%= w.delivered_day %> sent · <%= w.pending %> waiting · <%= w.failed_day %> failed</td>
+        <td class="text-end text-nowrap">
+          <form method="POST" action="/settings/webhooks/<%= w.id %>/test" class="d-inline"><button class="btn btn-sm btn-outline-primary">Send test</button></form>
+          <form method="POST" action="/settings/webhooks/<%= w.id %>/toggle" class="d-inline"><button class="btn btn-sm btn-outline-secondary"><%= w.active ? 'Switch off' : 'Switch on' %></button></form>
+          <form method="POST" action="/settings/webhooks/<%= w.id %>/rotate" class="d-inline"><button class="btn btn-sm btn-outline-secondary">New secret</button></form>
+          <form method="POST" action="/settings/webhooks/<%= w.id %>/delete" class="d-inline"><button class="btn btn-sm btn-outline-danger">Delete</button></form>
+        </td>
+      </tr>
+      <% }) %>
+      </tbody>
+    </table></div>
+    <% } %>
+  </div></div>
+
+  <div class="card mb-4"><div class="card-body">
+    <h6 class="section-title">Add a webhook</h6>
+    <form method="POST" action="/settings/webhooks">
+      <div class="row g-3 mb-3">
+        <div class="col-md-4"><label class="form-label small" for="wh_name">Name</label><input class="form-control" id="wh_name" name="name" maxlength="80" placeholder="Chat bridge" value="<%= form.name || '' %>" required></div>
+        <div class="col-md-8"><label class="form-label small" for="wh_url">Address to call</label><input class="form-control" id="wh_url" name="url" type="text" placeholder="https://hooks.example.com/novadesk" value="<%= form.url || '' %>" required>
+          <div class="form-text"><%= allowPrivate ? 'Private and local addresses and plain http are allowed on this server (WEBHOOK_ALLOW_PRIVATE).' : 'Must start with https:// and point at a public address.' %></div></div>
+      </div>
+      <div class="form-label small">Send me</div>
+      <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="ev_all" name="events" value="*" <%= (form.events || []).includes('*') ? 'checked' : '' %>><label class="form-check-label" for="ev_all"><strong>Everything</strong> (including events added later)</label></div>
+      <div class="row">
+      <% Object.entries(records).forEach(([entity, label]) => { %>
+        <div class="col-md-4 mb-2"><div class="small text-muted"><%= label %></div>
+          <% eventTypes.filter(t => t.startsWith(entity + '.')).forEach(t => { const op = t.split('.')[1]; %>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="ev_<%= t %>" name="events" value="<%= t %>" <%= (form.events || []).includes(t) ? 'checked' : '' %>><label class="form-check-label small" for="ev_<%= t %>">when it <%= operations[op] %></label></div>
+          <% }) %>
+        </div>
+      <% }) %>
+      </div>
+      <button class="btn btn-primary mt-2" type="submit">Add webhook</button>
+    </form>
+  </div></div>
+
+  <div class="card"><div class="card-body">
+    <h6 class="section-title">What was sent <span class="text-muted small"><%= filter ? '(one webhook; ' : '(' %>the last 50<%= filter ? ')' : ')' %></span> <% if (filter) { %><a class="small ms-2" href="/settings/webhooks">show all</a><% } %></h6>
+    <% if (!deliveries.length) { %><p class="text-muted small mb-0">Nothing sent yet.</p><% } else { %>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>When</th><th>Webhook</th><th>Event</th><th>Result</th><th>Tries</th><th></th></tr></thead>
+      <tbody>
+      <% deliveries.forEach(d => { %>
+      <tr>
+        <td class="small text-muted"><%- h.fmtDate(d.created_at) %></td>
+        <td class="small"><%= d.webhook_name %></td>
+        <td><code class="small"><%= d.event_type %></code></td>
+        <td class="small"><% if (d.status === 'delivered') { %><span class="badge bg-success">Delivered</span> <%= d.last_status_code %><% } else if (d.status === 'pending') { %><span class="badge bg-warning text-dark">Waiting</span><% if (d.last_error) { %> <span class="text-muted"><%= d.last_error %></span><% } %><% } else { %><span class="badge bg-danger">Failed</span> <span class="text-muted"><%= d.last_error %></span><% } %></td>
+        <td class="small"><%= d.attempts %></td>
+        <td class="text-end text-nowrap"><a class="btn btn-sm btn-outline-secondary" href="/settings/webhooks/deliveries/<%= d.id %>">Details</a>
+          <% if (d.status === 'failed' && d.event_type !== 'ping') { %><form method="POST" action="/settings/webhooks/deliveries/<%= d.id %>/retry" class="d-inline"><button class="btn btn-sm btn-outline-primary">Retry</button></form><% } %></td>
+      </tr>
+      <% }) %>
+      </tbody>
+    </table></div>
+    <% } %>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

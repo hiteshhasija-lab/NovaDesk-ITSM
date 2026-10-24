@@ -217,3 +217,106 @@ test('0005 adds API keys (hash only, unique, read or write) and idempotency reco
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM api_idempotency`)).rows[0].c), 0, 'so do their idempotency records');
   });
 });
+
+test('0006: events are recorded by triggers, only while a webhook is on, never block a change, and say what happened', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const outbox = async () => (await knex.raw(`SELECT entity, entity_id, op, previous_status, child_id FROM event_outbox ORDER BY id`)).rows;
+    const clear = () => knex.raw('DELETE FROM event_outbox');
+    const [{ id: u }] = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('w', 'x', 'W', 'agent') RETURNING id`)).rows;
+
+    // Nothing is recorded while no webhook is switched on.
+    const [{ id: early }] = (await knex.raw(`INSERT INTO incidents (number, short_description) VALUES ('INC-EARLY', 'before any webhook') RETURNING id`)).rows;
+    assert.deepStrictEqual(await outbox(), []);
+
+    await knex.raw(`INSERT INTO webhooks (name, url, secret_enc, events) VALUES ('hook', 'https://example.test', 'x', '*')`);
+    const [{ id }] = (await knex.raw(`INSERT INTO incidents (number, short_description) VALUES ('INC-1', 'one') RETURNING id`)).rows;
+    assert.deepStrictEqual(await outbox(), [{ entity: 'incident', entity_id: id, op: 'created', previous_status: null, child_id: null }]);
+
+    await clear();
+    // Two quick changes: each event keeps the record as it was right after its own change.
+    await knex.raw(`UPDATE incidents SET status = 'in_progress', description = 'first', updated_at = '2030-01-01 00:00:00' WHERE id = ?`, [id]);
+    await knex.raw(`UPDATE incidents SET status = 'on_hold', description = 'second', updated_at = '2030-01-01 00:00:01' WHERE id = ?`, [id]);
+    const shots = (await knex.raw(`SELECT op, previous_status, snapshot FROM event_outbox ORDER BY id`)).rows;
+    assert.deepStrictEqual(shots.map((e) => [e.op, e.previous_status, e.snapshot.status, e.snapshot.description]), [['status_changed', 'new', 'in_progress', 'first'], ['status_changed', 'in_progress', 'on_hold', 'second']]);
+    assert.strictEqual(shots[0].snapshot.number, 'INC-1');
+    await knex.raw(`UPDATE incidents SET status = 'in_progress', updated_at = '2030-01-01 00:00:02' WHERE id = ?`, [id]);   // back, so the next steps start as before
+    await clear();
+    await knex.raw(`UPDATE incidents SET status = 'new', updated_at = '2030-01-01 00:00:03' WHERE id = ?`, [id]);
+    await clear();
+    await knex.raw(`UPDATE incidents SET status = 'in_progress', updated_at = '2030-01-01 00:00:04' WHERE id = ?`, [id]);
+    assert.deepStrictEqual(await outbox(), [{ entity: 'incident', entity_id: id, op: 'status_changed', previous_status: 'new', child_id: null }], 'a status change is one event, not two');
+
+    await clear();
+    await knex.raw(`UPDATE incidents SET description = 'more', updated_at = '2030-01-02 00:00:00' WHERE id = ?`, [id]);
+    assert.deepStrictEqual((await outbox()).map((e) => e.op), ['updated']);
+
+    await clear();
+    await knex.raw(`UPDATE incidents SET sla_warned_at = '2030-01-03 00:00:00', sla_breach_notified_at = '2030-01-03 00:00:00', sla_due_at = '2030-01-09 00:00:00' WHERE id = ?`, [id]);
+    assert.deepStrictEqual(await outbox(), [], 'the SLA bookkeeping the sweep writes is not a change');
+    await knex.raw(`UPDATE incidents SET updated_at = '2030-01-04 00:00:00' WHERE id = ?`, [id]);
+    assert.deepStrictEqual(await outbox(), [], 'touching updated_at alone is not a change');
+
+    // Two edits inside the same second (updated_at cannot tell them apart) are still two events.
+    await knex.raw(`UPDATE incidents SET description = 'edit one', updated_at = '2030-01-05 00:00:00' WHERE id = ?`, [id]);
+    await knex.raw(`UPDATE incidents SET description = 'edit two', updated_at = '2030-01-05 00:00:00' WHERE id = ?`, [id]);
+    const edits = (await knex.raw(`SELECT op, snapshot FROM event_outbox ORDER BY id`)).rows;
+    assert.deepStrictEqual(edits.map((e) => [e.op, e.snapshot.description]), [['updated', 'edit one'], ['updated', 'edit two']]);
+
+    await clear();
+    await knex.raw(`INSERT INTO incident_comments (incident_id, user_id, comment, is_work_note) VALUES (?, ?, 'hello', 0)`, [id, u]);
+    await knex.raw(`INSERT INTO incident_comments (incident_id, user_id, comment, is_work_note) VALUES (?, ?, 'internal', 1)`, [id, u]);
+    const comments = await outbox();
+    assert.strictEqual(comments.length, 1, 'a work note is never announced');
+    assert.deepStrictEqual([comments[0].entity, comments[0].entity_id, comments[0].op], ['incident', id, 'commented']);
+    assert.ok(comments[0].child_id > 0);
+
+    // The other kinds of record.
+    await clear();
+    const [{ id: ch }] = (await knex.raw(`INSERT INTO changes (number, short_description) VALUES ('CHG-1', 'c') RETURNING id`)).rows;
+    const [{ id: pr }] = (await knex.raw(`INSERT INTO problems (number, short_description) VALUES ('PRB-1', 'p') RETURNING id`)).rows;
+    const [{ id: rq }] = (await knex.raw(`INSERT INTO service_requests (number) VALUES ('REQ-1') RETURNING id`)).rows;
+    const [{ id: ci }] = (await knex.raw(`INSERT INTO cmdb_ci (ci_number, name, ci_type) VALUES ('CI-1', 'srv', 'server') RETURNING id`)).rows;
+    const [{ id: ar }] = (await knex.raw(`INSERT INTO kb_articles (number, title, body) VALUES ('KB-1', 't', 'b') RETURNING id`)).rows;
+    await knex.raw(`INSERT INTO change_comments (change_id, user_id, comment) VALUES (?, ?, 'c')`, [ch, u]);
+    await knex.raw(`INSERT INTO problem_comments (problem_id, user_id, comment) VALUES (?, ?, 'c')`, [pr, u]);
+    assert.deepStrictEqual((await outbox()).map((e) => `${e.entity}.${e.op}`), ['change.created', 'problem.created', 'request.created', 'ci.created', 'article.created', 'change.commented', 'problem.commented']);
+
+    // Reading an article bumps its view count: not a change.
+    await clear();
+    await knex.raw(`UPDATE kb_articles SET view_count = view_count + 1 WHERE id = ?`, [ar]);
+    assert.deepStrictEqual(await outbox(), [], 'a view count is not an edit');
+    await knex.raw(`UPDATE kb_articles SET title = 'renamed', updated_at = '2030-01-06 00:00:00' WHERE id = ?`, [ar]);
+    assert.deepStrictEqual((await outbox()).map((e) => `${e.entity}.${e.op}`), ['article.updated']);
+
+    // A switched-off webhook records nothing.
+    await clear();
+    await knex.raw(`UPDATE webhooks SET active = 0`);
+    await knex.raw(`UPDATE incidents SET status = 'resolved', updated_at = '2030-02-01 00:00:00' WHERE id = ?`, [id]);
+    assert.deepStrictEqual(await outbox(), []);
+    await knex.raw(`UPDATE webhooks SET active = 1`);
+
+    // A trigger that cannot record its event must not stop the change.
+    await knex.raw(`ALTER TABLE event_outbox RENAME TO event_outbox_away`);
+    try {
+      await knex.raw(`INSERT INTO incidents (number, short_description) VALUES ('INC-SURVIVES', 'the change still happens')`);
+      await knex.raw(`UPDATE incidents SET short_description = 'edited', updated_at = '2030-03-01 00:00:00' WHERE id = ?`, [early]);
+    } finally { await knex.raw(`ALTER TABLE event_outbox_away RENAME TO event_outbox`); }
+    assert.strictEqual((await knex.raw(`SELECT count(*) AS c FROM incidents WHERE number = 'INC-SURVIVES'`)).rows[0].c, '1');
+    assert.strictEqual((await knex.raw(`SELECT short_description FROM incidents WHERE id = ?`, [early])).rows[0].short_description, 'edited');
+  });
+});
+
+test('0006: a delivery is unique per webhook and event, deliveries go with their webhook, and the status is one of three', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const [{ id: w1 }] = (await knex.raw(`INSERT INTO webhooks (name, url, secret_enc, events) VALUES ('a', 'https://a.test', 'x', '*') RETURNING id`)).rows;
+    const [{ id: w2 }] = (await knex.raw(`INSERT INTO webhooks (name, url, secret_enc, events) VALUES ('b', 'https://b.test', 'x', '*') RETURNING id`)).rows;
+    const add = (w, e) => knex.raw(`INSERT INTO webhook_deliveries (webhook_id, event_id, event_type, payload, next_attempt_at) VALUES (?, ?, 'x', '{}', '2030-01-01 00:00:00')`, [w, e]);
+    await add(w1, 'evt_1'); await add(w2, 'evt_1');
+    await assert.rejects(add(w1, 'evt_1'), /duplicate key|unique/i, 'one delivery per webhook and event');
+    await assert.rejects(knex.raw(`INSERT INTO webhook_deliveries (webhook_id, event_id, event_type, payload, status, next_attempt_at) VALUES (?, 'evt_9', 'x', '{}', 'sent', 'x')`, [w1]), /check constraint|violates/i);
+    await knex.raw(`DELETE FROM webhooks WHERE id = ?`, [w1]);
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM webhook_deliveries`)).rows[0].c), 1, 'the other webhook keeps its delivery');
+  });
+});

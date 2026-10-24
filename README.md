@@ -126,6 +126,19 @@ Writes made through the API run the same rules as the pages (SLA clocks, activit
   the proxy's address and its limits.
 - Send an `Idempotency-Key` header with a `POST` to make a retry safe.
 
+**Webhooks.** An administrator (user menu, *Webhooks*) can have NovaDesk call an address whenever incidents,
+changes, problems, service requests, configuration items or knowledge articles are created, changed, move to
+another status or (incidents, changes, problems) get a comment. The call is a JSON `POST` carrying the record
+exactly as the API shows it, signed with the webhook's secret (`X-NovaDesk-Signature`, HMAC-SHA256 over the time and
+the body); the guide at `/api/docs#webhooks` has the payload, the headers and a check in Node and Python. Events are
+recorded by the database itself, so every route that changes a record is covered, including the integrations and the
+decommission automation; internal work notes are never sent. A receiver must answer `2xx` within 10 seconds; a failed
+call is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 6 hours, then given up, and the log shows each try
+with the reason and a Retry button. A receiver whose last 10 deliveries all failed is switched off
+(`WEBHOOK_AUTO_DISABLE_AFTER`). Only `https://` addresses that resolve to public addresses are accepted, redirects are
+not followed, and the call connects only to the address that was checked; `WEBHOOK_ALLOW_PRIVATE=true` allows private
+addresses and plain http for a receiver inside your network.
+
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the

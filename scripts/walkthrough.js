@@ -27,7 +27,7 @@ class Person {
     const h = { ...headers, Cookie: this.cookie };
     let body;
     if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
-    else if (form) { h['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }
+    else if (form) { h['Content-Type'] = 'application/x-www-form-urlencoded'; body = (() => { const sp = new URLSearchParams(); for (const [k, v] of Object.entries(form)) for (const x of (Array.isArray(v) ? v : [v])) sp.append(k, x); return sp.toString(); })(); }
     else if (multipart) body = multipart;
     const res = await fetch(BASE + path, { method, headers: h, body, redirect: 'manual' });
     for (const c of res.headers.getSetCookie ? res.headers.getSetCookie() : []) {
@@ -61,6 +61,18 @@ const has = (r, re) => re.test(r.text);
   await step('wrong password is refused and shows an error', async () => { const r = await new Person('x').post('/login', { username: 'admin', password: 'nope-nope' }); return must(r.status !== 302 && has(r, /Invalid username or password/), 'status ' + r.status); });
   for (const [p, u, pw] of [[admin, 'admin', 'admin123'], [jane, 'jdoe', 'agent123'], [bob, 'bsmith', 'agent123'], [maria, 'mchen', 'user123'], [raj, 'rpatel', 'user123']]) {
     await step(`${u} signs in`, async () => { const r = await p.login(u, pw); return must(r.status === 302, `status ${r.status}`); });
+  }
+  // WALK_WEBHOOKS=<port>: from here on an "everything" webhook points at a receiver in this script (the app needs
+  // WEBHOOK_ALLOW_PRIVATE=true and a short WEBHOOK_POLL_S). At the end it must have received what the whole walk-through did.
+  const hook = { calls: [], secret: null, server: null };
+  if (process.env.WALK_WEBHOOKS) {
+    hook.server = require('http').createServer((rq, rs) => { let b = ''; rq.on('data', (d) => { b += d; }); rq.on('end', () => { hook.calls.push({ headers: rq.headers, body: b }); rs.writeHead(200); rs.end('ok'); }); });
+    await new Promise((r) => hook.server.listen(Number(process.env.WALK_WEBHOOKS), '127.0.0.1', r));
+    await step('webhooks: an administrator adds an everything-webhook for the rest of the walk-through', async () => {
+      const added = await admin.post('/settings/webhooks', { name: 'walkthrough', url: `http://127.0.0.1:${process.env.WALK_WEBHOOKS}/hook`, events: ['*'] });
+      hook.secret = (added.text.match(/id="newWebhookSecret"[^>]*>(whsec_[^<]+)</) || [])[1];
+      return must(added.status === 200 && hook.secret, 'status ' + added.status);
+    });
   }
   await step('the sign-in page after signing in no longer traps an anonymous bounce (returnTo is honoured)', async () => {
     const p = new Person('rt'); const first = await p.get('/changes/board'); must(first.status === 302, 'first ' + first.status);
@@ -442,6 +454,7 @@ const has = (r, re) => re.test(r.text);
   await step('SLA: a business-hours target puts the due time inside working hours', async () => {
     // Monday to Friday 09:00-17:00 UTC, P4 counted in business hours (4 working hours): the due time must fall in the window.
     await admin.post('/settings/sla/calendar', { timezone: 'UTC', start: '09:00', end: '17:00', work_days: ['1', '2', '3', '4', '5'] });
+    must(/Business hours saved/.test((await admin.get('/settings/sla')).text), 'the five working days were not saved');
     await admin.post('/settings/sla/policies', slaFields({ hours_4: '4', clock_4: 'business' }));
     const r = await jane.post('/incidents', { short_description: `SLA business ${tag}`, category: 'other', impact: '3', urgency: '4' });
     const id = idFrom(r.loc, '/incidents'); const page = await showPage(jane, id); const number = (page.match(/INC\d{7}/) || [])[0];
@@ -759,6 +772,39 @@ const has = (r, re) => re.test(r.text);
     const r = await anon.get('/login'); const h = r.headers;
     return must(h.get('x-content-type-options') === 'nosniff' && h.get('x-frame-options') && !h.get('x-powered-by'), `nosniff ${h.get('x-content-type-options')}, frame ${h.get('x-frame-options')}, powered-by ${h.get('x-powered-by')}`);
   });
+
+  if (process.env.WALK_WEBHOOKS) {
+    section = 'webhooks';
+    await step('webhooks: everything the walk-through did reached the receiver once, signed, in the documented shape, and nothing is stuck', async () => {
+      const { verifySignature } = require('../src/webhookNet'); const { SHAPES } = require('../src/api/spec');
+      await updateIncident(jane, slaInc, { impact: '1', urgency: '1', status: 'in_progress', resolution_notes: `plain edit ${tag}` });   // a change with no status change: incident.updated
+      await sleep(3000);   // let the dispatcher pick the last events up before looking for deliveries still waiting
+      let page = ''; for (let i = 0; i < 40; i++) { page = (await admin.get('/settings/webhooks')).text; if (/\b0 waiting\b/.test(page)) break; await sleep(1000); }
+      must(/\b0 waiting\b/.test(page), 'deliveries are still waiting');
+      const events = hook.calls.map((c) => ({ c, e: JSON.parse(c.body) }));
+      must(events.length > 40, `only ${events.length} events arrived`);
+      must(events.every(({ c }) => verifySignature(hook.secret, c.headers['x-novadesk-signature'], c.body)), 'an event was not correctly signed');
+      const ids = events.map(({ e }) => e.id); must(new Set(ids).size === ids.length, 'an event arrived twice');
+      const types = new Set(events.map(({ e }) => e.type));
+      const wanted = ['incident.created', 'incident.status_changed', 'incident.updated', 'incident.commented', 'change.created', 'change.status_changed', 'problem.created', 'request.created', 'request.status_changed', 'ci.created', 'ci.updated', 'article.created'];
+      const missing = wanted.filter((t) => !types.has(t)); must(!missing.length, 'never arrived: ' + missing.join(', '));
+      const kinds = { incident: 'Incident', change: 'Change', problem: 'Problem', request: 'Request', ci: 'Ci', article: 'Article' };
+      const bad = []; for (const { e } of events) { if (e.type === 'ping') continue; const [kind] = e.type.split('.'); const rec = e.data[kind]; for (const k of Object.keys(SHAPES[kinds[kind]])) if (rec && !(k in rec) && kind !== 'article') bad.push(`${e.type}.${k}`); }
+      must(!bad.length, 'missing fields: ' + [...new Set(bad)].slice(0, 5).join(', '));
+      must(!/Failed<\/span>/.test(page), 'a delivery failed');
+      return `${events.length} events, ${types.size} kinds`;
+    });
+    await step('webhooks: the internal work note this walk-through wrote was never sent (the public comment next to it was)', async () => {
+      return must(!hook.calls.some((c) => c.body.includes(`internal note ${tag}`)) && hook.calls.some((c) => c.body.includes('"type":"incident.commented"')), 'a work note leaked, or no comment event arrived');
+    });
+    await step('webhooks: the walk-through removes its webhook again', async () => {
+      const page = (await admin.get('/settings/webhooks')).text; const id = (page.match(/\/settings\/webhooks\/(\d+)\/delete/) || [])[1];
+      const del = await admin.post(`/settings/webhooks/${id}/delete`);
+      return must(id && del.status === 200 && !(await admin.get('/settings/webhooks')).text.includes('walkthrough'), 'not removed');
+    });
+    hook.server.close();
+    section = 'sign-in protection';
+  }
 
   // Last on purpose: it trips the limiter, so this address cannot sign in again for 15 minutes (or until a restart).
   if (!process.env.WALK_SKIP_BRUTE_FORCE) await step('repeated wrong passwords are slowed down (the same person keeps failing)', async () => {

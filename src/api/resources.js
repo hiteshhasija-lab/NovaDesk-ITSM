@@ -68,6 +68,18 @@ const articleOut = (r, withBody) => ({
 const userOut = (r) => ({ id: r.id, username: r.username, full_name: r.full_name, email: r.email, role: r.role, department: r.department, active: Boolean(r.active) });
 const commentOut = (r) => ({ id: r.id, comment: r.comment, work_note: Boolean(r.is_work_note), author: ref(r.user_id, r.author_name), created_at: iso(r.created_at) });
 
+// The queries behind each kind of record (also used to build webhook payloads, so a webhook and the API show the same fields).
+const INCIDENT_SELECT = `SELECT i.*, cu.full_name AS caller_name, au.full_name AS assigned_name FROM incidents i
+    LEFT JOIN users cu ON cu.id = i.caller_id LEFT JOIN users au ON au.id = i.assigned_to`;
+const REQUEST_SELECT = `SELECT r.*, ci.name AS item_name, ru.full_name AS requester_name, au.full_name AS assigned_name FROM service_requests r
+    LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id LEFT JOIN users ru ON ru.id = r.requested_by LEFT JOIN users au ON au.id = r.assigned_to`;
+const CHANGE_SELECT = `SELECT c.*, ru.full_name AS requester_name, au.full_name AS assigned_name FROM changes c
+    LEFT JOIN users ru ON ru.id = c.requested_by LEFT JOIN users au ON au.id = c.assigned_to`;
+const PROBLEM_SELECT = `SELECT p.*, ru.full_name AS raiser_name, au.full_name AS assigned_name FROM problems p
+    LEFT JOIN users ru ON ru.id = p.raised_by LEFT JOIN users au ON au.id = p.assigned_to`;
+const CI_SELECT = 'SELECT c.*, u.full_name AS owner_name FROM cmdb_ci c LEFT JOIN users u ON u.id = c.owner_id';
+const KB_SELECT = 'SELECT k.*, u.full_name AS author_name FROM kb_articles k LEFT JOIN users u ON u.id = k.author_id';
+
 const list = (rows, total, p, map) => respond({ data: rows.map(map), page: p.page, per_page: p.perPage, total }, { headers: { 'X-Total-Count': String(total) } });
 const like = (q) => `%${String(q).replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 
@@ -100,8 +112,6 @@ function register(api) {
   });
 
   // ---------------------------------------------------------------- incidents
-  const INCIDENT_SELECT = `SELECT i.*, cu.full_name AS caller_name, au.full_name AS assigned_name FROM incidents i
-    LEFT JOIN users cu ON cu.id = i.caller_id LEFT JOIN users au ON au.id = i.assigned_to`;
   const loadIncident = async (req, id) => {
     const row = await db.prepare(`${INCIDENT_SELECT} WHERE i.id = ?`).get(id);
     if (!row || (!isStaff(req.api.user) && row.caller_id !== req.api.user.id)) throw notFound('Incident');
@@ -186,8 +196,6 @@ function register(api) {
   });
 
   // ---------------------------------------------------------------- service requests
-  const REQUEST_SELECT = `SELECT r.*, ci.name AS item_name, ru.full_name AS requester_name, au.full_name AS assigned_name FROM service_requests r
-    LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id LEFT JOIN users ru ON ru.id = r.requested_by LEFT JOIN users au ON au.id = r.assigned_to`;
   const loadRequest = async (req, id) => {
     const row = await db.prepare(`${REQUEST_SELECT} WHERE r.id = ?`).get(id);
     if (!row || (!isStaff(req.api.user) && row.requested_by !== req.api.user.id)) throw notFound('Request');
@@ -240,8 +248,6 @@ function register(api) {
   });
 
   // ---------------------------------------------------------------- changes and problems (read-only)
-  const CHANGE_SELECT = `SELECT c.*, ru.full_name AS requester_name, au.full_name AS assigned_name FROM changes c
-    LEFT JOIN users ru ON ru.id = c.requested_by LEFT JOIN users au ON au.id = c.assigned_to`;
   route('GET', '/changes', { tag: 'Changes', summary: 'List changes (read-only)', description: 'Approving, rejecting and cancelling a change follow their own rules (including the decommission workflow) and stay in the NovaDesk pages.', scope: 'read', roles: STAFF, response: 'ChangeList',
     query: { status: { type: 'enum', values: CHANGE_STATUSES }, q: { type: 'string', max: 100 }, ...PAGING } },
   async (req, { query }) => {
@@ -256,8 +262,6 @@ function register(api) {
   route('GET', '/changes/:id', { tag: 'Changes', summary: 'Get a change', scope: 'read', roles: STAFF, response: 'Change' },
     async (req) => { const row = await db.prepare(`${CHANGE_SELECT} WHERE c.id = ?`).get(idParam(req)); if (!row) throw notFound('Change'); return changeOut(row); });
 
-  const PROBLEM_SELECT = `SELECT p.*, ru.full_name AS raiser_name, au.full_name AS assigned_name FROM problems p
-    LEFT JOIN users ru ON ru.id = p.raised_by LEFT JOIN users au ON au.id = p.assigned_to`;
   route('GET', '/problems', { tag: 'Problems', summary: 'List problems (read-only)', scope: 'read', roles: STAFF, response: 'ProblemList',
     query: { status: { type: 'enum', values: PROBLEM_STATUSES }, q: { type: 'string', max: 100 }, ...PAGING } },
   async (req, { query }) => {
@@ -273,7 +277,6 @@ function register(api) {
     async (req) => { const row = await db.prepare(`${PROBLEM_SELECT} WHERE p.id = ?`).get(idParam(req)); if (!row) throw notFound('Problem'); return problemOut(row); });
 
   // ---------------------------------------------------------------- configuration items
-  const CI_SELECT = 'SELECT c.*, u.full_name AS owner_name FROM cmdb_ci c LEFT JOIN users u ON u.id = c.owner_id';
   const CI_FIELDS = {
     name: { type: 'string', max: 200 }, ci_type: { type: 'enum', values: CI_TYPES }, environment: { type: 'enum', values: ENVIRONMENTS, description: 'Default: production.' },
     status: { type: 'enum', values: CI_STATUSES, description: 'Default: in_use.' }, ip_address: { type: 'string', max: 64, nullable: true }, os: { type: 'string', max: 100, nullable: true },
@@ -313,7 +316,6 @@ function register(api) {
     });
 
   // ---------------------------------------------------------------- knowledge base
-  const KB_SELECT = 'SELECT k.*, u.full_name AS author_name FROM kb_articles k LEFT JOIN users u ON u.id = k.author_id';
   route('GET', '/articles', { tag: 'Knowledge base', summary: 'List knowledge articles', description: 'End users see published articles only.', scope: 'read', response: 'ArticleList',
     query: { q: { type: 'string', max: 100, description: 'Matches title and text.' }, category: { type: 'string', max: 50 }, status: { type: 'enum', values: ['draft', 'published'], description: 'Agents and administrators only.' }, ...PAGING } },
   async (req, { query }) => {
@@ -334,4 +336,14 @@ function register(api) {
     });
 }
 
-module.exports = { register, INCIDENT_STATUSES, REQUEST_STATUSES };
+// One record of each kind as the API shows it: { sql (with one ? for the id), out }.
+const entityLoaders = {
+  incident: { sql: `${INCIDENT_SELECT} WHERE i.id = ?`, out: incidentOut },
+  change: { sql: `${CHANGE_SELECT} WHERE c.id = ?`, out: changeOut },
+  problem: { sql: `${PROBLEM_SELECT} WHERE p.id = ?`, out: problemOut },
+  request: { sql: `${REQUEST_SELECT} WHERE r.id = ?`, out: requestOut },
+  ci: { sql: `${CI_SELECT} WHERE c.id = ?`, out: ciOut },
+  article: { sql: `${KB_SELECT} WHERE k.id = ?`, out: (r) => articleOut(r, true) },
+};
+
+module.exports = { register, entityLoaders, commentOut, INCIDENT_STATUSES, REQUEST_STATUSES };
