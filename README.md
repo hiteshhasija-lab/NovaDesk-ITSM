@@ -71,8 +71,9 @@ leaves the server. A mail server that is down never stops NovaDesk; the notice s
 **Upgrading:** `git pull`, then `docker compose up -d --build --force-recreate novadesk` (or
 `podman compose …` with the same options). `--force-recreate` matters on Podman: podman-compose
 rebuilds the image but leaves the running container on the old one without it. The database and the
-data volume keep their contents; table changes apply themselves when NovaDesk starts. Back up first
-(below).
+data volume keep their contents; table changes are numbered migrations (`src/migrations/`) that NovaDesk
+applies itself when it starts, once each, all or nothing. `docker compose exec novadesk node src/migrate.js
+status` lists them. Back up first (below).
 
 **Backups.** Two things hold your data: the database and the data volume (attachments, sessions and
 the Decommissioned Tracker workbook). Use your own database user in place of `novadesk` if you changed `PGUSER`.

@@ -54,6 +54,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Migration tests (real Postgres: fresh, existing, failing, edited, concurrent)
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node --test test/migrate.db.test.js
       - name: Start NovaDesk on an empty database
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
@@ -261,6 +265,7 @@ jobs:
           curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"; cmp attach.bin back.bin
           docker compose logs novadesk > second-start.log
           if grep -q "Created the first admin" second-start.log; then echo "seeded again"; exit 1; fi
+          grep -q "schema is up to date" second-start.log || { echo "the restart did not find the schema up to date"; grep "Database" second-start.log; exit 1; }
 
       - name: Backup, wipe and restore (README "Backups" and "Restore")
         run: |
@@ -281,6 +286,7 @@ jobs:
           curl -s -b jar.txt -o back.bin "$loc/attachments/$attid/download"; cmp attach.bin back.bin
           docker compose logs novadesk > restored.log
           if grep -q "Created the first admin" restored.log; then echo "a new first admin was created during the restore"; exit 1; fi
+          grep -q "schema is up to date" restored.log || { echo "the restored database was not recognised as up to date (migration record lost?)"; grep "Database" restored.log; exit 1; }
 
       - name: Demonstration mode and the full walk-through
         run: |
@@ -380,6 +386,9 @@ jobs:
           test "$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc 'select count(*) from users' < /dev/null | head -1)" = 5
           docker compose -p ndup logs novadesk > upgrade.log
           if grep -q "Created the first admin" upgrade.log; then echo "a first admin was created on an existing database"; exit 1; fi
+          # The old release had no migration table: the baseline is recorded (it changed nothing that existed).
+          grep -q "applied 0001_baseline" upgrade.log || { echo "the baseline migration was not applied on upgrade"; grep Database upgrade.log; exit 1; }
+          test "$(docker compose -p ndup exec -T postgres psql -U novadesk -d novadesk -Atc "select count(*) from schema_migrations where name = '0001_baseline'" < /dev/null | head -1)" = 1
           if grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -1 | grep -q .; then grep -iE "error|unhandled|exception|is not defined" upgrade.log | head -5; exit 1; fi
 
       - name: The same people find everything after the upgrade
