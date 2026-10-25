@@ -198,7 +198,7 @@
       <div class="card mt-3 border-danger">
         <div class="card-body">
           <h6 class="text-danger">Danger Zone</h6>
-          <form method="POST" action="/cmdb/<%= ci.id %>/delete" onsubmit="return confirm('Delete this configuration item? This cannot be undone.');">
+          <form method="POST" action="/cmdb/<%= ci.id %>/delete" data-confirm="Delete this configuration item? This cannot be undone.">
             <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete CI</button>
           </form>
         </div>

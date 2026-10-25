@@ -76,7 +76,7 @@
               <tr><td colspan="9" class="text-center text-muted py-4">No configuration items found.</td></tr>
             <% } %>
             <% items.forEach(ci => { %>
-            <tr onclick="window.location='/cmdb/<%= ci.id %>'" data-search="<%= [ci.ci_number, ci.name, ci.ip_address].filter(Boolean).join(' ').toLowerCase() %>">
+            <tr data-href="/cmdb/<%= ci.id %>" data-search="<%= [ci.ci_number, ci.name, ci.ip_address].filter(Boolean).join(' ').toLowerCase() %>">
               <td class="fw-semibold"><%= ci.ci_number %></td>
               <td><%= ci.name %></td>
               <td><%= h.CI_TYPE_LABELS[ci.ci_type] || ci.ci_type %></td>
@@ -95,7 +95,7 @@
     <%- include('../partials/pagination', { pagination, query }) %>
   </div>
 </div>
-<script>
+<script nonce="<%= cspNonce %>">
   (function () {
     var input = document.getElementById('cmdbLiveSearch');
     var resultsEl = document.getElementById('cmdbResults');

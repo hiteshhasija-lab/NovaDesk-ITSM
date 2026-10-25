@@ -125,9 +125,9 @@
             <% } %>
             <% incidents.forEach(inc => { %>
             <% const sla = h.slaStatus(inc); %>
-            <tr onclick="window.location='/incidents/<%= inc.id %>'" data-search="<%= [inc.number, inc.short_description, inc.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+            <tr data-href="/incidents/<%= inc.id %>" data-search="<%= [inc.number, inc.short_description, inc.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
               <% if (currentUser.role !== 'user') { %>
-              <td onclick="event.stopPropagation()"><input type="checkbox" class="form-check-input row-check" value="<%= inc.id %>"></td>
+              <td data-no-row><input type="checkbox" class="form-check-input row-check" value="<%= inc.id %>"></td>
               <% } %>
               <td class="fw-semibold"><%= inc.number %></td>
               <td><%= inc.short_description %></td>
@@ -153,7 +153,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= cspNonce %>">
   (function () {
     var input = document.getElementById('incidentLiveSearch');
     var resultsEl = document.getElementById('incidentsResults');
@@ -210,7 +210,7 @@
 </script>
 
 <% if (currentUser.role !== 'user') { %>
-<script>
+<script nonce="<%= cspNonce %>">
   (function () {
     const toolbar = document.getElementById('bulkToolbar');
     const countEl = document.getElementById('bulkCount');

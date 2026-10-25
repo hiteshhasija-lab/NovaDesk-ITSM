@@ -64,7 +64,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= cspNonce %>">
   document.querySelectorAll('#kbFilterForm .auto-filter').forEach(function (el) {
     el.addEventListener('change', function () { el.form.submit(); });
   });

@@ -222,6 +222,13 @@ everyone else signs in again. With Podman, use `podman compose`.
   two-step verification or switching an account off ends that person's sessions, and *Users*, the person, *Sign out
   everywhere* does it on demand. Sessions last 8 hours (30 days with *Remember me*); expired ones are cleared every
   ten minutes.
+- **Content-Security-Policy:** the browser runs only scripts NovaDesk sent: each page carries a fresh random nonce,
+  inline event handlers and `javascript:` links are not allowed, and external scripts may come only from this server
+  and the Bootstrap, Chart.js and Sortable CDNs. Text that reaches a page by mistake (a ticket description with
+  `<script>` in it) therefore cannot run, even if some future page forgot to escape it. Pages say what they want with
+  data attributes (`data-confirm`, `data-href`, `data-no-row`) handled by `public/js/app.js`; `npm test` fails on a view
+  with an inline handler or a script without `nonce="<%= cspNonce %>"`. Blocked attempts are written to the server
+  log as `[CSP] ...`. `CSP_MODE=report` only reports (to try a change), `CSP_MODE=off` removes the header.
 - **Last administrator:** the only active administrator cannot be demoted, deactivated or deleted.
 
 Checked by `node scripts/security-check.js` (runs in CI): forged posts and uploads, headers, password rules,

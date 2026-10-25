@@ -24,7 +24,7 @@
   <div class="card mt-3 border-danger" style="max-width:760px;">
     <div class="card-body">
       <h6 class="text-danger">Danger Zone</h6>
-      <form method="POST" action="/kb/<%= article.id %>/delete" onsubmit="return confirm('Delete this article? This cannot be undone.');">
+      <form method="POST" action="/kb/<%= article.id %>/delete" data-confirm="Delete this article? This cannot be undone.">
         <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete Article</button>
       </form>
     </div>

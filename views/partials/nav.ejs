@@ -91,7 +91,7 @@
     </div>
   </div>
 </nav>
-<script>
+<script nonce="<%= cspNonce %>">
   document.getElementById('themeToggle').addEventListener('click', function () {
     var root = document.documentElement;
     var next = root.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';

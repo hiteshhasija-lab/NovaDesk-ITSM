@@ -393,7 +393,7 @@ for (const file of viewFiles) {
     }
   }
   // inline scripts: fetch('/x/' + id + '/status', { method: 'POST', body: JSON.stringify({...}) })
-  for (const m of text.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)) {
+  for (const m of text.matchAll(/<script\b(?![^>]*\bsrc=)(?:<%[\s\S]*?%>|[^>])*>([\s\S]*?)<\/script>/g)) {
     const code = m[1].replace(ejsTag, (all, body) => (all.startsWith('<%=') || all.startsWith('<%-') ? '0' : ''));
     let ast;
     try { ast = parse(code); } catch (e) { continue; }
@@ -429,7 +429,7 @@ for (const r of mine.table) {
 }
 
 // -- 3. routes -> views: every variable a view uses has to be provided --------------------
-const globalLocals = new Set(['h', 'path', 'currentUser']);
+const globalLocals = new Set(['h', 'path', 'currentUser', 'cspNonce']);
 for (const ast of mine.asts.values()) {
   walk(ast, (n) => {
     if (n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression' && n.left.object.type === 'MemberExpression' &&

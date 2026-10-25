@@ -55,7 +55,7 @@ async function main() {
   const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 2 } });
   try {
     if (!(await healthy(port, app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-400)}`);
-    const persisting = await run(base, knex);
+    const persisting = await run(base, knex, app);
     // Sessions live in the database, so a restart does not sign anyone out.
     section = 'sessions';
     app.child.kill(); await app.exited;
@@ -69,7 +69,7 @@ async function main() {
   await secureCookie();
 }
 
-async function run(base, knex) {
+async function run(base, knex, app) {
   const admin = new Browser(base); await admin.login('admin', 'admin123');
   const jane = new Browser(base); await jane.login('jdoe', 'agent123');
   const maria = new Browser(base); await maria.login('mchen', 'user123');
@@ -251,6 +251,44 @@ async function run(base, knex) {
     return gone >= 1 && Number((await knex.raw('SELECT count(*) AS c FROM sessions WHERE sid = ?', [`old-${tag}`])).rows[0].c) === 0;
   })());
 
+  }
+
+  section = 'content security policy';
+  {
+    const pages = ['/login', '/', '/incidents', '/incidents/board', '/changes', '/changes/board', '/problems', '/cmdb', '/reports', '/kb', '/requests', '/profile/mfa', '/profile/sessions'];
+    const bad = []; const nonces = new Set(); let inlineSeen = 0; let policyOk = true;
+    for (const pth of pages) {
+      const r = pth === '/login' ? await new Browser(base).get(pth) : await admin.get(pth);
+      if (r.status !== 200) { bad.push(`${pth} ${r.status}`); continue; }
+      const header = r.headers.get('content-security-policy') || '';
+      const nonce = (header.match(/'nonce-([^']+)'/) || [])[1];
+      if (!nonce) { bad.push(`${pth} has no nonce in its policy`); continue; }
+      nonces.add(nonce);
+      const scriptSrc = (header.match(/script-src ([^;]*)/) || [])[1] || '';
+      if (/unsafe-inline|unsafe-eval|\*/.test(scriptSrc) || !/script-src-attr 'none'/.test(header)) policyOk = false;
+      for (const m of r.text.matchAll(/<script\b([^>]*)>/g)) {
+        if (/\bsrc=/.test(m[1])) { if (!/src="(https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com)\/|\/js\/)/.test(m[1])) bad.push(`${pth} loads ${m[1]}`); continue; }
+        inlineSeen++;
+        if (!m[1].includes(`nonce="${nonce}"`)) bad.push(`${pth} has an inline script without this page's nonce`);
+      }
+      if (/\son(click|submit|change|load|error)\s*=/i.test(r.text)) bad.push(`${pth} has an inline handler`);
+    }
+    check('every page sends a policy, and each of its inline scripts carries that page\'s own nonce', bad.length === 0 && inlineSeen >= 8, bad.join('; ') + ` (${inlineSeen} inline scripts)`);
+    check('the nonce is different on every page load', nonces.size === pages.length, `${nonces.size} of ${pages.length}`);
+    check('scripts may not be inline, eval\'d or from anywhere else; inline handlers are off', policyOk);
+    const injected = await jane.post('/incidents', { short_description: `<script>alert(1)</script> csp ${tag}`, description: '<img src=x onerror=alert(1)>', category: 'other', impact: '3', urgency: '3' });
+    const page = (await jane.get(injected.loc || '/incidents')).text;
+    check('text with a <script> or onerror in a ticket is shown as text, never as markup', injected.status === 302 && !/<script>alert\(1\)/.test(page) && !/<img src=x onerror/.test(page) && /&lt;script&gt;alert\(1\)/.test(page));
+    const noToken = await fetch(`${base}/csp-report`, { method: 'POST', headers: { 'Content-Type': 'application/csp-report' }, body: JSON.stringify({ 'csp-report': { 'violated-directive': 'script-src-elem', 'blocked-uri': 'inline', 'document-uri': `${base}/x-${tag}` } }) });
+    await sleep(200);
+    check('a browser can report a blocked script (no sign-in or token needed), and it reaches the server log', noToken.status === 204 && app.text().includes(`[CSP] script-src-elem blocked inline on ${base}/x-${tag}`));
+    check('a report cannot be used to forge log lines', await (async () => {
+      await fetch(`${base}/csp-report`, { method: 'POST', headers: { 'Content-Type': 'application/csp-report' }, body: JSON.stringify({ 'csp-report': { 'blocked-uri': `a\n[CSP] forged-${tag}` } }) });
+      await sleep(200);
+      return !app.text().split('\n').some((l) => l.startsWith(`[CSP] forged-${tag}`));
+    })());
+    const err = await fetch(`${base}/csp-report`, { method: 'POST', headers: { 'Content-Type': 'application/csp-report' }, body: '{not json' });
+    check('a malformed report is refused politely, not with a crash', err.status >= 400 && err.status < 500);
   }
 
   // The browser kept for the restart check.

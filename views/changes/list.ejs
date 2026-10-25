@@ -114,9 +114,9 @@
               <tr><td colspan="9" class="text-center text-muted py-4">No change requests found.</td></tr>
             <% } %>
             <% changes.forEach(ch => { %>
-            <tr onclick="window.location='/changes/<%= ch.id %>'" data-search="<%= [ch.number, ch.short_description, ch.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+            <tr data-href="/changes/<%= ch.id %>" data-search="<%= [ch.number, ch.short_description, ch.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
               <% if (currentUser.role !== 'user') { %>
-              <td onclick="event.stopPropagation()"><input type="checkbox" class="form-check-input row-check" value="<%= ch.id %>"></td>
+              <td data-no-row><input type="checkbox" class="form-check-input row-check" value="<%= ch.id %>"></td>
               <% } %>
               <td class="fw-semibold"><%= ch.number %></td>
               <td><%= ch.short_description %></td>
@@ -136,7 +136,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= cspNonce %>">
   document.querySelectorAll('#changesFilterForm .auto-filter').forEach(function (el) {
     el.addEventListener('change', function () { el.form.submit(); });
   });
@@ -193,7 +193,7 @@
 </script>
 
 <% if (currentUser.role !== 'user') { %>
-<script>
+<script nonce="<%= cspNonce %>">
   (function () {
     const toolbar = document.getElementById('bulkToolbar');
     const countEl = document.getElementById('bulkCount');

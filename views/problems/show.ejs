@@ -115,7 +115,7 @@
               </a>
               <div class="d-flex align-items-center gap-2">
                 <span class="small text-muted"><%= Math.ceil(a.size / 1024) %> KB · <%= a.uploader_name || 'Unknown' %></span>
-                <form method="POST" action="/problems/<%= problem.id %>/attachments/<%= a.id %>/delete" onsubmit="return confirm('Remove this attachment?');">
+                <form method="POST" action="/problems/<%= problem.id %>/attachments/<%= a.id %>/delete" data-confirm="Remove this attachment?">
                   <button type="submit" class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-trash"></i></button>
                 </form>
               </div>
@@ -204,7 +204,7 @@
         <div class="card-body">
           <h6 class="text-danger">Danger Zone</h6>
           <p class="small text-muted">Deleting unlinks any incidents pointing to this problem and removes it permanently.</p>
-          <form method="POST" action="/problems/<%= problem.id %>/delete" onsubmit="return confirm('Delete problem <%= problem.number %>? This cannot be undone.');">
+          <form method="POST" action="/problems/<%= problem.id %>/delete" data-confirm="Delete problem <%= problem.number %>? This cannot be undone.">
             <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete Problem</button>
           </form>
         </div>

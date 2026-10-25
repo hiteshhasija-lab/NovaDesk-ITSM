@@ -73,7 +73,7 @@
               <tr><td colspan="8" class="text-center text-muted py-4">No problems found.</td></tr>
             <% } %>
             <% problems.forEach(p => { %>
-            <tr onclick="window.location='/problems/<%= p.id %>'" data-search="<%= [p.number, p.short_description, p.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
+            <tr data-href="/problems/<%= p.id %>" data-search="<%= [p.number, p.short_description, p.ci_name].filter(Boolean).join(' ').toLowerCase() %>">
               <td class="fw-semibold"><%= p.number %></td>
               <td><%= p.short_description %></td>
               <td><span class="badge bg-<%= h.PRIORITY_BADGE[p.priority] %>">P<%= p.priority %> · <%= h.PRIORITY_LABELS[p.priority] %></span></td>
@@ -92,7 +92,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="<%= cspNonce %>">
   document.querySelectorAll('#problemsFilterForm .auto-filter').forEach(function (el) {
     el.addEventListener('change', function () { el.form.submit(); });
   });

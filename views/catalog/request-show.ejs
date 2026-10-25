@@ -103,7 +103,7 @@
       <% } else if (request.status === 'submitted') { %>
       <div class="card mt-3">
         <div class="card-body">
-          <form method="POST" action="/requests/<%= request.id %>/cancel" onsubmit="return confirm('Cancel this request?');">
+          <form method="POST" action="/requests/<%= request.id %>/cancel" data-confirm="Cancel this request?">
             <button type="submit" class="btn btn-sm btn-outline-danger w-100">Cancel Request</button>
           </form>
         </div>

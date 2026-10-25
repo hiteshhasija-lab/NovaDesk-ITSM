@@ -76,7 +76,7 @@
             </dl>
             <% if (change.requested_by === currentUser.id && ['draft','submitted'].includes(change.status)) { %>
             <hr>
-            <form method="POST" action="/changes/<%= change.id %>/cancel" onsubmit="return confirm('Cancel change request <%= change.number %>?');">
+            <form method="POST" action="/changes/<%= change.id %>/cancel" data-confirm="Cancel change request <%= change.number %>?">
               <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Cancel Request</button>
             </form>
             <% } %>
@@ -192,7 +192,7 @@
                 <div class="d-flex align-items-center gap-2">
                   <% if (t.status === 'pending') { %>
                     <% const destroysVm = ['Destroy VM & release resources', 'Destroy VM & release storage'].includes(t.description) && (change.novaconnect_channel_id || change.novaconnect_conversation_id); %>
-                    <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle" class="d-inline"<% if (destroysVm) { %> onsubmit="return confirm('Completing this permanently destroys the VM on ESXi, retires the CI, updates the tracker and closes <%= change.number %>, the same as Confirm Destroy in NovaConnect. This cannot be undone. Continue?');"<% } %>>
+                    <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/toggle" class="d-inline"<% if (destroysVm) { %> data-confirm="Completing this permanently destroys the VM on ESXi, retires the CI, updates the tracker and closes <%= change.number %>, the same as Confirm Destroy in NovaConnect. This cannot be undone. Continue?"<% } %>>
                       <button type="submit" class="btn btn-sm btn-outline-success py-0 px-2" title="<%= destroysVm ? 'Destroy the VM and finish the decommission' : 'Mark complete' %>"><i class="bi bi-check-lg"></i> Complete</button>
                     </form>
                     <form method="POST" action="/changes/<%= change.id %>/tasks/<%= t.id %>/skip" class="d-inline">
@@ -231,7 +231,7 @@
               <div class="d-flex align-items-center gap-2">
                 <span class="small text-muted"><%= Math.ceil(a.size / 1024) %> KB · <%= a.uploader_name || 'Unknown' %></span>
                 <% if (currentUser.role !== 'user' || a.uploaded_by === currentUser.id) { %>
-                <form method="POST" action="/changes/<%= change.id %>/attachments/<%= a.id %>/delete" onsubmit="return confirm('Remove this attachment?');">
+                <form method="POST" action="/changes/<%= change.id %>/attachments/<%= a.id %>/delete" data-confirm="Remove this attachment?">
                   <button type="submit" class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-trash"></i></button>
                 </form>
                 <% } %>
@@ -340,7 +340,7 @@
         <div class="card-body">
           <h6 class="text-danger">Danger Zone</h6>
           <p class="small text-muted">Deleting removes this change request and its comments permanently. Consider setting status to Rejected instead if you need to preserve the record.</p>
-          <form method="POST" action="/changes/<%= change.id %>/delete" onsubmit="return confirm('Delete change <%= change.number %>? This cannot be undone.');">
+          <form method="POST" action="/changes/<%= change.id %>/delete" data-confirm="Delete change <%= change.number %>? This cannot be undone.">
             <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete Change</button>
           </form>
         </div>

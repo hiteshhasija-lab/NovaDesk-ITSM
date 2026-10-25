@@ -22,7 +22,7 @@
         <div class="board-col-body" data-status="<%= col.status %>">
           <% col.items.forEach(inc => { %>
             <% const sla = h.slaStatus(inc); %>
-            <div class="board-card <%= sla.key === 'breached' ? 'border-danger' : '' %>" data-id="<%= inc.id %>" onclick="if(!window.__dragging) window.location='/incidents/<%= inc.id %>'">
+            <div class="board-card <%= sla.key === 'breached' ? 'border-danger' : '' %>" data-id="<%= inc.id %>" data-href="/incidents/<%= inc.id %>">
               <div class="d-flex justify-content-between align-items-start">
                 <span class="card-number"><%= inc.number %></span>
                 <span class="badge bg-<%= h.PRIORITY_BADGE[inc.priority] %>">P<%= inc.priority %></span>
@@ -44,7 +44,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
-<script>
+<script nonce="<%= cspNonce %>">
   function updateCount(colBody) {
     var count = colBody.querySelectorAll('.board-card').length;
     var badge = colBody.closest('.board-col').querySelector('.board-col-count');

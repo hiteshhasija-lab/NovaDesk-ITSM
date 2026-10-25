@@ -153,7 +153,7 @@
               <div class="d-flex align-items-center gap-2">
                 <span class="small text-muted"><%= Math.ceil(a.size / 1024) %> KB · <%= a.uploader_name || 'Unknown' %></span>
                 <% if (currentUser.role !== 'user' || a.uploaded_by === currentUser.id) { %>
-                <form method="POST" action="/incidents/<%= incident.id %>/attachments/<%= a.id %>/delete" onsubmit="return confirm('Remove this attachment?');">
+                <form method="POST" action="/incidents/<%= incident.id %>/attachments/<%= a.id %>/delete" data-confirm="Remove this attachment?">
                   <button type="submit" class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-trash"></i></button>
                 </form>
                 <% } %>
@@ -272,7 +272,7 @@
         <div class="card-body">
           <h6 class="text-danger">Danger Zone</h6>
           <p class="small text-muted">Deleting removes this incident and its comments permanently. Consider setting status to Cancelled instead if you need to preserve the record.</p>
-          <form method="POST" action="/incidents/<%= incident.id %>/delete" onsubmit="return confirm('Delete incident <%= incident.number %>? This cannot be undone.');">
+          <form method="POST" action="/incidents/<%= incident.id %>/delete" data-confirm="Delete incident <%= incident.number %>? This cannot be undone.">
             <button type="submit" class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-trash"></i> Delete Incident</button>
           </form>
         </div>

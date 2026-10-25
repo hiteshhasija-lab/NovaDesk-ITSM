@@ -38,6 +38,7 @@ const { reportMailSetup } = require('./mailer');
 const { createLimiter, createIpLimiter } = require('./rateLimit');
 const { sessionSecret, trustProxy, rateLimits } = require('./settings');
 const csrf = require('./csrf');
+const csp = require('./csp');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -80,6 +81,10 @@ app.use((req, res, next) => {
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
   next();
 });
+
+// Content-Security-Policy with a nonce per page (src/csp.js), and the place the browser reports what it blocked.
+app.use(csp.middleware(process.env));
+app.post('/csp-report', express.json({ type: ['application/csp-report', 'application/json'], limit: '16kb' }), csp.reportHandler);
 
 // Every route, per address (RATE_LIMIT_IP_PER_MIN, default 1200 a minute): a safety net against a runaway client.
 app.use(createIpLimiter({ perMinute: rateLimits(process.env).ipPerMinute }));
