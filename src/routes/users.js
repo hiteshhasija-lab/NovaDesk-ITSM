@@ -3,6 +3,7 @@ const mfa = require('../mfa');
 const apiKeys = require('../apiKeys');
 const { checkPassword, hashPassword } = require('../passwords');
 const lockout = require('../lockout');
+const sessions = require('../sessionStore');
 const { audit } = require('../audit');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { ASSIGNMENT_GROUPS } = require('../helpers');
@@ -28,12 +29,12 @@ router.get('/', requireAuth, requireRole('admin'), async (req, res) => {
 });
 
 router.get('/new', requireAuth, requireRole('admin'), (req, res) => {
-  res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, lockedUntil: null, title: 'New User', user: null, error: null, groups: ASSIGNMENT_GROUPS, userGroups: [] });
+  res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, sessionCount: null, lockedUntil: null, title: 'New User', user: null, error: null, groups: ASSIGNMENT_GROUPS, userGroups: [] });
 });
 
 router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   const b = req.body;
-  const again = (error) => res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, lockedUntil: null, title: 'New User', user: b, error, groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
+  const again = (error) => res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, sessionCount: null, lockedUntil: null, title: 'New User', user: b, error, groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
   // There is no default password: whoever is made has to be given one that passes the rules.
   const weak = checkPassword(b.password, { username: b.username, email: b.email, fullName: b.full_name });
   if (weak) return again(weak);
@@ -55,7 +56,7 @@ router.get('/:id/edit', requireAuth, requireRole('admin'), async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
   const identities = await db.prepare('SELECT issuer, email, last_login_at FROM user_identities WHERE user_id = ? ORDER BY id').all(user.id);
-  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id), mfaStatus: await mfa.status(user.id), identities, apiKeyCount: (await apiKeys.listKeys(user.id)).filter((k) => !k.revoked_at).length, lockedUntil: lockout.isLocked(user) ? user.locked_until : null, resetMessage: req.query.mfa === 'reset' ? 'Two-step verification was turned off for this person. They can set it up again.' : (req.query.keys === 'revoked' ? 'All of this person\'s API keys were revoked.' : (req.query.unlocked ? 'The account is unlocked.' : null)) });
+  res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id), mfaStatus: await mfa.status(user.id), identities, apiKeyCount: (await apiKeys.listKeys(user.id)).filter((k) => !k.revoked_at).length, sessionCount: await sessions.countFor(user.id), lockedUntil: lockout.isLocked(user) ? user.locked_until : null, resetMessage: req.query.mfa === 'reset' ? 'Two-step verification was turned off for this person. They can set it up again.' : (req.query.keys === 'revoked' ? 'All of this person\'s API keys were revoked.' : (req.query.unlocked ? 'The account is unlocked.' : (req.query.signedout ? 'Signed out everywhere.' : null))) });
 });
 
 // Switch off every API key a person has (a leaked key, or someone leaving).
@@ -74,7 +75,8 @@ router.post('/:id/mfa/reset', requireAuth, requireRole('admin'), async (req, res
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
   await mfa.disable(user.id);
   console.log(`[MFA] ${req.session.user.username} reset two-step verification for ${user.username}`);
-  await audit(req, req.session.user, 'mfa.reset', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'turned off by an administrator' });
+  const ended = await sessions.revokeAll(user.id, user.id === req.session.user.id ? req.sessionID : null);
+  await audit(req, req.session.user, 'mfa.reset', { targetType: 'user', targetId: user.id, targetName: user.username, detail: `turned off by an administrator; ${ended} open session${ended === 1 ? '' : 's'} ended` });
   res.redirect(`/users/${user.id}/edit?mfa=reset`);
 });
 
@@ -82,7 +84,7 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
   const b = req.body;
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
-  const again = (error) => res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, lockedUntil: null, title: `Edit ${user.full_name}`, user: { ...user, ...b }, error, groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
+  const again = (error) => res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, sessionCount: null, lockedUntil: null, title: `Edit ${user.full_name}`, user: { ...user, ...b }, error, groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
 
   // The last active administrator can neither be demoted nor switched off: nobody could manage NovaDesk afterwards.
   const staysAdmin = b.role === 'admin' && b.active === 'on';
@@ -111,12 +113,29 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
   if ((b.email || null) !== user.email) changes.push('email changed');
   if (changes.length) await audit(req, req.session.user, 'user.updated', { targetType: 'user', targetId: user.id, targetName: b.username, detail: changes.join('; ') });
 
+  // Someone switched off, or whose password was just set by an administrator, is signed out wherever they were
+  // (an administrator editing their own record keeps the session they are using).
+  const keep = user.id === req.session.user.id ? req.sessionID : null;
+  if (user.active && b.active !== 'on') {
+    const ended = await sessions.revokeAll(user.id, keep);
+    await audit(req, req.session.user, 'session.revoked_all', { targetType: 'user', targetId: user.id, targetName: b.username, detail: `account switched off; ${ended} open session${ended === 1 ? '' : 's'} ended` });
+  }
   if (b.password) {
     await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(b.password), req.params.id);
     await lockout.clearFailures(user.id);
-    await audit(req, req.session.user, 'password.reset', { targetType: 'user', targetId: user.id, targetName: b.username, detail: 'set by an administrator' });
+    const ended = await sessions.revokeAll(user.id, keep);
+    await audit(req, req.session.user, 'password.reset', { targetType: 'user', targetId: user.id, targetName: b.username, detail: `set by an administrator; ${ended} open session${ended === 1 ? '' : 's'} ended` });
   }
   res.redirect('/users');
+});
+
+// Ends every sign-in a person has (a lost laptop, a suspected stranger); they sign in again with their password.
+router.post('/:id/sign-out-everywhere', requireAuth, requireRole('admin'), async (req, res) => {
+  const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
+  const ended = await sessions.revokeAll(user.id, user.id === req.session.user.id ? req.sessionID : null);
+  await audit(req, req.session.user, 'session.revoked_all', { targetType: 'user', targetId: user.id, targetName: user.username, detail: `${ended} open session${ended === 1 ? '' : 's'} ended by an administrator` });
+  res.redirect(`/users/${user.id}/edit?signedout=1`);
 });
 
 // Lifts a lock after wrong passwords at once (it also ends by itself).
@@ -126,50 +145,6 @@ router.post('/:id/unlock', requireAuth, requireRole('admin'), async (req, res) =
   await lockout.clearFailures(user.id);
   await audit(req, req.session.user, 'user.unlocked', { targetType: 'user', targetId: user.id, targetName: user.username });
   res.redirect(`/users/${user.id}/edit?unlocked=1`);
-});
-
-// Switch off every API key a person has (a leaked key, or someone leaving).
-router.post('/:id/api-keys/revoke', requireAuth, requireRole('admin'), async (req, res) => {
-  const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
-  const n = await apiKeys.revokeAllKeys(user.id);
-  console.log(`[API] ${req.session.user.username} revoked ${n} API key(s) of ${user.username}`);
-  res.redirect(`/users/${user.id}/edit?keys=revoked`);
-});
-
-// Someone lost their phone and their recovery codes: an administrator turns two-step verification off for them.
-router.post('/:id/mfa/reset', requireAuth, requireRole('admin'), async (req, res) => {
-  const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
-  await mfa.disable(user.id);
-  console.log(`[MFA] ${req.session.user.username} reset two-step verification for ${user.username}`);
-  res.redirect(`/users/${user.id}/edit?mfa=reset`);
-});
-
-router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) => {
-  const b = req.body;
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
-
-  try {
-    await db.prepare(`
-      UPDATE users SET username=?, full_name=?, email=?, role=?, department=?, active=? WHERE id=?
-    `).run(b.username, b.full_name, b.email || null, b.role, b.department || null, b.active === 'on' ? 1 : 0, req.params.id);
-  } catch (e) {
-    return res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, lockedUntil: null,
-      title: `Edit ${user.full_name}`,
-      user: { ...user, ...b },
-      error: 'Username already exists or invalid data.',
-      groups: ASSIGNMENT_GROUPS,
-      userGroups: [].concat(b.groups || [])
-    });
-  }
-  await saveGroups(user.id, b.groups);
-
-  if (b.password) {
-    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(b.password, 10), req.params.id);
-  }
-  res.redirect('/users');
 });
 
 router.post('/:id/delete', requireAuth, requireRole('admin'), async (req, res) => {
@@ -189,6 +164,7 @@ router.post('/:id/delete', requireAuth, requireRole('admin'), async (req, res) =
 
   try {
     await db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    await sessions.revokeAll(id);
     await audit(req, req.session.user, 'user.deleted', { targetType: 'user', targetId: id, targetName: user.username, detail: `role ${user.role}` });
     res.redirect('/users');
   } catch (err) {

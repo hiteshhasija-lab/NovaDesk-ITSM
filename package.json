@@ -1,6 +1,6 @@
 {
   "name": "itsm-app",
-  "version": "0.0.94",
+  "version": "0.0.95",
   "description": "IT Infrastructure ITSM system: Incident Management, Change Management, and CMDB/Asset Inventory",
   "main": "src/server.js",
   "scripts": {
@@ -21,8 +21,7 @@
     "method-override": "^3.0.0",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.9",
-    "pg": "^8.23.0",
-    "session-file-store": "^1.5.0"
+    "pg": "^8.23.0"
   },
   "engines": {
     "node": ">=22.5.0"

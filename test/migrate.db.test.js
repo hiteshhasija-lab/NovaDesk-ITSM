@@ -334,3 +334,16 @@ test('0007: accounts get a failed-sign-in counter and a lock time, and the audit
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM audit_log`)).rows[0].c), 1, 'the record outlives the person');
   });
 });
+
+test('0008: sessions are rows that can be found by person and expire by time', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    assert.deepStrictEqual((await columns(knex, 'sessions')).sort(), ['created_at', 'data', 'expires_at', 'ip', 'last_seen_at', 'sid', 'user_agent', 'user_id']);
+    const ins = (sid, uid, exp) => knex.raw(`INSERT INTO sessions (sid, user_id, data, created_at, last_seen_at, expires_at) VALUES (?, ?, '{}', '2026-01-01 00:00:00', '2026-01-01 00:00:00', ?)`, [sid, uid, exp]);
+    await ins('a', 1, '2999-01-01 00:00:00'); await ins('b', 1, '2999-01-01 00:00:00'); await ins('c', 2, '2020-01-01 00:00:00');
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM sessions WHERE user_id = 1`)).rows[0].c), 2);
+    await assert.rejects(ins('a', 1, '2999-01-01 00:00:00'), /duplicate key|unique/i, 'a session id is unique');
+    const idx = (await knex.raw(`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'sessions'`)).rows.map((r) => r.indexname);
+    assert.ok(idx.includes('sessions_user') && idx.includes('sessions_expires'));
+  });
+});

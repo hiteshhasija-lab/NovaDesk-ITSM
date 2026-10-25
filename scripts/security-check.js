@@ -50,11 +50,21 @@ const median = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
 async function main() {
   const port = 18230; const base = `http://127.0.0.1:${port}`;
-  const app = start(port, { LOCKOUT_AFTER: '3', LOCKOUT_MINUTES: '1', RATE_LIMIT_LOGIN_FAILURES: '200' });
+  const env = { LOCKOUT_AFTER: '3', LOCKOUT_MINUTES: '1', RATE_LIMIT_LOGIN_FAILURES: '200', SESSION_SECRET: `security-check-${tag}` };
+  const app = start(port, env);
   const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 2 } });
   try {
     if (!(await healthy(port, app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-400)}`);
-    await run(base, knex);
+    const persisting = await run(base, knex);
+    // Sessions live in the database, so a restart does not sign anyone out.
+    section = 'sessions';
+    app.child.kill(); await app.exited;
+    const again = start(port, env);
+    try {
+      if (!(await healthy(port, again))) throw new Error(`NovaDesk did not restart: ${again.text().slice(-300)}`);
+      const afterRestart = new Browser(base); afterRestart.cookie = persisting.cookie;
+      check('a restart of NovaDesk does not sign anyone out', (await afterRestart.get('/incidents')).status === 200);
+    } finally { again.child.kill(); await again.exited; }
   } finally { await knex.destroy(); app.child.kill(); await app.exited; }
   await secureCookie();
 }
@@ -182,6 +192,70 @@ async function run(base, knex) {
   const hook = await admin.post('/settings/sla/policies', { hours_1: '4', clock_1: 'calendar', warn_1: '75', hours_2: '8', clock_2: 'calendar', warn_2: '75', hours_3: '24', clock_3: 'calendar', warn_3: '75', hours_4: '72', clock_4: 'calendar', warn_4: '75' });
   const audit2 = (await admin.get('/settings/audit')).text;
   check('API keys and SLA settings changes are recorded as well', k2.status === 200 && hook.status === 302 && audit2.includes('>apikey.created<') && audit2.includes('>sla.settings_changed<'));
+
+  section = 'sessions';
+  {
+  const GOOD = 'Cobalt-Meadow-Drift-8', NEXT = 'Violet-Anchor-Pine-91';
+  const who = `sess${tag}`;
+  const created = await admin.post('/users', { username: who, full_name: 'Sess Test', email: `sess.${tag}@corp.local`, role: 'agent', password: GOOD });
+  const sid = idOf((await admin.get('/users')).text, who);
+  const signIn = async (pw = GOOD, ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15') => { const b = new Browser(base); b.ua = ua; const orig = b.raw.bind(b); b.raw = (m, p, o = {}) => orig(m, p, { ...o, headers: { 'User-Agent': b.ua, ...(o.headers || {}) } }); const r = await b.login(who, pw); return { b, r }; };
+  const up = async (b) => (await b.get('/incidents')).status === 200;
+  check('the person for these checks exists', created.status === 302 && sid, `${created.status} ${sid}`);
+
+  const a = (await signIn()).b, bb = (await signIn(GOOD, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36')).b;
+  const listing = (await a.get('/profile/sessions')).text;
+  check('the sessions page lists both devices, with what and where', (listing.match(/<tr/g) || []).length === 3 && /Safari on macOS/.test(listing) && /Chrome on Windows/.test(listing) && /127\.0\.0\.1|::1/.test(listing));
+  check('and marks the one being used', /This device/.test(listing) && (listing.match(/This device/g) || []).length === 1);
+  check('the page never shows a session id or cookie value', !listing.includes(decodeURIComponent(a.cookie.split('=')[1] || '').slice(2, 20)));
+  const row = (listing.match(/action="\/profile\/sessions\/([0-9a-f]{20})\/revoke"/) || [])[1];
+  check('ending the other device signs it out at once and leaves this one', row && (await a.post(`/profile/sessions/${row}/revoke`)).status === 302 && /Signed out of that device/.test((await a.get('/profile/sessions?done=one')).text) && !(await up(bb)) && await up(a));
+  check('an ended session cannot be used again, even by sending its cookie back', (await bb.get('/incidents')).status === 302);
+
+  // Nobody can end someone else's session by guessing or replaying an id.
+  const mariaRow = (((await maria.get('/profile/sessions')).text).match(/\/profile\/sessions\/([0-9a-f]{20})\/revoke/) || [])[1];
+  const other = await signIn(); const otherListing = (await other.b.get('/profile/sessions')).text;
+  const otherId = (otherListing.match(/\/profile\/sessions\/([0-9a-f]{20})\/revoke/) || [])[1];
+  const sneaky = await jane.post(`/profile/sessions/${otherId || 'ffffffffffffffffffff'}/revoke`);
+  check("one person cannot end another person's session", sneaky.status === 302 && /done=missing/.test(sneaky.loc || '') && /not found/i.test((await jane.get(sneaky.loc)).text) && await up(other.b) && await up(maria), `${sneaky.status} ${mariaRow}`);
+
+  const c = (await signIn()).b, d = (await signIn()).b;
+  const sign = await a.post('/profile/sessions/revoke-others');
+  check('"Sign out of all other devices" ends every other session and keeps this one', sign.status === 302 && /Signed out of \d+ other device/.test((await a.get(sign.loc)).text) && !(await up(c)) && !(await up(d)) && await up(a));
+
+  const e = (await signIn()).b;
+  const change = await a.post('/profile', { full_name: 'Sess Test', email: `sess.${tag}@corp.local`, department: '', current_password: GOOD, new_password: NEXT, confirm_password: NEXT });
+  check('changing your own password signs you out everywhere else (and not on this device)', change.status === 200 && /Profile updated/.test(change.text) && !(await up(e)) && await up(a));
+  const afterChange = (await admin.get('/settings/audit?action=password.changed')).text;
+  check('and the audit log says how many sessions that ended', /other session/.test(afterChange));
+
+  const f = (await signIn(NEXT)).b, g = (await signIn(NEXT)).b;
+  const adminEdit = (await admin.get(`/users/${sid}/edit`)).text;
+  check('an administrator sees how many sessions the person has, and a Sign out everywhere button', /3 sessions/.test(adminEdit) && /sign-out-everywhere/.test(adminEdit), (adminEdit.match(/\d+ sessions?/) || [])[0]);
+  const out = await admin.post(`/users/${sid}/sign-out-everywhere`);
+  check('Sign out everywhere ends all of them', out.status === 302 && !(await up(a)) && !(await up(f)) && !(await up(g)));
+
+  const s1 = (await signIn(NEXT)).b, s2 = (await signIn(NEXT)).b;
+  const reset = await admin.post(`/users/${sid}/update`, { username: who, full_name: 'Sess Test', email: `sess.${tag}@corp.local`, role: 'agent', active: 'on', password: GOOD });
+  check('an administrator setting a new password ends the sessions that were open', reset.status === 302 && !(await up(s1)) && !(await up(s2)));
+
+  const j = (await signIn()).b;
+  const off = await admin.post(`/users/${sid}/update`, { username: who, full_name: 'Sess Test', email: `sess.${tag}@corp.local`, role: 'agent', department: '' });
+  const left = Number((await knex.raw('SELECT count(*) AS c FROM sessions WHERE user_id = ?', [sid])).rows[0].c);
+  check('switching an account off ends its sessions (they are gone, not just refused)', off.status === 302 && !(await up(j)) && left === 0, `left ${left}`);
+  check('and the audit log records the sign-outs', /session\.revoked_all/.test((await admin.get('/settings/audit?action=session')).text));
+
+  check('expired sessions are not kept: the clean-up removes them', await (async () => {
+    await knex.raw(`INSERT INTO sessions (sid, user_id, data, created_at, last_seen_at, expires_at) VALUES (?, NULL, '{}', '2020-01-01 00:00:00', '2020-01-01 00:00:00', '2020-01-02 00:00:00')`, [`old-${tag}`]);
+    const sessions = require('../src/sessionStore'); const gone = await sessions.cleanup();
+    return gone >= 1 && Number((await knex.raw('SELECT count(*) AS c FROM sessions WHERE sid = ?', [`old-${tag}`])).rows[0].c) === 0;
+  })());
+
+  }
+
+  // The browser kept for the restart check.
+  const keep = new Browser(base); await keep.login('jdoe', 'agent123');
+  return keep;
 }
 
 // The Secure flag: a copy behind a proxy that says the request came in over https.

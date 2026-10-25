@@ -22,6 +22,7 @@ function establishSession(req, user, { remember = false, via = 'password' } = {}
     req.session.regenerate((err) => {
       if (err) return reject(err);
       req.session.user = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, theme_preference: user.theme_preference, via };
+      req.session.meta = { ip: req.ip ? String(req.ip).slice(0, 64) : null, ua: String(req.get('user-agent') || '').slice(0, 300) || null };
       if (remember) req.session.cookie.maxAge = 1000 * 60 * 60 * 24 * 30;
       resolve(returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/');
     });

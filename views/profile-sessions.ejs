@@ -1,0 +1,42 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4">
+  <h4 class="mb-3"><i class="bi bi-laptop text-secondary me-1"></i>Where you are signed in</h4>
+
+  <div class="card mb-3" style="max-width:860px;">
+    <div class="card-body">
+      <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
+      <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+
+      <p class="small text-muted">Every browser or device where you are signed in to NovaDesk. If you do not recognise one, sign it out and <a href="/profile">change your password</a>: changing it also signs you out everywhere else.</p>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-3" id="sessionsTable">
+          <thead class="table-light"><tr><th>Device</th><th>Address</th><th>Signed in</th><th>Last active</th><th></th></tr></thead>
+          <tbody>
+            <% sessions.forEach(s => { %>
+            <tr<% if (s.current) { %> class="table-active"<% } %>>
+              <td><%= s.device %> <% if (s.current) { %><span class="badge bg-success ms-1">This device</span><% } %></td>
+              <td><code><%= s.ip || 'unknown' %></code></td>
+              <td><%- h.fmtDate(s.createdAt) %></td>
+              <td><%- h.fmtDate(s.lastSeenAt) %></td>
+              <td class="text-end">
+                <% if (!s.current) { %>
+                <form method="POST" action="/profile/sessions/<%= s.id %>/revoke" class="d-inline"><button type="submit" class="btn btn-sm btn-outline-danger">Sign out</button></form>
+                <% } else { %><span class="text-muted small">use Sign out in the menu</span><% } %>
+              </td>
+            </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <% if (sessions.filter(s => !s.current).length) { %>
+      <form method="POST" action="/profile/sessions/revoke-others"><button type="submit" class="btn btn-danger">Sign out of all other devices</button></form>
+      <% } else { %>
+      <p class="text-muted small mb-0">You are not signed in anywhere else.</p>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('partials/foot') %>

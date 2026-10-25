@@ -216,6 +216,12 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Cookies and headers:** the session cookie is `Secure` automatically when the request arrived over https (set
   `TRUST_PROXY` behind a proxy); the pages send `Permissions-Policy`, `Cross-Origin-Opener-Policy` and the other
   usual hardening headers.
+- **Sessions:** sign-ins are rows in the database (not files), so a restart signs nobody out, and each person can see
+  where they are signed in (user menu, *Where I am signed in*: device, address, when) and end any of them or all the
+  others. Changing your own password signs you out everywhere else; an administrator setting a new password, resetting
+  two-step verification or switching an account off ends that person's sessions, and *Users*, the person, *Sign out
+  everywhere* does it on demand. Sessions last 8 hours (30 days with *Remember me*); expired ones are cleared every
+  ten minutes.
 - **Last administrator:** the only active administrator cannot be demoted, deactivated or deleted.
 
 Checked by `node scripts/security-check.js` (runs in CI): forged posts and uploads, headers, password rules,

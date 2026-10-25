@@ -3,6 +3,7 @@ const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const { checkPassword, hashPassword, verifyPassword } = require('../passwords');
 const { audit } = require('../audit');
+const sessions = require('../sessionStore');
 
 const router = createAsyncRouter();
 
@@ -35,7 +36,9 @@ router.post('/', requireAuth, async (req, res) => {
       return res.render('profile', { title: 'My Profile', profileUser: updated, error: `${weak} Profile details were saved, but the password was not changed.`, success: null });
     }
     await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(b.new_password), user.id);
-    await audit(req, req.session.user, 'password.changed', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'changed by the person themselves' });
+    // Changing the password signs the person out everywhere else (a stranger holding an old session is cut off); this device stays.
+    const ended = await sessions.revokeAll(user.id, req.sessionID);
+    await audit(req, req.session.user, 'password.changed', { targetType: 'user', targetId: user.id, targetName: user.username, detail: `changed by the person themselves; ${ended} other session${ended === 1 ? '' : 's'} ended` });
   }
 
   const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);

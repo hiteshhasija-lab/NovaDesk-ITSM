@@ -4,7 +4,7 @@ const fs = require('fs');
 const https = require('https');
 const express = require('express');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
+const { PgSessionStore, startCleanup: startSessionCleanup } = require('./sessionStore');
 const methodOverride = require('method-override');
 
 const { attachUser } = require('./middleware/auth');
@@ -26,6 +26,7 @@ const auditRoutes = require('./routes/audit');
 const api = require('./api');
 const searchRoutes = require('./routes/search');
 const profileRoutes = require('./routes/profile');
+const sessionRoutes = require('./routes/sessions');
 const myWorkRoutes = require('./routes/mywork');
 const catalogRoutes = require('./routes/catalog');
 const requestRoutes = require('./routes/requests');
@@ -93,7 +94,7 @@ app.use(methodOverride('_method'));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use(session({
-  store: new FileStore({ path: path.join(__dirname, '..', 'data', 'sessions'), logFn: () => {} }),
+  store: new PgSessionStore(),
   secret: sessionSecret(process.env),
   resave: false,
   saveUninitialized: false,
@@ -135,6 +136,7 @@ app.use('/settings/audit', auditRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);
+app.use('/profile/sessions', sessionRoutes);
 app.use('/profile', profileRoutes);
 app.use('/my-work', myWorkRoutes);
 app.use('/catalog', catalogRoutes);
@@ -184,6 +186,9 @@ initDb()
     }
 
     startScheduler();
+    startSessionCleanup();
+    // Sessions used to be files; they are in the database now (a one-time sign-in for everyone), and the old files are removed.
+    fs.rm(path.join(__dirname, '..', 'data', 'sessions'), { recursive: true, force: true }, () => {});
 
     // Running as PID 1 in a container: an unhandled SIGTERM is silently ignored rather
     // than terminating the process (the kernel's default signal disposition doesn't apply

@@ -104,3 +104,19 @@ test('every form that posts gets the token, forms that only read and forms for o
   assert.strictEqual(csrf.inject('plain text', 'T'), 'plain text');
   assert.strictEqual(csrf.inject(undefined, 'T'), undefined);
 });
+
+test('sessions: devices are described plainly, and the id shown to a person is not the cookie value', () => {
+  const { describeAgent, publicId } = require('../src/sessionStore');
+  assert.strictEqual(describeAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'), 'Safari on macOS');
+  assert.strictEqual(describeAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'), 'Chrome on Windows');
+  assert.strictEqual(describeAgent('Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Safari/537.36 Edg/120.0'), 'Edge on Windows');
+  assert.strictEqual(describeAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1'), 'Safari on iOS');
+  assert.strictEqual(describeAgent('Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0'), 'Firefox on Linux');
+  assert.strictEqual(describeAgent(''), 'Unknown device');
+  assert.strictEqual(describeAgent(null), 'Unknown device');
+  const id = publicId('abcdefghijklmnopqrstuvwxyz012345');
+  assert.match(id, /^[0-9a-f]{20}$/);
+  assert.ok(!'abcdefghijklmnopqrstuvwxyz012345'.includes(id));
+  assert.strictEqual(publicId('abcdefghijklmnopqrstuvwxyz012345'), id);
+  assert.notStrictEqual(publicId('abcdefghijklmnopqrstuvwxyz012346'), id);
+});

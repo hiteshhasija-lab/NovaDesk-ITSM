@@ -83,6 +83,12 @@
         <form method="POST" action="/users/<%= user.id %>/unlock" class="m-0"><button type="submit" class="btn btn-sm btn-outline-secondary">Unlock now</button></form>
       </div>
       <% } %>
+      <% if (sessionCount !== null) { %>
+      <dl class="row mb-2 small"><dt class="col-sm-4">Signed in</dt><dd class="col-sm-8"><%= sessionCount %> session<%= sessionCount === 1 ? '' : 's' %></dd></dl>
+      <% if (sessionCount) { %>
+      <form method="POST" action="/users/<%= user.id %>/sign-out-everywhere" class="m-0 mb-2"><button type="submit" class="btn btn-outline-danger btn-sm">Sign out everywhere</button> <span class="small text-muted ms-2">Ends every open sign-in; they sign in again with their password.</span></form>
+      <% } %>
+      <% } %>
       <dl class="row mb-2 small"><dt class="col-sm-4">API keys</dt><dd class="col-sm-8"><%= apiKeyCount %> active</dd></dl>
       <% if (apiKeyCount) { %>
       <form method="POST" action="/users/<%= user.id %>/api-keys/revoke" class="m-0 mb-2"><button type="submit" class="btn btn-outline-danger btn-sm">Revoke all API keys</button> <span class="small text-muted ms-2">For a leaked key, or someone who is leaving.</span></form>
