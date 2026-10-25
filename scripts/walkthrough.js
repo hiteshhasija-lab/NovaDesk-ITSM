@@ -585,7 +585,7 @@ const has = (r, re) => re.test(r.text);
     const link = (page.match(/href="(otpauth:\/\/[^"]+)"/) || [])[1]; must(link, 'no setup link');
     const drawn = (page.match(/<svg[^>]*aria-label="QR code[^]*?<\/svg>/) || [])[0]; must(drawn, 'no QR code on the setup page');
     must(drawn === require('../src/qr').toSvg(link.replace(/&amp;/g, '&'), { label: 'QR code for the NovaDesk setup key' }), 'the QR code is not for the setup link');
-    must(!/<(img|script)[^>]+(qr|chart)/i.test(page) && !/api\.qrserver|chart\.googleapis/i.test(page), 'the QR code comes from an outside service');
+    must(!/<img\b[^>]*\ssrc="(https?:)?\/\//i.test(page) && !/api\.qrserver|chart\.googleapis|quickchart/i.test(page), 'the QR code comes from an outside service');
     must(/no-store/.test(setupPage.headers.get('cache-control') || ''), 'the setup page may be cached');
     const bad = await person.post('/profile/mfa/confirm', { code: '000000' }); must(bad.status === 400 && /not right/.test(bad.text), 'a wrong code was accepted ' + bad.status);
     const ok = await person.post('/profile/mfa/confirm', { code: codeNow(key) }); must(ok.status === 200 && /Two-step verification is on/.test(ok.text), 'confirm ' + ok.status);
