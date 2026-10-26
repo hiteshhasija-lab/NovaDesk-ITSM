@@ -134,6 +134,11 @@ jobs:
           export INBOUND_TEST_SMTP_PORT=3025 INBOUND_TEST_IMAP_PORT=3143
           for i in $(seq 1 60); do (echo > /dev/tcp/127.0.0.1/3143) 2>/dev/null && (echo > /dev/tcp/127.0.0.1/3025) 2>/dev/null && break; sleep 2; done
           node scripts/inbound-check.js
+      - name: CSV import (who may, preview saves nothing, confirming once, updating by export and import, odd files, record)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/import-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

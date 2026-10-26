@@ -1,0 +1,93 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<%
+  const badge = { add: 'success', update: 'primary', unchanged: 'secondary', skip: 'secondary', error: 'danger', failed: 'danger' };
+  const word = { add: 'Add', update: 'Update', unchanged: 'No change', skip: 'Skip', error: 'Not imported', failed: 'Failed' };
+  const p = job.preview || {};
+  const r = job.result || {};
+  const listPath = { users: '/users', cmdb: '/cmdb', kb: '/kb' }[kind.id];
+  const problems = job.status === 'done' ? (r.problems || []) : (p.problems || []);
+%>
+<div class="container-fluid px-4 py-4" style="max-width: 1100px;">
+  <nav class="small mb-2"><a href="/import">Import data</a> <span class="text-muted">/</span> <a href="/import/<%= kind.id %>"><%= kind.label %></a></nav>
+  <h4 class="mb-1"><i class="bi <%= kind.icon %> text-primary me-1"></i><%= job.filename %></h4>
+  <p class="text-muted small mb-3"><%= kind.label %> &middot; <%= options.mode === 'update' ? 'new ones are added and existing ones updated' : 'only new ones are added; existing ones are left alone' %></p>
+
+  <% if (job.status === 'ready') { %>
+    <div class="alert alert-warning py-2 small"><i class="bi bi-eye me-1"></i><strong>Nothing has been saved yet.</strong> This is what would happen if you go ahead.</div>
+    <div class="d-flex flex-wrap gap-4 mb-3">
+      <div><div class="fs-3 fw-semibold text-success"><%= p.add %></div><div class="small text-muted">to add</div></div>
+      <% if (options.mode === 'update') { %><div><div class="fs-3 fw-semibold text-primary"><%= p.update %></div><div class="small text-muted">to update</div></div>
+      <div><div class="fs-3 fw-semibold text-secondary"><%= p.unchanged %></div><div class="small text-muted">already as in the file</div></div><% } else { %>
+      <div><div class="fs-3 fw-semibold text-secondary"><%= p.skip %></div><div class="small text-muted">already exist, left alone</div></div><% } %>
+      <div><div class="fs-3 fw-semibold text-danger"><%= p.error %></div><div class="small text-muted">cannot be imported</div></div>
+    </div>
+    <p class="small text-muted">
+      Read as <%= p.encoding %>, separated by <%= p.delimiter === ',' ? 'commas' : (p.delimiter === ';' ? 'semicolons' : 'tabs') %>, <%= p.total %> row<%= p.total === 1 ? '' : 's' %><% if (p.blank) { %> (and <%= p.blank %> empty)<% } %>.
+      Columns used: <%= p.columns.used.join(', ') %>.
+      <% if (p.columns.ignored.length) { %>Left out on purpose: <%= p.columns.ignored.join(', ') %>.<% } %>
+      <% if (p.columns.unknown.length) { %><span class="text-warning-emphasis">Not recognised, so ignored: <%= p.columns.unknown.join(', ') %>.</span><% } %>
+    </p>
+    <div class="d-flex gap-2 mb-4">
+      <% if (p.add + p.update > 0) { %>
+      <form method="POST" action="/import/job/<%= job.id %>/run" class="m-0">
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle me-1"></i>Import <%= p.add + p.update %> row<%= p.add + p.update === 1 ? '' : 's' %><% if (p.error) { %> (skip the <%= p.error %> that cannot be imported)<% } %></button>
+      </form>
+      <% } else { %>
+      <span class="text-muted align-self-center small">There is nothing to import from this file.</span>
+      <% } %>
+      <form method="POST" action="/import/job/<%= job.id %>/cancel" class="m-0"><button type="submit" class="btn btn-outline-secondary">Cancel</button></form>
+    </div>
+  <% } else if (job.status === 'done') { %>
+    <div class="alert alert-success py-2 small"><i class="bi bi-check-circle me-1"></i>The import finished<% if (r.seconds !== undefined) { %> in <%= r.seconds %> s<% } %>.</div>
+    <div class="d-flex flex-wrap gap-4 mb-3">
+      <div><div class="fs-3 fw-semibold text-success"><%= r.added %></div><div class="small text-muted">added</div></div>
+      <div><div class="fs-3 fw-semibold text-primary"><%= r.updated %></div><div class="small text-muted">updated</div></div>
+      <div><div class="fs-3 fw-semibold text-secondary"><%= r.skipped + r.unchanged %></div><div class="small text-muted">left as they were</div></div>
+      <div><div class="fs-3 fw-semibold text-danger"><%= r.rejected + r.failed %></div><div class="small text-muted">not imported</div></div>
+    </div>
+    <div class="d-flex gap-2 mb-4">
+      <a href="<%= listPath %>" class="btn btn-primary">See the <%= kind.label.toLowerCase() %></a>
+      <a href="/import/<%= kind.id %>" class="btn btn-outline-secondary">Import another file</a>
+    </div>
+  <% } else if (job.status === 'running') { %>
+    <div class="alert alert-info py-2 small"><i class="bi bi-hourglass-split me-1"></i>The import is running. Reload this page in a moment.</div>
+  <% } else if (job.status === 'failed') { %>
+    <div class="alert alert-danger py-2 small"><i class="bi bi-x-octagon me-1"></i>The import stopped: <%= r.error || 'an error' %>. Rows already saved stay saved; upload the file again to add the rest.</div>
+  <% } else { %>
+    <div class="alert alert-secondary py-2 small">This import was cancelled, or the file was not confirmed in time and has been thrown away. <a href="/import/<%= kind.id %>">Upload it again</a>.</div>
+  <% } %>
+
+  <% if (problems.length) { %>
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="section-title mb-0"><%= job.status === 'done' ? 'Rows that were not imported' : (options.mode === 'update' ? 'Rows that cannot be imported' : 'Rows that will be skipped') %></h6>
+    <a href="/import/job/<%= job.id %>/problems.csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> As a file</a>
+  </div>
+  <div class="card mb-4"><div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light"><tr><th>Row</th><th><%= kind.noun.charAt(0).toUpperCase() + kind.noun.slice(1) %></th><th></th><th>Why</th></tr></thead>
+      <tbody>
+        <% problems.forEach(x => { %>
+        <tr><td class="text-nowrap"><%= x.row %></td><td><%= x.key || '—' %></td><td><span class="badge bg-<%= badge[x.action] || 'secondary' %>"><%= word[x.action] || x.action %></span></td><td class="small"><%= x.message %></td></tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div></div>
+  <% if (job.status === 'ready' && p.error + p.skip > problems.length) { %><p class="small text-muted">The first <%= problems.length %> are shown here.</p><% } %>
+  <% } %>
+
+  <% if (job.status === 'ready' && p.sample && p.sample.length) { %>
+  <h6 class="section-title">What will be done (first <%= p.sample.length %>)</h6>
+  <div class="card mb-4"><div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light"><tr><th>Row</th><th><%= kind.noun.charAt(0).toUpperCase() + kind.noun.slice(1) %></th><th></th><th>Details</th></tr></thead>
+      <tbody>
+        <% p.sample.forEach(x => { %>
+        <tr><td class="text-nowrap"><%= x.row %></td><td><%= x.key || '—' %></td><td><span class="badge bg-<%= badge[x.action] %>"><%= word[x.action] %></span></td><td class="small"><%= x.message %></td></tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div></div>
+  <% } %>
+</div>
+<%- include('../partials/foot') %>

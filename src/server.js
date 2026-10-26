@@ -42,6 +42,7 @@ const csp = require('./csp');
 const inboundIntake = require('./inbound/intake');
 const inboundPoller = require('./inbound/imapPoller');
 const inboundRoutes = require('./routes/inbound');
+const importRoutes = require('./routes/import');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -144,6 +145,7 @@ app.use('/settings/sla', slaRoutes);
 app.use('/settings/webhooks', webhookRoutes);
 app.use('/settings/audit', auditRoutes);
 app.use('/settings/inbound', inboundRoutes);
+app.use('/import', importRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);

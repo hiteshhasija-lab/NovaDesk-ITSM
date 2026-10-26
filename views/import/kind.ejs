@@ -1,0 +1,64 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1100px;">
+  <nav class="small mb-2"><a href="/import">Import data</a> <span class="text-muted">/</span> <%= kind.label %></nav>
+  <h4 class="mb-2"><i class="bi <%= kind.icon %> text-primary me-1"></i>Import <%= kind.label.toLowerCase() %></h4>
+  <p class="text-muted small"><%= kind.intro %></p>
+
+  <% if (error) { %><div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i><%= error %></div><% } %>
+
+  <form method="POST" action="/import/<%= kind.id %>" enctype="multipart/form-data" class="card mb-4">
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label fw-semibold" for="file">CSV file</label>
+        <input type="file" class="form-control" id="file" name="file" accept=".csv,.txt,text/csv" required>
+        <div class="form-text">Up to 5 MB and <%= kind.maxRows %> rows. The first row holds the column names. Excel's "CSV" and "CSV UTF-8", semicolons and tabs are all fine.</div>
+      </div>
+      <div class="mb-3">
+        <div class="form-label fw-semibold">When a <%= kind.noun %> in the file already exists</div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="modeAdd" value="add" <%= values.mode !== 'update' ? 'checked' : '' %>>
+          <label class="form-check-label" for="modeAdd">Leave it as it is <span class="text-muted small">(only new ones are added)</span></label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="modeUpdate" value="update" <%= values.mode === 'update' ? 'checked' : '' %>>
+          <label class="form-check-label" for="modeUpdate">Update it <span class="text-muted small">(new ones are added; for existing ones every cell that has something in it replaces what is there, and an empty cell changes nothing)</span></label>
+        </div>
+      </div>
+      <% if (kind.id === 'kb') { %>
+      <div class="mb-3">
+        <div class="form-label fw-semibold">New articles without a Status column are</div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="radio" name="defaultStatus" id="stDraft" value="draft" <%= values.defaultStatus !== 'published' ? 'checked' : '' %>>
+          <label class="form-check-label" for="stDraft">Drafts <span class="text-muted small">(only staff see them)</span></label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="radio" name="defaultStatus" id="stPub" value="published" <%= values.defaultStatus === 'published' ? 'checked' : '' %>>
+          <label class="form-check-label" for="stPub">Published <span class="text-muted small">(everybody sees them)</span></label>
+        </div>
+      </div>
+      <% } %>
+      <button type="submit" class="btn btn-primary"><i class="bi bi-search me-1"></i>Check the file</button>
+      <a href="/import/<%= kind.id %>/template.csv" class="btn btn-outline-secondary ms-2"><i class="bi bi-download"></i> Example file</a>
+      <div class="form-text mt-2">Checking only reads the file. You see what would happen on the next page and decide there.</div>
+    </div>
+  </form>
+
+  <h6 class="section-title">Columns</h6>
+  <div class="card"><div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle">
+      <thead class="table-light"><tr><th>Column</th><th>Needed</th><th>What goes in it</th></tr></thead>
+      <tbody>
+        <% kind.columns.forEach(c => { %>
+        <tr>
+          <td class="text-nowrap"><code><%= c.label %></code></td>
+          <td class="small"><%= c.required === 'always' ? 'always' : (c.required === 'new' ? 'for a new one' : 'optional') %></td>
+          <td class="small text-muted"><%= c.help || '' %><% if (c.example) { %> <span class="text-body">e.g. <code><%= c.example %></code></span><% } %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div></div>
+  <p class="small text-muted mt-2">Column names are matched without regard to capitals, spaces or punctuation, so <code>IP Address</code>, <code>ip_address</code> and <code>ip-address</code> are the same column. Columns NovaDesk does not know are ignored.</p>
+</div>
+<%- include('../partials/foot') %>

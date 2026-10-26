@@ -202,6 +202,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Changes** — standard/normal/emergency types, risk levels, approval workflow (submit → approve/reject → scheduled → implemented → closed), implementation/backout plans.
 - **CMDB** — servers, network devices, applications, databases, workstations, storage. Tracks IP, OS, hardware specs, location, owner, warranty/lifecycle dates, and CI-to-CI relationships (depends on / runs on / connects to). Related incidents and changes show up on each CI's page.
 - **Users** — admin-only user management with roles and departments.
+- **Import** — users, configuration items and knowledge articles from a CSV file, with a preview before anything is saved (see *Importing data*).
 
 ## Inbound email
 
@@ -251,6 +252,44 @@ to the mailbox, and replies that add internal work notes.
 
 Checked by `node scripts/inbound-check.js` (runs in CI against a real mail server, GreenMail): the mailbox and HTTP ways in,
 replies and threading, nothing twice, machines and floods, files, settings, and the administrator's page.
+
+## Importing data
+
+Users, configuration items and knowledge articles can be brought in from a CSV file: the *Import CSV* button on the
+Users, CMDB and Knowledge Base pages, or *Import data* in the administrator's menu. Users are for administrators;
+configuration items and articles for administrators and agents.
+
+1. **Choose the file** (up to 5 MB; 1,000 users or 5,000 other rows). Each kind has an *Example file* to start from, and a
+   file exported from the CMDB or Knowledge Base page can be edited and imported again. Column names are matched without
+   regard to capitals, spaces and punctuation; columns NovaDesk does not know are ignored. UTF-8, UTF-16 and Excel's
+   Windows-1252 files are read, with commas, semicolons or tabs.
+2. **Read the preview.** Every row is judged against what exists now and nothing is saved: what will be added, updated,
+   or left alone, and, for each row that cannot be imported, why (a type that does not exist, a date that is not
+   `YYYY-MM-DD`, an owner who is not an active user, the same user twice, an email that belongs to someone else ...).
+3. **Confirm.** The rows that are fine are imported, the rest are skipped and listed (also as a file to correct and
+   upload again). A file is confirmed once; running it again adds only what is still missing. The record of each import
+   (who, which file, how many added, updated and refused) is kept for 90 days, and the audit log notes it, and every
+   account it creates or changes.
+
+*When something in the file already exists*, choose to leave it alone (only new things are added) or to update it: a
+cell with something in it replaces what is there, an empty cell changes nothing. An item is found by its number
+(`CI Number`, `Number`, `Username`) or, without one, by its name (and type) or title; a name that matches more than one
+item is refused rather than guessed.
+
+- **Users:** no password is needed. Someone added without one signs in with single sign-on, or an administrator sets a
+  password on the Users page. A `Password` column is allowed for new users and must pass the password rules (a file with
+  passwords in it should be deleted afterwards); it is never shown back and cannot change the password of someone who
+  exists. An import cannot change your own role or active status, or leave NovaDesk without an active administrator, and
+  switching a person off ends their sessions.
+- **Configuration items:** types, environments and statuses can be written as the key or as the label (`network_device`
+  or `Network Device`). The owner is a username, an email address or a full name that belongs to one person. CI-to-CI
+  relationships are not imported.
+- **Knowledge articles:** the body is plain text with line breaks kept (it is always shown as text, never as markup).
+  New articles without a Status column are drafts unless you choose published.
+
+Checked by `node scripts/import-check.js` (runs in CI): who may import what, forged and oversized uploads, the preview
+that saves nothing, confirming once even when two requests race, the export-and-import-again round trip, odd files, and
+the record kept.
 
 ## Security
 

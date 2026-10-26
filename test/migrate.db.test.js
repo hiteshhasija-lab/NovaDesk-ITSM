@@ -365,3 +365,20 @@ test('0009: every message looked at is one row that cannot be made twice, notice
     assert.strictEqual((await knex.raw(`SELECT created_from_email FROM users WHERE username = 'c'`)).rows[0].created_from_email, 0, 'existing and new accounts are not contacts unless made from an email');
   });
 });
+
+test('0010: an import is one row that keeps its file only until it has run, and deleting the person who ran it is not blocked', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    assert.ok((await tables(knex)).includes('imports'));
+    const cols = await columns(knex, 'imports');
+    for (const c of ['kind', 'mode', 'options', 'filename', 'user_id', 'status', 'csv', 'preview', 'result', 'created_at', 'finished_at']) assert.ok(cols.includes(c), c);
+    const u = (await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('i', 'x', 'I', 'admin') RETURNING id`)).rows[0].id;
+    await knex.raw(`INSERT INTO imports (kind, filename, user_id, csv) VALUES ('users', 'a.csv', ?, 'username')`, [u]);
+    const row = (await knex.raw('SELECT * FROM imports')).rows[0];
+    assert.strictEqual(row.status, 'ready');
+    assert.strictEqual(row.mode, 'add');
+    assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(row.created_at));
+    await knex.raw('DELETE FROM users WHERE id = ?', [u]);
+    assert.strictEqual((await knex.raw('SELECT user_id FROM imports')).rows[0].user_id, null, 'the record stays, without the person');
+  });
+});

@@ -343,6 +343,16 @@ const has = (r, re) => re.test(r.text);
   });
   await step('knowledge base CSV export', async () => { const r = await jane.get('/kb/export.csv'); return must(r.status === 200, 'status ' + r.status); });
 
+  section = 'import';
+  await step('CSV import: administrators may import users, agents only configuration items and articles, end users nothing', async () => {
+    const a = await admin.get('/import/users'); const j = await jane.get('/import/users'); const jc = await jane.get('/import/cmdb'); const m = await maria.get('/import/kb');
+    return must(a.status === 200 && j.status === 403 && jc.status === 200 && m.status === 403, `${a.status}/${j.status}/${jc.status}/${m.status}`);
+  });
+  await step('each kind has an example file that is a CSV with its column names', async () => {
+    const u = await admin.get('/import/users/template.csv'); const c = await jane.get('/import/cmdb/template.csv'); const k = await jane.get('/import/kb/template.csv');
+    return must(/^Username,Full name/.test(u.text) && /^CI Number,Name,Type/.test(c.text) && /^Number,Title,Category,Status,Body/.test(k.text), `${u.text.slice(0, 30)} | ${c.text.slice(0, 30)} | ${k.text.slice(0, 30)}`);
+  });
+
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {

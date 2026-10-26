@@ -6,6 +6,7 @@
     <% if (isStaff) { %>
     <div class="d-flex gap-2">
       <a href="/kb/export.csv<%- h.withQuery(query, { page: null }) %>" id="exportCsvBtn" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download"></i> Export CSV</a>
+      <a href="/import/kb" class="btn btn-sm btn-outline-secondary"><i class="bi bi-upload"></i> Import CSV</a>
       <a href="/kb/new" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> New Article</a>
     </div>
     <% } %>
