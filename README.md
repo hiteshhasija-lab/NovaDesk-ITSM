@@ -149,8 +149,8 @@ data volume keep their contents; table changes are numbered migrations (`src/mig
 applies itself when it starts, once each, all or nothing. `docker compose exec novadesk node src/migrate.js
 status` lists them. Back up first (below).
 
-**Backups.** Two things hold your data: the database and the data volume (attachments, sessions and
-the Decommissioned Tracker workbook). Use your own database user in place of `novadesk` if you changed `PGUSER`.
+**Backups.** Two things hold your data: the database and the data volume (attachments and
+the Decommissioned Tracker workbook). Sign-in sessions live in the database. Use your own database user in place of `novadesk` if you changed `PGUSER`.
 
 ```bash
 docker compose exec -T postgres pg_dump -U novadesk -Fc novadesk < /dev/null > novadesk.dump

@@ -232,6 +232,7 @@ async function run(knex, app) {
   check('a message over the size limit is refused before it is read', huge.status === 413, `${huge.status}`);
 
   section = 'administrator page';
+  check('the users list marks email contacts', /email contact/.test((await admin.get('/users')).text));
   const pageHtml = (await admin.get('/settings/inbound')).text;
   check('shows the mailbox as working, and what was done with each message', /Working/.test(pageHtml) && /Incident opened/.test(pageHtml) && /Comment added/.test(pageHtml) && /Ignored/.test(pageHtml) && /Rejected/.test(pageHtml));
   check('links each result to its incident', new RegExp(`/incidents/${inc1.id}"`).test(pageHtml));

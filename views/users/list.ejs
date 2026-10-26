@@ -14,7 +14,7 @@
         <tbody>
           <% users.forEach(u => { %>
           <tr>
-            <td><%= u.full_name %></td>
+            <td><%= u.full_name %><% if (u.created_from_email) { %> <span class="badge bg-secondary ms-1" title="Made when they first emailed the help desk. They cannot sign in until a password is set for them or they use single sign-on.">email contact</span><% } %></td>
             <td><%= u.username %></td>
             <td><%= u.email || '—' %></td>
             <td><span class="badge bg-<%= u.role === 'admin' ? 'danger' : u.role === 'agent' ? 'primary' : 'secondary' %> text-capitalize"><%= u.role %></span></td>
