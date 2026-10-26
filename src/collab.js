@@ -162,4 +162,4 @@ async function purgeCollabData(entityType, entityId) {
   await db.prepare('DELETE FROM watchers WHERE entity_type = ? AND entity_id = ?').run(entityType, entityId);
 }
 
-module.exports = { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData, MAX_FILE_SIZE };
+module.exports = { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData, MAX_FILE_SIZE, BLOCKED_EXTENSIONS, uploadRoot };

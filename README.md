@@ -203,6 +203,55 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **CMDB** — servers, network devices, applications, databases, workstations, storage. Tracks IP, OS, hardware specs, location, owner, warranty/lifecycle dates, and CI-to-CI relationships (depends on / runs on / connects to). Related incidents and changes show up on each CI's page.
 - **Users** — admin-only user management with roles and departments.
 
+## Inbound email
+
+Mail sent to the help desk's address becomes an incident, and a reply to one of NovaDesk's notices becomes a comment on
+its incident. Everything it looks at is listed, with what was done and why, under the user menu, *Settings*, *Inbound
+email* (administrators). Off until you set one of the two ways in; every setting is in `.env.example`.
+
+**Reading a mailbox (IMAP).** Give NovaDesk a mailbox of its own (`INBOUND_IMAP_HOST`, `INBOUND_IMAP_USER`,
+`INBOUND_IMAP_PASSWORD`). Every `INBOUND_POLL_SECONDS` (60) it reads the unread messages, handles each, and marks it read
+(or moves it to `INBOUND_PROCESSED_FOLDER`). A message that cannot be handled because something was down stays unread
+and is tried again, three times, then it is written down as failed so it cannot hold up the others. Set `SMTP_FROM` (or
+`INBOUND_ADDRESS`) to that mailbox's address: notices then carry it as Reply-To and replies come back to it.
+**Microsoft 365 no longer accepts a password for IMAP** and Google needs an app password: for those, use the second way
+(a mail flow rule, Power Automate, or an inbound-mail service such as Postmark or Mailgun posts to NovaDesk), or a mailbox on
+your own domain.
+
+**Handed over (HTTP).** With `INBOUND_SECRET` set, `POST /api/inbound/email` takes one raw email as the body
+(`Content-Type: message/rfc822`) with `Authorization: Bearer <secret>`, and answers `202` with what was done
+(`outcome`: `ticket`, `comment`, `ignored`, `rejected`, or `duplicate`). A `5xx` means send it again.
+
+**What happens to a message**
+- It is looked at once: the same message arriving twice (a mailbox read again, a mail system that retries) never makes
+  two incidents.
+- **Not answered:** mail from NovaDesk's own address, automatic mail (out-of-office, bounces, newsletters, mailing
+  lists, anything marked `Auto-Submitted`), senders on `INBOUND_BLOCKED_SENDERS`, mail the receiving server says is
+  forged (a failed DMARC, SPF or DKIM result), and more than `INBOUND_MAX_PER_SENDER_HOUR` messages an hour from one
+  sender. Notices NovaDesk sends are marked `Auto-Submitted` too, so no auto-responder answers them: there is no loop.
+- **The sender** is found by email address. Someone with no account becomes a *contact* (a user who cannot sign in until an
+  administrator sets a password, or they sign in with single sign-on); `INBOUND_UNKNOWN_SENDERS=ignore` or
+  `INBOUND_ALLOWED_DOMAINS` stops that. A switched-off account is refused.
+- **A reply** is matched to its incident by the notice's Message-ID (`In-Reply-To`), or by the `[INC0000123]` in the
+  subject, and becomes a public comment: only the new text, not the quoted notice below it. Only the incident's caller,
+  its assignee, a watcher or staff can comment that way; anyone else who quotes a number gets an incident of their own. A reply
+  to a resolved incident reopens it; a reply to a closed one opens a new incident.
+- **Anything else** opens an incident: the subject as title, the text as description, priority P4, in
+  `INBOUND_ASSIGNMENT_GROUP` if set. The sender is emailed the usual "incident logged" notice with the number.
+- **Text only:** HTML mail is stored as plain text (no markup, scripts or remote images ever reach a page). Files are
+  kept (up to 10, 10 MB each, never program files); small inline pictures such as signature logos are skipped. What
+  was not kept is written in the incident's history.
+- The list of handled messages is kept `INBOUND_LOG_DAYS` (90) days; the incidents stay.
+
+A sender's address is only as trustworthy as the mail system in front of NovaDesk: anyone can write a false `From`. Turn on
+SPF, DKIM and DMARC for the help desk's domain; `INBOUND_REQUIRE_AUTH=true` then accepts only mail the receiving server
+vouches for. In a hostile setting, `INBOUND_UNKNOWN_SENDERS=ignore` (or an allowed-domains list) also keeps a spoofed address
+from getting a contact and an acknowledgement. Not covered yet: service requests, changes and problems by email, OAuth sign-in
+to the mailbox, and replies that add internal work notes.
+
+Checked by `node scripts/inbound-check.js` (runs in CI against a real mail server, GreenMail): the mailbox and HTTP ways in,
+replies and threading, nothing twice, machines and floods, files, settings, and the administrator's page.
+
 ## Security
 
 - **Forged requests (CSRF):** every form and every in-page request carries a per-session token, and a page change

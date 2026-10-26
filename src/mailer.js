@@ -4,10 +4,11 @@
 //   otherwise           a throwaway test mailbox (ethereal.email), as before: for development and the lab
 const nodemailer = require('nodemailer');
 const { db } = require('./db');
-const { mailConfig } = require('./settings');
+const { mailConfig, inboundConfig } = require('./settings');
 const { createSmtpTransport, sendMail, describeError } = require('./mailTransport');
 
 const config = mailConfig(process.env);   // throws at start-up when the settings do not fit together
+const inbound = inboundConfig(process.env);
 
 const SANDBOX_FROM = '"NovaDesk ITSM" <notifications@novadesk.local>';
 let transporterPromise = null;
@@ -46,8 +47,9 @@ async function deliver({ to, subject, html }) {
   try {
     const transporter = await getTransporter();
     if (!transporter) return { status: 'failed', error: 'The test mailbox service could not be reached.', previewUrl: null };
-    const info = await sendMail(transporter, { from: config.mode === 'smtp' ? config.from : SANDBOX_FROM, to, subject, html });
-    return { status: 'sent', error: null, previewUrl: config.mode === 'smtp' ? null : (nodemailer.getTestMessageUrl(info) || null) };
+    // Replies to a notice go to the help desk's own address (INBOUND_ADDRESS) when there is one, and are matched back to the ticket.
+    const info = await sendMail(transporter, { from: config.mode === 'smtp' ? config.from : SANDBOX_FROM, to, subject, html, replyTo: inbound.address || undefined });
+    return { status: 'sent', error: null, previewUrl: config.mode === 'smtp' ? null : (nodemailer.getTestMessageUrl(info) || null), messageId: info.messageId ? String(info.messageId).replace(/^<|>$/g, '') : null };
   } catch (err) {
     console.error('Notifications: failed to send:', err.message);
     return { status: 'failed', error: describeError(err, config), previewUrl: null };
@@ -60,9 +62,9 @@ async function sendNotificationDetailed({ to, toName, subject, html, relatedType
   if (!to) return null;
   const result = await deliver({ to, subject, html });
   await db.prepare(`
-    INSERT INTO notifications (recipient_email, recipient_name, subject, body, related_type, related_id, preview_url, status, error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(to, toName || null, subject, html, relatedType || null, relatedId || null, result.previewUrl, result.status, result.error);
+    INSERT INTO notifications (recipient_email, recipient_name, subject, body, related_type, related_id, preview_url, status, error, message_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(to, toName || null, subject, html, relatedType || null, relatedId || null, result.previewUrl, result.status, result.error, result.messageId || null);
   return result;
 }
 

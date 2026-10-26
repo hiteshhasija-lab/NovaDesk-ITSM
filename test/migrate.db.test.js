@@ -347,3 +347,21 @@ test('0008: sessions are rows that can be found by person and expire by time', {
     assert.ok(idx.includes('sessions_user') && idx.includes('sessions_expires'));
   });
 });
+
+test('0009: every message looked at is one row that cannot be made twice, notices keep their Message-ID, contacts are marked', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const ins = (id, extra = '') => knex.raw(`INSERT INTO inbound_emails (message_id, source, from_address, subject, outcome${extra ? ', ' + extra.split('=')[0] : ''}) VALUES (?, 'imap', 'p@c.test', 's', 'ticket'${extra ? ', ' + extra.split('=')[1] : ''})`, [id]);
+    await ins('a@c.test');
+    await assert.rejects(ins('a@c.test'), /duplicate key|unique/i, 'the same Message-ID twice');
+    const claim = (await knex.raw(`INSERT INTO inbound_emails (message_id, source, outcome) VALUES ('a@c.test', 'http', 'processing') ON CONFLICT (message_id) DO NOTHING RETURNING id`)).rows;
+    assert.deepStrictEqual(claim, [], 'a claim on a message already handled gets nothing');
+    const row = (await knex.raw('SELECT * FROM inbound_emails')).rows[0];
+    assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(row.received_at));
+    assert.ok((await columns(knex, 'notifications')).includes('message_id'));
+    const idx = (await knex.raw(`SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename IN ('notifications', 'inbound_emails')`)).rows.map((r) => r.indexname);
+    for (const name of ['notifications_message_id', 'inbound_emails_recent', 'inbound_emails_sender']) assert.ok(idx.includes(name), name);
+    await knex.raw(`INSERT INTO users (username, password_hash, full_name, role) VALUES ('c', 'x', 'C', 'user')`);
+    assert.strictEqual((await knex.raw(`SELECT created_from_email FROM users WHERE username = 'c'`)).rows[0].created_from_email, 0, 'existing and new accounts are not contacts unless made from an email');
+  });
+});

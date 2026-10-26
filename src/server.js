@@ -39,6 +39,9 @@ const { createLimiter, createIpLimiter } = require('./rateLimit');
 const { sessionSecret, trustProxy, rateLimits } = require('./settings');
 const csrf = require('./csrf');
 const csp = require('./csp');
+const inboundIntake = require('./inbound/intake');
+const inboundPoller = require('./inbound/imapPoller');
+const inboundRoutes = require('./routes/inbound');
 
 const app = express();
 const PORT = process.env.PORT || 80;
@@ -92,6 +95,8 @@ app.use(createIpLimiter({ perMinute: rateLimits(process.env).ipPerMinute }));
 // The REST API has its own body parsing, authentication (API keys, never the browser session), per-key rate limits
 // and JSON errors, so it sits before the page machinery.
 app.use('/api/v1', api.router);
+// Mail handed over by a mail system (raw message, shared secret): before the page body parsers, which would not suit it.
+app.post('/api/inbound/email', ...inboundIntake.handler(process.env));
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -138,6 +143,7 @@ app.use('/notifications', notificationRoutes);
 app.use('/settings/sla', slaRoutes);
 app.use('/settings/webhooks', webhookRoutes);
 app.use('/settings/audit', auditRoutes);
+app.use('/settings/inbound', inboundRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);
@@ -192,6 +198,8 @@ initDb()
 
     startScheduler();
     startSessionCleanup();
+    inboundPoller.start(process.env);
+    require('./inbound/process').startPruning(process.env);
     // Sessions used to be files; they are in the database now (a one-time sign-in for everyone), and the old files are removed.
     fs.rm(path.join(__dirname, '..', 'data', 'sessions'), { recursive: true, force: true }, () => {});
 

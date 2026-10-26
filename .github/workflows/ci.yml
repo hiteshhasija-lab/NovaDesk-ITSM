@@ -47,6 +47,14 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # A real mail server (SMTP and IMAP in one container) for the inbound email check.
+      greenmail:
+        image: greenmail/standalone:2.1.3
+        env:
+          GREENMAIL_OPTS: -Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=help:helppw@desk.test
+        ports:
+          - 3025:3025
+          - 3143:3143
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -119,6 +127,13 @@ jobs:
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/webhook-check.js
+      - name: Inbound email (mailbox to incident, replies to comments, loops and floods, files, HTTP intake, settings)
+        run: |
+          # Runs before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          export INBOUND_TEST_SMTP_PORT=3025 INBOUND_TEST_IMAP_PORT=3143
+          for i in $(seq 1 60); do (echo > /dev/tcp/127.0.0.1/3143) 2>/dev/null && (echo > /dev/tcp/127.0.0.1/3025) 2>/dev/null && break; sleep 2; done
+          node scripts/inbound-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

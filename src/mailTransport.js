@@ -31,8 +31,13 @@ function createSmtpTransport(config) {
   });
 }
 
-async function sendMail(transport, { from, to, subject, html }) {
-  const info = await transport.sendMail({ from, to, subject, html, text: htmlToText(html) });
+async function sendMail(transport, { from, to, subject, html, replyTo }) {
+  // Notices are machine-made: Auto-Submitted tells other systems' auto-responders (and our own inbound mail) not to answer them.
+  const info = await transport.sendMail({
+    from, to, subject, html, text: htmlToText(html),
+    ...(replyTo ? { replyTo } : {}),
+    headers: { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'All' },
+  });
   const rejected = info.rejected || [];
   if (rejected.length) throw new Error(`The mail server refused the recipient: ${rejected.join(', ')}`);
   return info;

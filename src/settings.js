@@ -82,6 +82,69 @@ function mailConfig(env) {
   };
 }
 
+// Inbound email: messages sent to the help desk's address become incidents, and replies become comments.
+//   INBOUND_IMAP_HOST (with INBOUND_IMAP_USER and INBOUND_IMAP_PASSWORD) makes NovaDesk read that mailbox every
+//   INBOUND_POLL_SECONDS (default 60). INBOUND_IMAP_PORT (993), INBOUND_IMAP_SECURE (true: TLS from the first byte; false
+//   upgrades with STARTTLS), INBOUND_IMAP_TLS_VERIFY, INBOUND_FOLDER (INBOX) and INBOUND_PROCESSED_FOLDER (move handled
+//   messages there instead of only marking them read).
+//   INBOUND_SECRET (24 or more characters) switches on POST /api/inbound/email for a mail system that hands over messages.
+//   INBOUND_ADDRESS is the help desk's address (default: the mailbox user): notices carry it as Reply-To.
+//   INBOUND_UNKNOWN_SENDERS=create|ignore: what to do with a sender who has no account (default create: a contact).
+//   INBOUND_ALLOWED_DOMAINS limits unknown senders to those domains; INBOUND_BLOCKED_SENDERS names addresses or domains
+//   that are never answered. INBOUND_MAX_PER_SENDER_HOUR (10, 0 = no limit) stops a loop or a flood.
+//   INBOUND_REQUIRE_AUTH=true only accepts mail the receiving server vouches for (SPF, DKIM or DMARC pass).
+//   INBOUND_ASSIGNMENT_GROUP puts new incidents in that group. INBOUND_MAX_MESSAGE_MB (25) is the largest message read.
+//   INBOUND_LOG_DAYS (90, 0 = keep) is how long the list of handled messages (not the incidents) is kept.
+function inboundConfig(env) {
+  const flag = (name, fallback) => {
+    const v = (env[name] || '').trim().toLowerCase();
+    if (!v) return fallback;
+    if (v === 'true') return true;
+    if (v === 'false') return false;
+    throw new Error(`${name} must be true or false.`);
+  };
+  const whole = (name, fallback, min, max) => {
+    const raw = (env[name] || '').trim();
+    if (!raw) return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}.`);
+    return n;
+  };
+  const list = (name) => (env[name] || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const host = (env.INBOUND_IMAP_HOST || '').trim();
+  const user = env.INBOUND_IMAP_USER || '';
+  const pass = env.INBOUND_IMAP_PASSWORD || '';
+  const secret = env.INBOUND_SECRET || '';
+  if (secret && secret.length < 24) throw new Error('INBOUND_SECRET must be at least 24 characters (it protects the address that accepts mail).');
+  const unknown = (env.INBOUND_UNKNOWN_SENDERS || 'create').trim().toLowerCase();
+  if (!['create', 'ignore'].includes(unknown)) throw new Error('INBOUND_UNKNOWN_SENDERS must be create or ignore.');
+  if (!host && (user || pass)) throw new Error('INBOUND_IMAP_USER and INBOUND_IMAP_PASSWORD need INBOUND_IMAP_HOST.');
+  let imap = null;
+  if (host) {
+    if (!user || !pass) throw new Error('INBOUND_IMAP_HOST needs INBOUND_IMAP_USER and INBOUND_IMAP_PASSWORD.');
+    const port = whole('INBOUND_IMAP_PORT', 993, 1, 65535);
+    imap = {
+      host, port, user, pass,
+      secure: flag('INBOUND_IMAP_SECURE', port !== 143),
+      tlsVerify: flag('INBOUND_IMAP_TLS_VERIFY', true),
+      folder: (env.INBOUND_FOLDER || 'INBOX').trim() || 'INBOX',
+      processedFolder: (env.INBOUND_PROCESSED_FOLDER || '').trim() || null,
+      pollSeconds: whole('INBOUND_POLL_SECONDS', 60, 10, 3600),
+    };
+  }
+  const address = (env.INBOUND_ADDRESS || (user.includes('@') ? user : '')).trim().toLowerCase();
+  if (address && !/^[^\s<>@]+@[^\s<>@]+$/.test(address)) throw new Error('INBOUND_ADDRESS must be an email address such as helpdesk@example.com.');
+  return {
+    enabled: Boolean(imap || secret), imap, secret: secret || null, address: address || null,
+    unknownSenders: unknown, allowedDomains: list('INBOUND_ALLOWED_DOMAINS'), blockedSenders: list('INBOUND_BLOCKED_SENDERS'),
+    maxPerSenderHour: whole('INBOUND_MAX_PER_SENDER_HOUR', 10, 0, 10000),
+    requireAuth: flag('INBOUND_REQUIRE_AUTH', false),
+    assignmentGroup: (env.INBOUND_ASSIGNMENT_GROUP || '').trim() || null,
+    maxMessageBytes: whole('INBOUND_MAX_MESSAGE_MB', 25, 1, 50) * 1024 * 1024,
+    logDays: whole('INBOUND_LOG_DAYS', 90, 0, 3650),
+  };
+}
+
 // Single sign-on (OpenID Connect) and two-step verification.
 //   OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and PUBLIC_URL switch SSO on (all four, or none).
 //   OIDC_AUTO_CREATE=true creates an account the first time someone signs in (role OIDC_DEFAULT_ROLE, never admin).
@@ -175,4 +238,4 @@ function securitySettings(env) {
   };
 }
 
-module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, oidcConfig, authPolicy, trustProxy, rateLimits, securitySettings, DEV_SESSION_SECRET };
+module.exports = { dbConfig, sessionSecret, seedPlan, mailConfig, inboundConfig, oidcConfig, authPolicy, trustProxy, rateLimits, securitySettings, DEV_SESSION_SECRET };

@@ -51,6 +51,22 @@ test('a message goes through an SMTP server with sender, recipient, subject and 
   } finally { await sink.close(); }
 });
 
+test('a notice says it is automatic, and where a reply should go (so replies can become comments, and auto-responders stay quiet)', async () => {
+  const sink = await startSink();
+  try {
+    const cfg = mailConfig({ ...good, SMTP_HOST: '127.0.0.1', SMTP_PORT: String(sink.port) });
+    const info = await sendMail(createSmtpTransport(cfg), { from: cfg.from, to: 'jane@example.com', subject: '[INC0000042] Printer down', html: '<p>x</p>', replyTo: 'help@example.com' });
+    const m = sink.messages[0];
+    assert.match(m.raw, /^Auto-Submitted: auto-generated/m);
+    assert.match(m.raw, /^X-Auto-Response-Suppress: All/m);
+    assert.match(m.raw, /^Reply-To: help@example\.com/m);
+    assert.match(m.raw, /^Message-ID: <[^>]+>/m, 'a Message-ID, which NovaDesk keeps to match a reply');
+    assert.ok(info.messageId && m.raw.includes(info.messageId.replace(/^<|>$/g, '')), 'and sendMail hands it back');
+    await sendMail(createSmtpTransport(cfg), { from: cfg.from, to: 'jane@example.com', subject: 'no reply-to', html: '<p>x</p>' });
+    assert.ok(!/^Reply-To:/m.test(sink.messages[1].raw), 'no Reply-To unless the help desk address is set');
+  } finally { await sink.close(); }
+});
+
 test('a subject with a line break cannot add headers', async () => {
   const sink = await startSink();
   try {

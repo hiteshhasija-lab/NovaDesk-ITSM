@@ -1,0 +1,74 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1200px;">
+  <h4 class="mb-2"><i class="bi bi-envelope-arrow-down text-primary me-1"></i>Inbound email</h4>
+  <p class="text-muted small">Mail sent to the help desk's address becomes an incident, and a reply to a notice becomes a comment on its incident. Everything looked at is listed below with what was done about it.</p>
+
+  <% if (notice) { %><div class="alert alert-info py-2 small"><%= notice %></div><% } %>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="section-title">Mailbox</h6>
+        <% if (!cfg.imap) { %>
+          <p><span class="badge bg-secondary">Not set up</span></p>
+          <p class="small text-muted mb-1">To have NovaDesk read a mailbox, set <code>INBOUND_IMAP_HOST</code>, <code>INBOUND_IMAP_USER</code> and <code>INBOUND_IMAP_PASSWORD</code> in the server's environment (see the README, "Inbound email").</p>
+        <% } else { %>
+          <p>
+            <% if (status.lastError) { %><span class="badge bg-danger">Problem</span>
+            <% } else if (status.lastOk) { %><span class="badge bg-success">Working</span>
+            <% } else { %><span class="badge bg-secondary">Waiting for the first look</span><% } %>
+          </p>
+          <dl class="row small mb-2">
+            <dt class="col-sm-4">Mailbox</dt><dd class="col-sm-8"><%= cfg.imap.user %> at <%= cfg.imap.host %>:<%= cfg.imap.port %> (<%= cfg.imap.folder %>)</dd>
+            <dt class="col-sm-4">Looks every</dt><dd class="col-sm-8"><%= cfg.imap.pollSeconds %> seconds</dd>
+            <dt class="col-sm-4">Last look</dt><dd class="col-sm-8"><%- status.lastFinishedAt ? h.fmtDate(status.lastFinishedAt.slice(0, 19).replace('T', ' ')) : 'not yet' %></dd>
+            <% if (status.lastError) { %><dt class="col-sm-4">Error</dt><dd class="col-sm-8 text-danger"><%= status.lastError %></dd><% } %>
+          </dl>
+          <form method="POST" action="/settings/inbound/check" class="m-0"><button type="submit" class="btn btn-sm btn-outline-primary">Check now</button></form>
+        <% } %>
+        <% if (cfg.hasSecret) { %>
+          <hr><p class="small mb-1"><span class="badge bg-success">On</span> A mail system can hand messages over: <code>POST /api/inbound/email</code> with the secret as a bearer token and the raw email as the body.</p>
+        <% } %>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="section-title">Last 24 hours</h6>
+        <div class="d-flex flex-wrap gap-3 mb-3">
+          <% [['ticket','Incidents opened','success'],['comment','Comments added','primary'],['ignored','Ignored','secondary'],['rejected','Rejected','warning'],['failed','Failed','danger']].forEach(([k,label,tone]) => { %>
+          <div><div class="fs-4 fw-semibold text-<%= tone %>"><%= counts[k] || 0 %></div><div class="small text-muted"><%= label %></div></div>
+          <% }) %>
+        </div>
+        <h6 class="section-title">Rules (set in the server's environment)</h6>
+        <dl class="row small mb-0">
+          <dt class="col-sm-5">Sender with no account</dt><dd class="col-sm-7"><%= cfg.unknownSenders === 'create' ? 'becomes a contact' : 'ignored' %></dd>
+          <% if (cfg.allowedDomains.length) { %><dt class="col-sm-5">Allowed domains</dt><dd class="col-sm-7"><%= cfg.allowedDomains.join(', ') %></dd><% } %>
+          <% if (cfg.blockedSenders.length) { %><dt class="col-sm-5">Blocked</dt><dd class="col-sm-7"><%= cfg.blockedSenders.join(', ') %></dd><% } %>
+          <dt class="col-sm-5">Limit per sender</dt><dd class="col-sm-7"><%= cfg.maxPerSenderHour ? cfg.maxPerSenderHour + ' messages an hour' : 'none' %></dd>
+          <dt class="col-sm-5">Sender checks</dt><dd class="col-sm-7"><%= cfg.requireAuth ? 'the mail server must vouch for the sender' : 'refused when the mail server says the sender is forged' %></dd>
+          <% if (cfg.assignmentGroup) { %><dt class="col-sm-5">New incidents go to</dt><dd class="col-sm-7"><%= cfg.assignmentGroup %></dd><% } %>
+        </dl>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card"><div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0" id="inboundTable">
+      <thead class="table-light"><tr><th>Received</th><th>From</th><th>Subject</th><th>Result</th><th>What was done</th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="5" class="text-center text-muted py-4">No mail has been looked at yet.</td></tr><% } %>
+        <% rows.forEach(r => { %>
+        <tr>
+          <td class="small text-muted text-nowrap"><%- h.fmtDate(r.received_at) %></td>
+          <td class="small"><%= r.from_name ? r.from_name + ' ' : '' %><span class="text-muted"><%= r.from_address || '' %></span></td>
+          <td class="small"><%= r.subject || '' %></td>
+          <td><span class="badge bg-<%= ({ticket:'success',comment:'primary',ignored:'secondary',rejected:'warning',failed:'danger',processing:'info'})[r.outcome] || 'secondary' %>"><%= ({ticket:'Incident opened',comment:'Comment added',ignored:'Ignored',rejected:'Rejected',failed:'Failed',processing:'In progress'})[r.outcome] || r.outcome %></span></td>
+          <td class="small text-muted"><% if (r.record_id && r.number) { %><a href="/incidents/<%= r.record_id %>"><%= r.number %></a> <% } %><%= r.reason || '' %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>
