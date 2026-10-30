@@ -382,3 +382,18 @@ test('0010: an import is one row that keeps its file only until it has run, and 
     assert.strictEqual((await knex.raw('SELECT user_id FROM imports')).rows[0].user_id, null, 'the record stays, without the person');
   });
 });
+
+test('0011: a person can be marked anonymised, and a retention limit shorter than 30 days is refused by the database', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    assert.ok((await columns(knex, 'users')).includes('anonymised_at'));
+    await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('p', 'x', 'P')`);
+    assert.strictEqual((await knex.raw(`SELECT anonymised_at FROM users WHERE username = 'p'`)).rows[0].anonymised_at, null, 'nobody starts anonymised');
+    const cols = await columns(knex, 'retention_rules');
+    for (const c of ['target', 'keep_days', 'last_run_at', 'last_removed']) assert.ok(cols.includes(c), c);
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM retention_rules')).rows[0].c), 0, 'every install starts by keeping everything');
+    await knex.raw(`INSERT INTO retention_rules (target, keep_days) VALUES ('audit_log', 365), ('notifications', NULL)`);
+    await assert.rejects(() => knex.raw(`INSERT INTO retention_rules (target, keep_days) VALUES ('inbound_emails', 7)`), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO retention_rules (target, keep_days) VALUES ('audit_log', 400)`), /duplicate|unique|primary/i);
+  });
+});

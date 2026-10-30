@@ -353,6 +353,18 @@ const has = (r, re) => re.test(r.text);
     return must(/^Username,Full name/.test(u.text) && /^CI Number,Name,Type/.test(c.text) && /^Number,Title,Category,Status,Body/.test(k.text), `${u.text.slice(0, 30)} | ${c.text.slice(0, 30)} | ${k.text.slice(0, 30)}`);
   });
 
+  section = 'privacy';
+  await step('privacy tools: administrators only; finding a person; the limits page', async () => {
+    const a = await admin.get('/privacy'); const j = await jane.get('/privacy'); const m = await maria.get('/privacy/person/1');
+    const found = await admin.get('/privacy?q=admin');
+    return must(a.status === 200 && /How long to keep things/.test(a.text) && j.status === 403 && m.status === 403 && found.status === 200 && /\/privacy\/person\/\d+/.test(found.text), `${a.status}/${j.status}/${m.status}/${found.status}`);
+  });
+  await step('a person\'s data can be downloaded as JSON, without secrets', async () => {
+    const id = (await admin.get('/privacy?q=jdoe')).text.match(/\/privacy\/person\/(\d+)/)[1];
+    const r = await admin.post(`/privacy/person/${id}/export`); let f = null; try { f = JSON.parse(r.text); } catch { /* reported below */ }
+    return must(r.status === 200 && f && f.profile && f.profile.username === 'jdoe' && !/password_hash|\$2[aby]\$/.test(r.text), `${r.status} ${r.text.slice(0, 80)}`);
+  });
+
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {

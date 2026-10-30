@@ -203,6 +203,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **CMDB** — servers, network devices, applications, databases, workstations, storage. Tracks IP, OS, hardware specs, location, owner, warranty/lifecycle dates, and CI-to-CI relationships (depends on / runs on / connects to). Related incidents and changes show up on each CI's page.
 - **Users** — admin-only user management with roles and departments.
 - **Import** — users, configuration items and knowledge articles from a CSV file, with a preview before anything is saved (see *Importing data*).
+- **Privacy** — download everything held about a person, anonymise a person who has left, and set how long logs and messages are kept (see *Privacy tools*).
 
 ## Inbound email
 
@@ -290,6 +291,37 @@ item is refused rather than guessed.
 Checked by `node scripts/import-check.js` (runs in CI): who may import what, forged and oversized uploads, the preview
 that saves nothing, confirming once even when two requests race, the export-and-import-again round trip, odd files, and
 the record kept.
+
+## Privacy tools
+
+*Privacy* in the administrator's menu (and *Open privacy tools* on each user's page). Administrators only; every action is
+in the audit log.
+
+- **What is held about a person, and a file of it.** Search for a person, see how many records of each kind mention them,
+  and download everything as JSON: their details, sign-in methods (no secrets), their own words (incidents they
+  reported, comments, articles, request notes), the facts of what they did (tickets assigned to them, approvals, items
+  they own, files they uploaded), notices sent to them, mail they sent in, and the audit log both ways. Never password
+  hashes, two-step secrets or API key hashes, and not what other people wrote on the same records.
+- **Anonymise a person** (cannot be undone). The account stays, so every ticket, comment and log entry still points at
+  someone and keeps its time, but it no longer says who they were: name, username, email and department go; so do the
+  password, single sign-on links, two-step verification, API keys, open sessions, group memberships and followed
+  records; their name, username and email are replaced by "Anonymised user N" (or "[email removed]") in notices, the
+  activity and audit logs, inbound mail records, webhook copies, import records and decommission cards, and the
+  addresses they came from are cleared from the audit log. Optionally the text of their comments is replaced and the
+  files they uploaded are deleted. It is all done in one database transaction: a failure leaves everything as it was.
+  Ticket text itself (titles, descriptions, other people's comments) is not searched or rewritten, names or usernames
+  shorter than 4 characters are not searched for in text (the page says so), and server backups, the mail server and
+  other connected systems still hold what they held. Not possible for yourself. An anonymised account cannot be
+  edited, signed in to, or brought back by a CSV import.
+- **Retention.** Each of the audit log, email notices, the inbound email record and webhook deliveries is kept for ever
+  until you set a number of days (30 at least). Once a day older rows are removed in batches (unfinished work is never
+  touched: mail still being processed, deliveries still waiting); *Run now* does it at once. Tickets, comments and their
+  history are never removed. Shortening the audit log's limit shortens what can be investigated later: many security
+  standards ask for a year or more.
+
+Checked by `node scripts/privacy-check.js` (runs in CI): who may use it, the contents of the file and everything it leaves
+out, what anonymising removes and keeps (including look-alike names and addresses), that a failure half-way changes
+nothing, the extras, and retention with the daily sweep, "Run now", batches and work in progress left alone.
 
 ## Security
 

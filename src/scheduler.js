@@ -3,6 +3,7 @@ const { syncCard, reconcileCards } = require('./cardSync');
 const { resumeInterruptedDecoms } = require('./decomAutomation');
 const { sweep: sweepSla } = require('./slaService');
 const webhooks = require('./webhooks');
+const retention = require('./privacy/retention');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 // How often the card ledger is retried (cardSync.js); only the test rig changes this.
@@ -12,6 +13,8 @@ const RESUME_POLL_MS = (Number(process.env.DECOM_RESUME_POLL_S) || 30) * 1000;
 // How often recorded events are handed to webhooks and due deliveries are sent (only tests and CI change this).
 const WEBHOOK_POLL_MS = (Number(process.env.WEBHOOK_POLL_S) || 5) * 1000;
 const SLA_SWEEP_MS = (Number(process.env.SLA_SWEEP_S) || 60) * 1000;
+// How often logs and messages past their retention time are looked for (each kind is only done once a day; only tests change this).
+const RETENTION_SWEEP_MS = (Number(process.env.RETENTION_SWEEP_S) || 3600) * 1000;
 
 // A slow poll (a receiver that takes a while to answer) must not overlap the next one, or the same
 // due action would be processed twice at once.
@@ -95,6 +98,10 @@ function startScheduler() {
   const slaSweep = () => sweepSla().catch((e) => console.error('SLA sweep failed:', e.message));
   setInterval(slaSweep, SLA_SWEEP_MS);
   setTimeout(slaSweep, Math.min(20 * 1000, SLA_SWEEP_MS));
+  // Retention: logs and messages older than the administrator's limits are removed (src/privacy/retention.js).
+  const keep = () => retention.sweep().catch((e) => console.error('Retention sweep failed:', e.message));
+  setInterval(keep, RETENTION_SWEEP_MS);
+  setTimeout(keep, Math.min(5 * 60 * 1000, RETENTION_SWEEP_MS));
 }
 
 module.exports = { startScheduler };

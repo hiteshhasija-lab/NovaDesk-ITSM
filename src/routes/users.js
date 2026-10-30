@@ -55,6 +55,7 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
 router.get('/:id/edit', requireAuth, requireRole('admin'), async (req, res) => {
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
+  if (user.anonymised_at) return res.redirect(`/privacy/person/${user.id}`);
   const identities = await db.prepare('SELECT issuer, email, last_login_at FROM user_identities WHERE user_id = ? ORDER BY id').all(user.id);
   res.render('users/form', { title: `Edit ${user.full_name}`, user, error: null, groups: ASSIGNMENT_GROUPS, userGroups: await groupsOf(user.id), mfaStatus: await mfa.status(user.id), identities, apiKeyCount: (await apiKeys.listKeys(user.id)).filter((k) => !k.revoked_at).length, sessionCount: await sessions.countFor(user.id), lockedUntil: lockout.isLocked(user) ? user.locked_until : null, resetMessage: req.query.mfa === 'reset' ? 'Two-step verification was turned off for this person. They can set it up again.' : (req.query.keys === 'revoked' ? 'All of this person\'s API keys were revoked.' : (req.query.unlocked ? 'The account is unlocked.' : (req.query.signedout ? 'Signed out everywhere.' : null))) });
 });
@@ -84,6 +85,7 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
   const b = req.body;
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', message: 'User not found.' });
+  if (user.anonymised_at) return res.status(400).render('error', { title: 'Anonymised', message: 'This person was anonymised and their account can no longer be changed.' });
   const again = (error) => res.render('users/form', { mfaStatus: null, identities: [], resetMessage: null, apiKeyCount: 0, sessionCount: null, lockedUntil: null, title: `Edit ${user.full_name}`, user: { ...user, ...b }, error, groups: ASSIGNMENT_GROUPS, userGroups: [].concat(b.groups || []) });
 
   // The last active administrator can neither be demoted nor switched off: nobody could manage NovaDesk afterwards.
@@ -171,7 +173,7 @@ router.post('/:id/delete', requireAuth, requireRole('admin'), async (req, res) =
     if (err.code === '23503') {
       return res.status(400).render('error', {
         title: 'Cannot Delete',
-        message: 'This user has existing tickets, comments, or activity history and cannot be deleted. Set them to inactive instead.'
+        message: 'This user has existing tickets, comments, or activity history and cannot be deleted. Set them to inactive instead, or anonymise them (Privacy) to remove who they were while keeping the history.'
       });
     }
     throw err;

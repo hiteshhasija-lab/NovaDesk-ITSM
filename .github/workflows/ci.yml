@@ -139,6 +139,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/import-check.js
+      - name: Privacy tools (who may, the export and what it leaves out, anonymising all or nothing, retention and the daily sweep)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/privacy-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

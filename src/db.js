@@ -41,28 +41,38 @@ function addHoursStr(baseStr, hours) {
 // @name bindings (the old node:sqlite named-param style) are translated to
 // knex's :name style; a single non-array object argument is treated as named
 // bindings, everything else as positional ? bindings.
-function prepare(sql) {
-  const pgSql = sql.replace(/@(\w+)/g, ':$1');
-  const bindingsFrom = (args) => {
-    if (args.length === 1 && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0])) {
-      return args[0];
-    }
-    return args;
-  };
-  return {
-    get: async (...args) => (await knexInstance.raw(pgSql, bindingsFrom(args))).rows[0],
-    all: async (...args) => (await knexInstance.raw(pgSql, bindingsFrom(args))).rows,
-    run: async (...args) => {
-      const result = await knexInstance.raw(pgSql, bindingsFrom(args));
-      return {
-        lastInsertRowid: result.rows[0] ? result.rows[0].id : undefined,
-        changes: result.rowCount
-      };
-    }
+function prepareOn(runner) {
+  return (sql) => {
+    const pgSql = sql.replace(/@(\w+)/g, ':$1');
+    const bindingsFrom = (args) => {
+      if (args.length === 1 && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+        return args[0];
+      }
+      return args;
+    };
+    return {
+      get: async (...args) => (await runner.raw(pgSql, bindingsFrom(args))).rows[0],
+      all: async (...args) => (await runner.raw(pgSql, bindingsFrom(args))).rows,
+      run: async (...args) => {
+        const result = await runner.raw(pgSql, bindingsFrom(args));
+        return {
+          lastInsertRowid: result.rows[0] ? result.rows[0].id : undefined,
+          changes: result.rowCount
+        };
+      }
+    };
   };
 }
+const prepare = prepareOn(knexInstance);
 
-const db = { prepare, raw: (sql, params) => knexInstance.raw(sql, params) };
+// Everything done through `tx` inside fn happens in one database transaction: all of it is kept when fn returns, none of
+// it when fn throws. tx has the same prepare(sql).get/all/run shape as db. Use it where a half-finished change would be
+// worse than none (anonymising a person); the rest of the app writes one statement at a time.
+function transaction(fn) {
+  return knexInstance.transaction((trx) => fn({ prepare: prepareOn(trx) }));
+}
+
+const db = { prepare, transaction, raw: (sql, params) => knexInstance.raw(sql, params) };
 
 // The tables are built by the numbered SQL files in src/migrations/ (see src/migrate.js): each is applied
 // once, in order, at start-up. To change the schema, add a file; never edit one that has shipped.

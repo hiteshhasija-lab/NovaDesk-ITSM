@@ -1,0 +1,67 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 900px;">
+  <p class="small mb-2"><a href="/privacy"><i class="bi bi-arrow-left"></i> Privacy</a></p>
+  <h4 class="mb-1"><%= p.full_name %>
+    <% if (p.anonymised_at) { %><span class="badge bg-dark align-middle fs-6">anonymised</span><% } else if (!p.active) { %><span class="badge bg-secondary align-middle fs-6">inactive</span><% } %></h4>
+  <p class="text-muted small"><%= p.username %><% if (p.email) { %> · <%= p.email %><% } %> · <span class="text-capitalize"><%= p.role %></span></p>
+
+  <% if (p.anonymised_at) { %>
+    <div class="alert alert-info py-2 small">This person was anonymised on <%- h.fmtDate(p.anonymised_at) %>. Nothing that says who they were is kept, and the account cannot be used again.</div>
+  <% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="section-title">What NovaDesk holds about them</h6>
+    <% if (!held.length) { %><p class="small text-muted">Nothing but the account itself.</p><% } else { %>
+    <ul class="list-unstyled small mb-3 row">
+      <% held.forEach(x => { %><li class="col-sm-6"><%= x.label %>: <strong><%= x.count %></strong></li><% }) %>
+    </ul>
+    <% } %>
+    <form method="POST" action="/privacy/person/<%= p.id %>/export" class="m-0">
+      <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i> Download everything (JSON)</button>
+      <span class="small text-muted ms-2">Their details and own words, and the facts of what they did. Never passwords or secrets, and not what other people wrote.</span>
+    </form>
+  </div></div>
+
+  <% if (!p.anonymised_at) { %>
+  <div class="card border-danger"><div class="card-body">
+    <h6 class="section-title text-danger">Anonymise this person</h6>
+    <% if (refuse) { %>
+      <p class="small mb-0"><i class="bi bi-slash-circle text-muted"></i> <%= refuse %></p>
+    <% } else { %>
+    <p class="small">The account stays, so every ticket, comment and log entry they took part in still stands and still has a time on it. But it no longer says who they were, and nobody can sign in to it again.</p>
+    <div class="row small mb-3">
+      <div class="col-md-6">
+        <div class="fw-semibold mb-1">Removed</div>
+        <ul class="ps-3 mb-0">
+          <li>Name, username, email and department</li>
+          <li>Password, single sign-on links, two-step verification, API keys and open sign-ins</li>
+          <li>Group memberships and the records they follow</li>
+          <li>Their name and email wherever they appear in notices, activity and audit logs, inbound mail and webhook copies (<%= searched.length %> thing<%= searched.length === 1 ? '' : 's' %> searched for)</li>
+          <li>The address they came from, in the audit log</li>
+        </ul>
+      </div>
+      <div class="col-md-6">
+        <div class="fw-semibold mb-1">Kept</div>
+        <ul class="ps-3 mb-0">
+          <li>The tickets, comments and files themselves (unless you choose below)</li>
+          <li>Anything other people typed about them, such as their name in someone else's description</li>
+          <li>Copies outside NovaDesk: server backups, the mail server, other connected systems</li>
+        </ul>
+      </div>
+    </div>
+    <% if (skipped.length) { %><div class="alert alert-warning py-2 small">The <%= skipped.map(s => s.kind).join(' and ') %> is shorter than <%= minLength %> characters, so it cannot be searched for safely in text (it could be part of other words). It is still removed from the account itself.</div><% } %>
+    <form method="POST" action="/privacy/person/<%= p.id %>/anonymise">
+      <div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="blank_comments" name="blank_comments"><label class="form-check-label small" for="blank_comments">Also replace the text of the comments they wrote with a note that it was removed</label></div>
+      <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="delete_files" name="delete_files"><label class="form-check-label small" for="delete_files">Also delete the files they uploaded</label></div>
+      <div class="mb-2" style="max-width:340px;"><label class="form-label small" for="confirm">Type <code><%= p.username %></code> to confirm</label>
+        <input class="form-control form-control-sm" id="confirm" name="confirm" autocomplete="off"></div>
+      <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="understand" name="understand"><label class="form-check-label small" for="understand">I understand this cannot be undone</label></div>
+      <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-person-x"></i> Anonymise</button>
+    </form>
+    <% } %>
+  </div></div>
+  <% } %>
+</div>
+<%- include('../partials/foot') %>

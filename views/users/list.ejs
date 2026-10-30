@@ -17,7 +17,7 @@
         <tbody>
           <% users.forEach(u => { %>
           <tr>
-            <td><%= u.full_name %><% if (u.created_from_email) { %> <span class="badge bg-secondary ms-1" title="Made when they first emailed the help desk. They cannot sign in until a password is set for them or they use single sign-on.">email contact</span><% } %></td>
+            <td><%= u.full_name %><% if (u.anonymised_at) { %> <span class="badge bg-dark ms-1" title="Anonymised: nothing that says who they were is kept.">anonymised</span><% } %><% if (u.created_from_email) { %> <span class="badge bg-secondary ms-1" title="Made when they first emailed the help desk. They cannot sign in until a password is set for them or they use single sign-on.">email contact</span><% } %></td>
             <td><%= u.username %></td>
             <td><%= u.email || '—' %></td>
             <td><span class="badge bg-<%= u.role === 'admin' ? 'danger' : u.role === 'agent' ? 'primary' : 'secondary' %> text-capitalize"><%= u.role %></span></td>
@@ -25,7 +25,7 @@
             <td class="small"><%= ((typeof groupsByUser !== 'undefined' && groupsByUser[u.id]) || []).join(', ') || '—' %></td>
             <td><%- u.active ? '<i class="bi bi-check-circle text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>' %></td>
             <td class="text-nowrap">
-              <a href="/users/<%= u.id %>/edit" class="btn btn-sm btn-outline-secondary">Edit</a>
+              <a href="<%= u.anonymised_at ? '/privacy/person/' + u.id : '/users/' + u.id + '/edit' %>" class="btn btn-sm btn-outline-secondary"><%= u.anonymised_at ? 'Privacy' : 'Edit' %></a>
               <% if (currentUser && u.id !== currentUser.id) { %>
               <form method="POST" action="/users/<%= u.id %>/delete" class="d-inline" data-confirm="Delete user &quot;<%= u.username %>&quot;? This cannot be undone.">
                 <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>

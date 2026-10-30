@@ -77,7 +77,7 @@ const users = {
   ],
 
   async load() {
-    const rows = await db.prepare('SELECT id, username, full_name, email, role, department, active FROM users').all();
+    const rows = await db.prepare('SELECT id, username, full_name, email, role, department, active, anonymised_at FROM users').all();
     const groups = {};
     for (const g of await db.prepare('SELECT user_id, group_name FROM user_assignment_groups').all()) (groups[g.user_id] = groups[g.user_id] || []).push(g.group_name);
     return { rows, groups };
@@ -122,6 +122,7 @@ const users = {
 
     if (existing) {
       if (mode !== 'update') return { action: 'skip', key, message: 'Already exists.' };
+      if (existing.anonymised_at) return { action: 'error', key, message: 'This person was anonymised and can no longer be changed.' };
       if (v.password) errors.push('A password cannot be set for an existing user here (use the Users page)');
       const changes = {};
       if (v.full_name && v.full_name !== existing.full_name) changes.full_name = v.full_name;

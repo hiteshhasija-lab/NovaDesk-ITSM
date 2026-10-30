@@ -98,6 +98,13 @@
       <% } %>
     </div>
   </div>
+  <div class="card mt-3" style="max-width:700px;">
+    <div class="card-body">
+      <h6 class="section-title">Privacy</h6>
+      <p class="small mb-2">See everything held about this person and download it, or anonymise the account when they have left or asked to be forgotten.</p>
+      <a href="/privacy/person/<%= user.id %>" class="btn btn-outline-secondary btn-sm"><i class="bi bi-shield-check"></i> Open privacy tools</a>
+    </div>
+  </div>
   <% } %>
 </div>
 <%- include('../partials/foot') %>
