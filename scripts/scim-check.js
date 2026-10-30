@@ -71,7 +71,11 @@ async function run(base, IDP, knex, app) {
   const jane = new Browser(base); await jane.login('jdoe', 'agent123');
   const maria = new Browser(base); await maria.login('mchen', 'user123');
   const anon = new Browser(base);
+  const auditCount = (action) => count('SELECT count(*) AS c FROM audit_log WHERE action = ?', [action]);
   const settingsBefore = await one('SELECT * FROM scim_settings');
+  // The tokens are this script's to start from: another script (the walk-through) may have left some on a shared database.
+  await q('DELETE FROM scim_tokens');
+  const revokedBefore = await auditCount('scim.token.revoked');
 
   // A SCIM client: JSON in, JSON out, the token as a bearer header.
   let TOKEN = null;
@@ -89,7 +93,6 @@ async function run(base, IDP, knex, app) {
   const userBody = (name, extra = {}) => ({ schemas: [SCHEMA_USER], userName: `${name}${tag}@corp.local`, name: { givenName: name, familyName: 'Tester' }, emails: [{ value: `${name}${tag}@corp.local`, type: 'work', primary: true }], active: true, ...extra });
   const dbUser = (id) => one('SELECT * FROM users WHERE id = ?', [id]);
   const lastAudit = (action) => one('SELECT * FROM audit_log WHERE action = ? ORDER BY id DESC LIMIT 1', [action]);
-  const auditCount = (action) => count('SELECT count(*) AS c FROM audit_log WHERE action = ?', [action]);
   const adminSettings = (s) => admin.post('/settings/scim/settings', { default_role: s.defaultRole || 'user', ...(s.allowAdmin ? { allow_admin: 'on' } : {}), ...(s.allowGroups ? { allow_groups: 'on' } : {}) });
 
   // -------------------------------------------------------------------------------------------- the admin page and tokens
@@ -129,7 +132,7 @@ async function run(base, IDP, knex, app) {
   check('a second token that never expires', Boolean(secondToken) && (await one('SELECT expires_at FROM scim_tokens WHERE name = ?', [`Second ${tag}`])).expires_at === null);
   const secondRow = await one('SELECT id FROM scim_tokens WHERE name = ?', [`Second ${tag}`]);
   const revoked = await admin.post(`/settings/scim/tokens/${secondRow.id}/revoke`);
-  check('revoking one token stops that token at once and no other', revoked.status === 200 && isError(await scim('GET', '/Users', undefined, { token: secondToken }), 401, null) && (await scim('GET', '/Users')).status === 200 && await auditCount('scim.token.revoked') === 1);
+  check('revoking one token stops that token at once and no other', revoked.status === 200 && isError(await scim('GET', '/Users', undefined, { token: secondToken }), 401, null) && (await scim('GET', '/Users')).status === 200 && await auditCount('scim.token.revoked') === revokedBefore + 1);
   check('revoking an unknown token is a 404', (await admin.post('/settings/scim/tokens/999999/revoke')).status === 404);
   for (let i = 0; i < 4; i++) await admin.post('/settings/scim/tokens', { name: `Filler ${i} ${tag}`, expires: '90' });
   const tooMany = await admin.post('/settings/scim/tokens', { name: 'One too many', expires: '90' });
@@ -261,9 +264,10 @@ async function run(base, IDP, knex, app) {
   check('her open sign-in ended at once (the session row is gone before she asks for anything)', await count('SELECT count(*) AS c FROM sessions WHERE user_id = ?', [mariaRow.id]) === 0 && (await maria.get('/profile')).status === 302);
   check('her API key was revoked (marked so in the database, and refused)', await count('SELECT count(*) AS c FROM api_keys WHERE user_id = ? AND revoked_at IS NULL', [mariaRow.id]) === 0 && (!keyHeaders || (await fetch(`${base}/api/v1/me`, { headers: keyHeaders })).status === 401));
   check('she cannot sign in again with her password', (await new Browser(base).login('mchen', 'user123')).status === 401);
+  const deactivatedBefore = await auditCount('scim.user.deactivated');
   const offAudit = await lastAudit('scim.user.deactivated');
   check('the audit says who, how many sessions and keys', offAudit.target_id === mariaRow.id && offAudit.actor_name === `SCIM: Okta ${tag}` && /session/.test(offAudit.detail) && /API key/.test(offAudit.detail));
-  check('switching off again changes nothing and writes nothing more', (await scim('PATCH', `/Users/${mariaRow.id}`, patchOps([{ op: 'replace', path: 'active', value: false }]))).status === 200 && await auditCount('scim.user.deactivated') === 1);
+  check('switching off again changes nothing and writes nothing more', (await scim('PATCH', `/Users/${mariaRow.id}`, patchOps([{ op: 'replace', path: 'active', value: false }]))).status === 200 && await auditCount('scim.user.deactivated') === deactivatedBefore);
   const on = await scim('PATCH', `/Users/${mariaRow.id}`, patchOps([{ op: 'replace', path: 'active', value: true }]));
   check('switching on again: she signs in with her own password, nothing else about her changed', on.json.active === true && (await new Browser(base).login('mchen', 'user123')).status === 302 && (await lastAudit('scim.user.reactivated')).target_id === mariaRow.id);
   check('her email, name and role are exactly as before', (await dbUser(mariaRow.id)).email === 'maria.chen@corp.local' && (await dbUser(mariaRow.id)).role === 'user');
