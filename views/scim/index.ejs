@@ -1,0 +1,84 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1100px;">
+  <h4 class="mb-2"><i class="bi bi-people-fill text-primary me-1"></i>SCIM provisioning</h4>
+  <p class="text-muted small">Lets your identity provider (Okta, Microsoft Entra ID and others) create, change and switch off people in NovaDesk by itself, so nobody has to be added or removed by hand. People it creates sign in with single sign-on; it never sets a password. Nothing can use this until you make a token below.</p>
+
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% if (newToken) { %>
+  <div class="alert alert-warning small">
+    <div class="fw-semibold mb-1">Token "<%= newToken.name %>": copy it now, it is not shown again.</div>
+    <code class="user-select-all d-block p-2 bg-body-secondary rounded" id="scimNewToken"><%= newToken.value %></code>
+    <div class="mt-2 text-muted">Paste it into your identity provider as the bearer (secret) token. Only a fingerprint is kept here, so a lost token has to be replaced.</div>
+  </div>
+  <% } %>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="section-title">Connect your provider</h6>
+        <dl class="row small mb-2">
+          <dt class="col-sm-4">Base URL</dt><dd class="col-sm-8"><code class="user-select-all"><%= baseUrl %></code></dd>
+          <dt class="col-sm-4">Authentication</dt><dd class="col-sm-8">HTTP header <code>Authorization: Bearer</code> with a token from below (Okta: "HTTP Header"; Entra ID: "Secret Token")</dd>
+          <dt class="col-sm-4">Unique identifier</dt><dd class="col-sm-8"><code>userName</code> (the person's email address works well)</dd>
+          <dt class="col-sm-4">People provisioned</dt><dd class="col-sm-8"><%= managed %> so far</dd>
+        </dl>
+        <% if (urlIsGuess) { %><div class="alert alert-warning py-2 small mb-2">This address is taken from your browser. Set <code>PUBLIC_URL</code> in the server's environment so it is always the public one.</div><% } %>
+        <p class="small text-muted mb-0">Supported: create, read, update (PUT and PATCH), switch off and delete people; filters (<code>eq co sw ew pr and or not</code>); the fixed assignment groups; paging up to 100. Not supported: bulk, sorting, passwords. See the README, "SCIM provisioning".</p>
+      </div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100"><div class="card-body">
+        <h6 class="section-title">What it may do</h6>
+        <form method="POST" action="/settings/scim/settings">
+          <div class="form-check mb-1"><input class="form-check-input" type="checkbox" id="allow_admin" name="allow_admin" <%= settings.allowAdmin ? 'checked' : '' %>><label class="form-check-label small" for="allow_admin">May make someone an administrator, or change an administrator's role</label></div>
+          <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="allow_groups" name="allow_groups" <%= settings.allowGroups ? 'checked' : '' %>><label class="form-check-label small" for="allow_groups">May change membership of the assignment groups (members of IRO-Build/Decom can approve decommissions)</label></div>
+          <div class="mb-3" style="max-width:260px;"><label class="form-label small" for="default_role">Role for a new person when the provider names none</label>
+            <select class="form-select form-select-sm" id="default_role" name="default_role"><option value="user" <%= settings.defaultRole === 'user' ? 'selected' : '' %>>User</option><option value="agent" <%= settings.defaultRole === 'agent' ? 'selected' : '' %>>Agent</option></select></div>
+          <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        </form>
+        <p class="small text-muted mt-2 mb-0">However these are set, SCIM can never switch off, demote or delete the only active administrator, and switching someone off ends their sessions and revokes their API keys.</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="section-title">Tokens</h6>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-3">
+      <thead class="table-light"><tr><th>Name</th><th>Starts with</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+        <% if (!tokens.length) { %><tr><td colspan="6" class="text-center text-muted py-3">No token yet, so SCIM is off.</td></tr><% } %>
+        <% tokens.forEach(t => { %>
+        <tr>
+          <td><%= t.name %> <% if (t.revoked_at) { %><span class="badge bg-secondary">revoked</span><% } else if (t.expires_at && t.expires_at < new Date().toISOString().slice(0, 19).replace('T', ' ')) { %><span class="badge bg-warning text-dark">expired</span><% } %></td>
+          <td><code><%= t.prefix %>…</code></td>
+          <td class="small text-muted"><%- h.fmtDate(t.created_at) %></td>
+          <td class="small text-muted"><%- t.expires_at ? h.fmtDate(t.expires_at) : 'never' %></td>
+          <td class="small text-muted"><%- t.last_used_at ? h.fmtDate(t.last_used_at) : 'never' %></td>
+          <td class="text-end"><% if (!t.revoked_at) { %><form method="POST" action="/settings/scim/tokens/<%= t.id %>/revoke" class="d-inline" data-confirm="Revoke the token &quot;<%= t.name %>&quot;? Your provider stops working until it is given a new one."><button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button></form><% } %></td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table></div>
+    <form method="POST" action="/settings/scim/tokens" class="row g-2 align-items-end">
+      <div class="col-md-4"><label class="form-label small" for="token_name">New token for</label><input class="form-control form-control-sm" id="token_name" name="name" maxlength="80" placeholder="Okta, Entra ID ..." required></div>
+      <div class="col-md-3"><label class="form-label small" for="token_expires">Expires</label>
+        <select class="form-select form-select-sm" id="token_expires" name="expires"><option value="365">in a year</option><option value="180">in 6 months</option><option value="90">in 3 months</option><option value="never">never</option></select></div>
+      <div class="col-md-2"><button type="submit" class="btn btn-sm btn-primary w-100">Make token</button></div>
+      <div class="col-12 small text-muted">At most <%= maxTokens %> active tokens. A token can only provision people; it cannot read or change tickets.</div>
+    </form>
+  </div></div>
+
+  <div class="card"><div class="card-body">
+    <h6 class="section-title">Recent SCIM activity</h6>
+    <% if (!recent.length) { %><p class="small text-muted mb-0">Nothing yet.</p><% } else { %>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <tbody><% recent.forEach(r => { %>
+        <tr><td class="small text-muted text-nowrap"><%- h.fmtDate(r.at) %></td><td><code class="small"><%= r.action %></code></td><td class="small"><%= r.actor_name || '—' %></td><td class="small"><%= r.target_name || '' %></td><td class="small text-muted"><%= r.detail || '' %></td></tr>
+      <% }) %></tbody>
+    </table></div>
+    <% } %>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

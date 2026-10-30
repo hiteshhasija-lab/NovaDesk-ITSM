@@ -397,3 +397,25 @@ test('0011: a person can be marked anonymised, and a retention limit shorter tha
     await assert.rejects(() => knex.raw(`INSERT INTO retention_rules (target, keep_days) VALUES ('audit_log', 400)`), /duplicate|unique|primary/i);
   });
 });
+
+test('0012: SCIM columns start empty, tokens are unique by hash, and the one settings row starts at the safest values', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const cols = await columns(knex, 'users');
+    for (const c of ['scim_managed', 'scim_external_id', 'scim_updated_at']) assert.ok(cols.includes(c), c);
+    await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('s', 'x', 'S')`);
+    const u = (await knex.raw(`SELECT scim_managed, scim_external_id, scim_updated_at FROM users`)).rows[0];
+    assert.deepStrictEqual(u, { scim_managed: 0, scim_external_id: null, scim_updated_at: null }, 'nobody starts managed by SCIM');
+    for (const c of ['name', 'prefix', 'token_hash', 'expires_at', 'last_used_at', 'revoked_at', 'created_by', 'created_at']) assert.ok((await columns(knex, 'scim_tokens')).includes(c), c);
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM scim_tokens')).rows[0].c), 0, 'no token until an administrator makes one');
+    await knex.raw(`INSERT INTO scim_tokens (name, prefix, token_hash) VALUES ('a', 'nds_abcd', 'h1')`);
+    await assert.rejects(() => knex.raw(`INSERT INTO scim_tokens (name, prefix, token_hash) VALUES ('b', 'nds_abcd', 'h1')`), /duplicate|unique/i);
+    assert.deepStrictEqual((await knex.raw('SELECT * FROM scim_settings')).rows, [{ id: 1, allow_admin: 0, allow_groups: 0, default_role: 'user' }]);
+    await assert.rejects(() => knex.raw(`UPDATE scim_settings SET default_role = 'admin'`), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO scim_settings (id) VALUES (2)`), /check/i);
+    const admin = (await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('adm', 'x', 'A') RETURNING id`)).rows[0].id;
+    await knex.raw(`UPDATE scim_tokens SET created_by = ?`, [admin]);
+    await knex.raw('DELETE FROM users WHERE id = ?', [admin]);
+    assert.strictEqual((await knex.raw('SELECT created_by FROM scim_tokens')).rows[0].created_by, null, 'deleting the administrator who made a token does not delete the token');
+  });
+});

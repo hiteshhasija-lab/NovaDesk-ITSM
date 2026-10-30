@@ -56,6 +56,9 @@ function createIpLimiter({ perMinute }) {
     const r = counter.hit(req.ip);
     if (r.allowed) return next();
     res.set('Retry-After', String(r.resetSeconds));
+    if (req.path.startsWith('/scim/')) {
+      return res.status(429).type('application/scim+json').send(JSON.stringify({ schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'], status: '429', detail: `Too many requests from this address. Try again in ${r.resetSeconds} seconds.` }));
+    }
     if (req.path.startsWith('/api/')) {
       return res.status(429).json({ error: { code: 'rate_limited', message: `Too many requests from this address. Try again in ${r.resetSeconds} seconds.` } });
     }

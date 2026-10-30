@@ -5,6 +5,7 @@
   <div class="card" style="max-width:600px;">
     <div class="card-body">
       <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
+      <% if (user && user.scim_managed) { %><div class="alert alert-info py-2 small"><i class="bi bi-people-fill"></i> This person is managed by your identity provider (SCIM). Changes made here, such as the name, email, role or whether the account is on, may be overwritten at its next sync.</div><% } %>
       <form method="POST" action="<%= user && user.id ? '/users/' + user.id + '/update' : '/users' %>">
         <div class="row g-3">
           <div class="col-md-6">

@@ -204,6 +204,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Users** — admin-only user management with roles and departments.
 - **Import** — users, configuration items and knowledge articles from a CSV file, with a preview before anything is saved (see *Importing data*).
 - **Privacy** — download everything held about a person, anonymise a person who has left, and set how long logs and messages are kept (see *Privacy tools*).
+- **SCIM** — an identity provider creates, changes and switches off people by itself (see *SCIM provisioning*).
 
 ## Inbound email
 
@@ -322,6 +323,55 @@ in the audit log.
 Checked by `node scripts/privacy-check.js` (runs in CI): who may use it, the contents of the file and everything it leaves
 out, what anonymising removes and keeps (including look-alike names and addresses), that a failure half-way changes
 nothing, the extras, and retention with the daily sweep, "Run now", batches and work in progress left alone.
+
+## SCIM provisioning
+
+Lets an identity provider (Okta, Microsoft Entra ID, or anything that speaks SCIM 2.0, RFC 7643 and 7644) create, change
+and switch off people in NovaDesk, so nobody has to be added or removed by hand. *SCIM provisioning* in the
+administrator's menu. People it creates sign in with single sign-on (OpenID Connect, described under Settings) (it never sets a
+password); an existing person is found by their email address the first time, as with any single sign-on.
+
+**Connect a provider**
+
+1. Set `PUBLIC_URL` (the address people reach NovaDesk at) and set up single sign-on.
+2. *SCIM provisioning* > *Make token*, one per provider. The token (`nds_...`) is shown once; only a hash is kept. It can
+   provision people and nothing else (it cannot read or change tickets), expires when you say, and is revoked at once.
+3. In the provider: base URL `https://your-novadesk/scim/v2`, authentication *HTTP header / Bearer token* with the token,
+   and `userName` as the unique identifier (the email address works well). Map `userName`, `emails` (work, primary),
+   `name` or `displayName`, `active`, optionally `externalId`, `roles` (admin, agent or user) and the enterprise
+   `department`. Okta: *Provisioning > Integration > SCIM*; Entra ID: *Enterprise application > Provisioning > Admin
+   credentials* ("Secret Token").
+
+**What it does**
+
+| Request | What NovaDesk does |
+| --- | --- |
+| `GET /Users?filter=...` | `eq ne co sw ew pr`, `and or not` and brackets on `userName`, `externalId`, `id`, `active`, `emails.value`, `displayName`; `startIndex`, `count` (100 at most); `attributes`, `excludedAttributes` |
+| `POST /Users` | creates the person (201). A `userName` or email another account already has is a 409. A pushed `password` is ignored. The role is the provider's `roles`, else the default you choose (user or agent) |
+| `PUT` / `PATCH /Users/{id}` | changes name, email, department, role, `externalId`, `userName`, `active`. PATCH understands Okta's and Entra's shapes (capitalised operations, `"False"` as text, `emails[type eq "work"].value`, no-path objects). Attributes NovaDesk keeps nothing for (title, phone numbers ...) are accepted and ignored. PUT clears what it leaves out, except the role and whether the account is on |
+| `active: false` | switches the person off: their sessions end and their API keys are revoked at once. Switching on again restores nothing else |
+| `DELETE /Users/{id}` | removes a person who has no history; a person with tickets or comments is switched off instead (their history stays whole) |
+| `GET /Groups`, `PATCH` / `PUT /Groups/{id}` | NovaDesk's eight assignment groups. They cannot be created, renamed or deleted; members can be added and removed once an administrator allows it (members of IRO-Build/Decom can approve decommissions) |
+| `/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas` | say what is supported: patch and filters yes; bulk, sort, etag and password change no |
+
+**What it may not do** (the choices are on the page, and each is off until you turn it on)
+
+- *Make or change an administrator.* Without it, SCIM cannot create an administrator or change an administrator's role
+  (it can still switch an administrator off, for someone who leaves).
+- *Change group membership.*
+- However they are set, SCIM can never switch off, demote or delete the **only active administrator**, and it cannot
+  see or change a person who was anonymised.
+- An email address belongs to one account only (single sign-on finds people by it), and a `userName` is unique whatever
+  its capitals.
+
+Every action is in the audit log under the token's name (`SCIM: Okta`), with what changed (the fields, not their
+values). Limits: `RATE_LIMIT_SCIM_PER_MIN` per token (default 600), and 30 wrong tokens from one address per 15 minutes
+slow that address down (a right token still works). A person made or changed by SCIM is marked *SCIM* on the Users
+page: edits made by hand there may be overwritten at the provider's next sync.
+
+Checked by `node scripts/scim-check.js` (runs in CI, against the mock identity provider): tokens and who may make them,
+the lifecycle the way Okta and Entra drive it, every refusal, the administrator and anonymised-person protections,
+groups, single sign-on of a provisioned person (and its refusal when switched off), the audit log, and rate limits.
 
 ## Security
 

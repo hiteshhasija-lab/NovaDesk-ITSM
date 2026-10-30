@@ -81,7 +81,7 @@ async function anonymise(personId, { actor, req = null, blankComments = false, d
     const clash = await tx.prepare('SELECT 1 FROM users WHERE username = ? AND id <> ?').get(username, person.id);
     if (clash) username = `anonymised-${person.id}-${crypto.randomBytes(3).toString('hex')}`;
     await tx.prepare(`UPDATE users SET username = ?, full_name = ?, email = NULL, department = NULL, role = 'user', active = 0,
-        email_notifications = 0, created_from_email = 0, anonymised_at = ? WHERE id = ?`).run(username, label, nowStr(), person.id);
+        email_notifications = 0, created_from_email = 0, scim_managed = 0, scim_external_id = NULL, anonymised_at = ? WHERE id = ?`).run(username, label, nowStr(), person.id);
   });
 
   // Files go after the database has committed: a rolled-back change must not have lost them.

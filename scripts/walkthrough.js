@@ -365,6 +365,37 @@ const has = (r, re) => re.test(r.text);
     return must(r.status === 200 && f && f.profile && f.profile.username === 'jdoe' && !/password_hash|\$2[aby]\$/.test(r.text), `${r.status} ${r.text.slice(0, 80)}`);
   });
 
+  section = 'scim';
+  let scimToken = null;
+  const scimCall = async (method, p, body) => {
+    const r = await fetch(`${BASE}/scim/v2${p}`, { method, headers: { Authorization: `Bearer ${scimToken}`, ...(body ? { 'Content-Type': 'application/scim+json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* none */ }
+    return { status: r.status, json };
+  };
+  await step('SCIM: administrators only; a token is shown once and nothing works without one', async () => {
+    const a = await admin.get('/settings/scim'); const j = await jane.get('/settings/scim'); const noToken = await fetch(`${BASE}/scim/v2/Users`);
+    must(a.status === 200 && j.status === 403 && noToken.status === 401, `${a.status}/${j.status}/${noToken.status}`);
+    const made = await admin.post('/settings/scim/tokens', { name: 'walk-through ' + tag, expires: '90' });
+    scimToken = (made.text.match(/id="scimNewToken">(nds_[A-Za-z0-9_-]{40})</) || [])[1];
+    return must(Boolean(scimToken), 'no token shown');
+  });
+  let scimId;
+  await step('SCIM: an identity provider creates a person, finds them again, switches them off and deletes them', async () => {
+    const name = `scim${tag}@corp.local`;
+    const made = await scimCall('POST', '/Users', { schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'], userName: name, name: { givenName: 'Sam', familyName: 'Scim' }, emails: [{ value: name, primary: true }], active: true });
+    must(made.status === 201 && made.json.userName === name, `create ${made.status}`); scimId = made.json.id;
+    const found = await scimCall('GET', `/Users?filter=${encodeURIComponent(`userName eq "${name}"`)}`); must(found.json.totalResults === 1, 'filter');
+    const off = await scimCall('PATCH', `/Users/${scimId}`, { schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'], Operations: [{ op: 'Replace', path: 'active', value: 'False' }] }); must(off.status === 200 && off.json.active === false, `patch ${off.status}`);
+    const listed = await admin.get('/users'); must(/SCIM<\/span>/.test(listed.text) && listed.text.includes(name), 'not marked in the users list');
+    const del = await scimCall('DELETE', `/Users/${scimId}`); return must(del.status === 204, `delete ${del.status}`);
+  });
+  await step('SCIM: discovery documents, and the token can be revoked', async () => {
+    const spc = await scimCall('GET', '/ServiceProviderConfig'); must(spc.status === 200 && spc.json.patch.supported === true, 'ServiceProviderConfig');
+    const id = (await admin.get('/settings/scim')).text.match(/\/settings\/scim\/tokens\/(\d+)\/revoke/)[1];
+    await admin.post(`/settings/scim/tokens/${id}/revoke`);
+    return must((await scimCall('GET', '/Users')).status === 401, 'revoked token still works');
+  });
+
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {

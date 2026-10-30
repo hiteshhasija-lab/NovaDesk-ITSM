@@ -255,7 +255,7 @@ async function run(base, knex, app) {
 
   section = 'content security policy';
   {
-    const pages = ['/login', '/', '/incidents', '/incidents/board', '/changes', '/changes/board', '/problems', '/cmdb', '/reports', '/kb', '/requests', '/profile/mfa', '/profile/sessions', '/settings/inbound', '/import', '/import/users', '/import/cmdb', '/import/kb', '/privacy', '/privacy/person/1'];
+    const pages = ['/login', '/', '/incidents', '/incidents/board', '/changes', '/changes/board', '/problems', '/cmdb', '/reports', '/kb', '/requests', '/profile/mfa', '/profile/sessions', '/settings/inbound', '/import', '/import/users', '/import/cmdb', '/import/kb', '/privacy', '/privacy/person/1', '/settings/scim'];
     const bad = []; const nonces = new Set(); let inlineSeen = 0; let policyOk = true;
     for (const pth of pages) {
       const r = pth === '/login' ? await new Browser(base).get(pth) : await admin.get(pth);

@@ -144,6 +144,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/privacy-check.js
+      - name: SCIM provisioning (tokens, the protocol as Okta and Entra speak it, protected administrators, groups, single sign-on, rate limits)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/scim-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

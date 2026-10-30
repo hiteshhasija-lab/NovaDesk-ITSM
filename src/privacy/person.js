@@ -92,7 +92,7 @@ async function counts(person) {
 const profileOf = (p) => ({
   id: p.id, username: p.username, full_name: p.full_name, email: p.email, role: p.role, department: p.department,
   active: Boolean(p.active), email_notifications: Boolean(p.email_notifications), theme: p.theme_preference,
-  created_at: p.created_at, created_from_email: Boolean(p.created_from_email), anonymised_at: p.anonymised_at || null,
+  created_at: p.created_at, created_from_email: Boolean(p.created_from_email), provisioned_by_identity_provider: Boolean(p.scim_managed), identity_provider_id: p.scim_external_id || null, anonymised_at: p.anonymised_at || null,
 });
 
 // The whole file: a plain object, ready to be written as JSON.

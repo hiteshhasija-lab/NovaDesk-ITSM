@@ -218,7 +218,7 @@ function rateLimits(env) {
     if (!Number.isInteger(n) || n < 0 || n > 1000000) throw new Error(`${name} must be a whole number of requests per minute (0 turns the limit off).`);
     return n;
   };
-  return { ipPerMinute: num('RATE_LIMIT_IP_PER_MIN', 1200), apiPerMinute: num('RATE_LIMIT_API_PER_MIN', 300), apiWritePerMinute: num('RATE_LIMIT_API_WRITE_PER_MIN', 60), loginFailuresPer15Min: num('RATE_LIMIT_LOGIN_FAILURES', 20) };
+  return { ipPerMinute: num('RATE_LIMIT_IP_PER_MIN', 1200), apiPerMinute: num('RATE_LIMIT_API_PER_MIN', 300), apiWritePerMinute: num('RATE_LIMIT_API_WRITE_PER_MIN', 60), loginFailuresPer15Min: num('RATE_LIMIT_LOGIN_FAILURES', 20), scimPerMinute: num('RATE_LIMIT_SCIM_PER_MIN', 600) };
 }
 
 // Password and lockout rules. PASSWORD_MIN_LENGTH (8 to 64, default 10). LOCKOUT_AFTER wrong passwords in a row lock
