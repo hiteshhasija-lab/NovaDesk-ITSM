@@ -60,12 +60,15 @@ async function save(submitted, { actor, req }) {
   if (Object.keys(errors).length) return { errors, changed: [] };
   const was = Object.fromEntries((await db.prepare('SELECT target, keep_days FROM retention_rules').all()).map((r) => [r.target, r.keep_days]));
   const changed = [];
-  for (const t of TARGETS) {
-    const before = was[t.id] || null;
-    if (before === wanted[t.id]) continue;
-    await db.prepare(`INSERT INTO retention_rules (target, keep_days) VALUES (?, ?) ON CONFLICT (target) DO UPDATE SET keep_days = EXCLUDED.keep_days`).run(t.id, wanted[t.id]);
-    changed.push(`${t.label}: ${before ? before + ' days' : 'kept for ever'} to ${wanted[t.id] ? wanted[t.id] + ' days' : 'kept for ever'}`);
-  }
+  // All the limits change together: a sweep that starts in the middle must not see some of them new and some old.
+  await db.transaction(async (tx) => {
+    for (const t of TARGETS) {
+      const before = was[t.id] || null;
+      if (before === wanted[t.id]) continue;
+      await tx.prepare(`INSERT INTO retention_rules (target, keep_days) VALUES (?, ?) ON CONFLICT (target) DO UPDATE SET keep_days = EXCLUDED.keep_days`).run(t.id, wanted[t.id]);
+      changed.push(`${t.label}: ${before ? before + ' days' : 'kept for ever'} to ${wanted[t.id] ? wanted[t.id] + ' days' : 'kept for ever'}`);
+    }
+  });
   if (changed.length) await audit(req, actor, 'retention.changed', { detail: changed.join('; ') });
   return { errors: {}, changed };
 }

@@ -324,6 +324,7 @@ async function run(base, knex, app) {
     await q(`INSERT INTO audit_log (at, action, detail) VALUES (?, 'test.old', ?), (?, 'test.fresh', ?)`, [ago(400), `old-${tag}`, ago(10), `fresh-${tag}`]);
   };
   await fillOld();
+  const sweepsFrom = (await one('SELECT COALESCE(MAX(id), 0) AS m FROM audit_log')).m;
   const saved = await admin.post('/privacy/retention', lim({ days_audit_log: '365', days_notifications: '90', days_inbound_emails: '30', days_webhook_deliveries: '30' }));
   check('valid limits are saved and confirmed', saved.status === 200 && /Saved/.test(saved.text) && await count('SELECT count(*) AS c FROM retention_rules WHERE keep_days IS NOT NULL') === 4 && (await one("SELECT keep_days FROM retention_rules WHERE target = 'notifications'")).keep_days === 90);
   check('the page shows how many are past their limit', /<strong>\d+<\/strong> older than the limit/.test(saved.text));
@@ -338,8 +339,8 @@ async function run(base, knex, app) {
     && await count('SELECT count(*) AS c FROM inbound_emails WHERE subject = ?', [`old-${tag}`]) === 0 && await count('SELECT count(*) AS c FROM inbound_emails WHERE subject = ?', [`busy-${tag}`]) === 1 && await count('SELECT count(*) AS c FROM inbound_emails WHERE subject = ?', [`fresh-${tag}`]) === 1
     && await count("SELECT count(*) AS c FROM webhook_deliveries WHERE payload IN (?, ?)", [`old-delivered-${tag}`, `old-failed-${tag}`]) === 0 && await count('SELECT count(*) AS c FROM webhook_deliveries WHERE payload = ?', [`old-pending-${tag}`]) === 1 && await count('SELECT count(*) AS c FROM webhook_deliveries WHERE payload = ?', [`fresh-delivered-${tag}`]) === 1
     && await count("SELECT count(*) AS c FROM audit_log WHERE detail = ?", [`old-${tag}`]) === 0 && await count("SELECT count(*) AS c FROM audit_log WHERE detail = ?", [`fresh-${tag}`]) === 1);
-  const sweepEntry = await one("SELECT * FROM audit_log WHERE action = 'retention.swept' ORDER BY id DESC LIMIT 1");
-  check('the sweep recorded itself, and the audit log sweep did not remove that record', sweepEntry && /daily/.test(sweepEntry.detail) && /Audit log 1 removed/.test(sweepEntry.detail) && /Email notices 2 removed/.test(sweepEntry.detail), sweepEntry && sweepEntry.detail);
+  const sweeps = (await q("SELECT detail FROM audit_log WHERE action = 'retention.swept' AND id > ? ORDER BY id", [sweepsFrom])).map((r) => r.detail).join(' | ');
+  check('the sweep recorded itself, and the audit log sweep did not remove that record', /daily/.test(sweeps) && /Audit log 1 removed/.test(sweeps) && /Email notices 2 removed/.test(sweeps), sweeps);
   const rule = await one("SELECT * FROM retention_rules WHERE target = 'notifications'");
   check('each kind remembers when it ran and how much it removed', rule.last_removed === 2 && /^\d{4}-/.test(rule.last_run_at));
   check('no ticket, comment or history was removed', await count('SELECT count(*) AS c FROM incidents') === incidentsBefore);
