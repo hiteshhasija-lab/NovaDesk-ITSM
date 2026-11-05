@@ -9,27 +9,27 @@ const SHAPES = {
   Sla: { due_at: 'string', status: 'string', target_minutes: 'integer?', clock: 'string?', paused: 'boolean' },
   Me: { id: 'integer', username: 'string', full_name: 'string', email: 'string?', role: 'string', key: 'object' },
   User: { id: 'integer', username: 'string', full_name: 'string', email: 'string?', role: 'string', department: 'string?', active: 'boolean' },
-  Incident: {
+  Incident: { custom_fields: 'object',
     id: 'integer', number: 'string', short_description: 'string', description: 'string?', category: 'string?', subcategory: 'string?', impact: 'integer', urgency: 'integer',
     priority: 'integer', status: 'string', caller: 'Ref?', assigned_to: 'Ref?', assignment_group: 'string?', affected_ci_id: 'integer?', problem_id: 'integer?',
     resolution_notes: 'string?', created_at: 'string', updated_at: 'string', resolved_at: 'string?', closed_at: 'string?', sla: 'Sla?', html_url: 'string?',
   },
   Comment: { id: 'integer', comment: 'string', work_note: 'boolean', author: 'Ref?', created_at: 'string' },
   CatalogItem: { id: 'integer', name: 'string', description: 'string?', category: 'string?', fulfillment_group: 'string?' },
-  Request: {
+  Request: { custom_fields: 'object',
     id: 'integer', number: 'string', status: 'string', catalog_item: 'Ref?', requested_by: 'Ref?', assigned_to: 'Ref?', assignment_group: 'string?', notes: 'string?',
     created_at: 'string', updated_at: 'string', fulfilled_at: 'string?', sla: 'Sla?', html_url: 'string?',
   },
-  Change: {
+  Change: { custom_fields: 'object',
     id: 'integer', number: 'string', short_description: 'string', description: 'string?', change_type: 'string', risk: 'string', status: 'string', approval_status: 'string',
     requested_by: 'Ref?', assigned_to: 'Ref?', assignment_group: 'string?', affected_ci_id: 'integer?', planned_start: 'string?', planned_end: 'string?',
     created_at: 'string', updated_at: 'string', closed_at: 'string?', approval_sla: 'Sla?', html_url: 'string?',
   },
-  Problem: {
+  Problem: { custom_fields: 'object',
     id: 'integer', number: 'string', short_description: 'string', description: 'string?', status: 'string', priority: 'integer', root_cause: 'string?', workaround: 'string?',
     affected_ci_id: 'integer?', raised_by: 'Ref?', assigned_to: 'Ref?', assignment_group: 'string?', created_at: 'string', updated_at: 'string', resolved_at: 'string?', closed_at: 'string?', html_url: 'string?',
   },
-  Ci: {
+  Ci: { custom_fields: 'object',
     id: 'integer', ci_number: 'string', name: 'string', ci_type: 'string', environment: 'string?', status: 'string', ip_address: 'string?', os: 'string?', manufacturer: 'string?',
     model: 'string?', serial_number: 'string?', location: 'string?', owner: 'Ref?', support_group: 'string?', cpu: 'string?', ram: 'string?', disk: 'string?',
     purchase_date: 'string?', warranty_expiry: 'string?', install_date: 'string?', notes: 'string?', created_at: 'string', updated_at: 'string', html_url: 'string?',

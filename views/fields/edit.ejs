@@ -1,0 +1,34 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 760px;">
+  <p class="small mb-2"><a href="/settings/fields#<%= field.entityType %>"><i class="bi bi-arrow-left"></i> Custom fields</a></p>
+  <h4 class="mb-1"><%= field.label %> <% if (!field.active) { %><span class="badge bg-secondary align-middle fs-6">off</span><% } %></h4>
+  <p class="text-muted small"><%= entities[field.entityType].label %> · <%= types[field.type].label %> · key <code><%= field.key %></code> · <%= used %> stored value<%= used === 1 ? '' : 's' %></p>
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <div class="card mb-3"><div class="card-body">
+    <form method="POST" action="/settings/fields/<%= field.id %>" class="row g-3">
+      <div class="col-md-8"><label class="form-label small" for="e_label">Label</label><input class="form-control form-control-sm" id="e_label" name="label" maxlength="<%= limits.label %>" value="<%= field.label %>" required></div>
+      <div class="col-md-12"><label class="form-label small" for="e_help">Help text</label><input class="form-control form-control-sm" id="e_help" name="help" maxlength="<%= limits.help %>" value="<%= field.help %>"></div>
+      <div class="col-md-8"><label class="form-label small" for="e_audience">Who sees and fills it in</label>
+        <select class="form-select form-select-sm" id="e_audience" name="audience">
+          <option value="everyone" <%= field.audience === 'everyone' ? 'selected' : '' %>>Everyone who can see the record</option>
+          <option value="staff" <%= field.audience === 'staff' ? 'selected' : '' %>>Agents and administrators only</option>
+        </select></div>
+      <div class="col-12">
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="e_required" name="required" <%= field.required ? 'checked' : '' %>><label class="form-check-label small" for="e_required">Required when someone fills in the form</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="e_active" name="active" <%= field.active ? 'checked' : '' %>><label class="form-check-label small" for="e_active">On (when off, the field is hidden everywhere and its values are kept)</label></div>
+      </div>
+      <% if (field.type === 'select') { %>
+      <div class="col-12"><label class="form-label small" for="e_options">Choices <span class="text-muted">(one per line, or <code>value|Label</code>). A choice that records use cannot be removed; rename it instead.</span></label><textarea class="form-control form-control-sm" id="e_options" name="options" rows="6"><%= optionLines %></textarea></div>
+      <% } %>
+      <div class="col-12"><button type="submit" class="btn btn-sm btn-primary">Save</button> <a href="/settings/fields#<%= field.entityType %>" class="btn btn-sm btn-outline-secondary">Back</a></div>
+    </form>
+  </div></div>
+  <div class="card border-danger"><div class="card-body">
+    <h6 class="section-title text-danger">Delete this field</h6>
+    <p class="small mb-2">Removes the field and the <%= used %> value<%= used === 1 ? '' : 's' %> stored for it. This cannot be undone. To keep the values, switch the field off instead.</p>
+    <form method="POST" action="/settings/fields/<%= field.id %>/delete" data-confirm="Delete the field &quot;<%= field.label %>&quot; and its <%= used %> stored value<%= used === 1 ? '' : 's' %>? This cannot be undone."><button type="submit" class="btn btn-sm btn-danger">Delete field</button></form>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

@@ -2,6 +2,7 @@ const fs = require('fs');
 const { db, nowStr, logActivity } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
+const customFields = require('../customFields');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 const { requireFields } = require('../validate');
@@ -58,7 +59,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/new', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { users, cis } = await loadFormLookups();
-  res.render('cmdb/form', { title: 'New Configuration Item', ci: null, users, cis, relationships: [] });
+  res.render('cmdb/form', { title: 'New Configuration Item', ci: null, users, cis, relationships: [], cf: await customFields.forPage('ci', null, req.session.user.role) });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -96,7 +97,8 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     { label: 'Date (Added)', value: r => r.created_at || '' },
     { label: 'Owner', value: r => r.owner_name || '' },
     { label: 'Serial Number', value: r => r.serial_number || '' },
-    { label: 'Warranty Expiry', value: r => r.warranty_expiry || '' }
+    { label: 'Warranty Expiry', value: r => r.warranty_expiry || '' },
+    ...(await customFields.csvColumns('ci', items, req.session.user.role))
   ]);
 
   res.setHeader('Content-Type', 'text/csv');
@@ -128,7 +130,10 @@ router.get('/decommissioned-tracker.xlsx', requireAuth, requireRole('admin', 'ag
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
+  const custom = await customFields.fromForm('ci', req.body, { role: req.session.user.role });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   const created = await cmdbActions.createCi({ actor: req.session.user, fields: req.body });
+  await custom.apply(created.id, req.session.user);
   res.redirect(`/cmdb/${created.id}`);
 });
 
@@ -163,7 +168,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     .map(r => ({ id: r.parent_ci_id, number: r.parent_number, name: r.parent_name, relationship_type: r.relationship_type }));
 
   const { users, cis } = await loadFormLookups(ci.id);
-  res.render('cmdb/show', { title: `${ci.ci_number} - ${ci.name}`, ci, relationships, upstream, downstream, relatedIncidents, relatedChanges, users, cis });
+  res.render('cmdb/show', { title: `${ci.ci_number} - ${ci.name}`, ci, relationships, upstream, downstream, relatedIncidents, relatedChanges, users, cis, cf: await customFields.forPage('ci', ci.id, req.session.user.role) });
 });
 
 // One-click maintenance mode for a server (CI): in use or in stock -> Maintenance, and back to the
@@ -214,14 +219,17 @@ router.get('/:id/edit', requireAuth, requireRole('admin', 'agent'), async (req, 
   const ci = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(req.params.id);
   if (!ci) return res.status(404).render('error', { title: 'Not Found', message: 'Configuration item not found.' });
   const { users, cis } = await loadFormLookups(ci.id);
-  res.render('cmdb/form', { title: `Edit ${ci.ci_number}`, ci, users, cis, relationships: [] });
+  res.render('cmdb/form', { title: `Edit ${ci.ci_number}`, ci, users, cis, relationships: [], cf: await customFields.forPage('ci', ci.id, req.session.user.role) });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['name', 'Name'], ['ci_type', 'Type']])) return;
   const existing = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Configuration item not found.' });
+  const custom = await customFields.fromForm('ci', req.body, { role: req.session.user.role, existingId: existing.id });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   await cmdbActions.updateCi({ existing, fields: req.body });
+  await custom.apply(existing.id, req.session.user);
   res.redirect(`/cmdb/${req.params.id}`);
 });
 

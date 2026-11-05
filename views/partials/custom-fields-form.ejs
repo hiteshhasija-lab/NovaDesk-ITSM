@@ -1,0 +1,28 @@
+<%# The custom fields of a record as form inputs. Expects `cf`: [{ key, label, type, required, help, options, value, audience }]. Goes inside a .row; pass compact: true in a narrow column (one field per line). %>
+<% (typeof cf !== 'undefined' && cf ? cf : []).forEach(function (f) { const id = 'cf_' + f.key; const narrow = typeof compact !== 'undefined' && compact; %>
+<div class="col-md-<%= narrow || f.type === 'textarea' ? 12 : 6 %>">
+  <% if (f.type === 'checkbox') { %>
+    <div class="form-check mt-md-4">
+      <input class="form-check-input" type="checkbox" id="<%= id %>" name="<%= id %>" <%= f.value === 'true' ? 'checked' : '' %> <%= f.required ? 'required' : '' %>>
+      <label class="form-check-label" for="<%= id %>"><%= f.label %><%= f.required ? ' *' : '' %><% if (f.audience === 'staff') { %> <span class="badge bg-secondary">staff only</span><% } %></label>
+    </div>
+  <% } else { %>
+    <label class="form-label" for="<%= id %>"><%= f.label %><%= f.required ? ' *' : '' %><% if (f.audience === 'staff') { %> <span class="badge bg-secondary">staff only</span><% } %></label>
+    <% if (f.type === 'textarea') { %>
+      <textarea class="form-control" id="<%= id %>" name="<%= id %>" rows="3" maxlength="4000" <%= f.required ? 'required' : '' %>><%= f.value %></textarea>
+    <% } else if (f.type === 'select') { %>
+      <select class="form-select" id="<%= id %>" name="<%= id %>" <%= f.required ? 'required' : '' %>>
+        <option value="">—</option>
+        <% f.options.forEach(function (o) { %><option value="<%= o.value %>" <%= f.value === o.value ? 'selected' : '' %>><%= o.label %></option><% }) %>
+      </select>
+    <% } else if (f.type === 'number') { %>
+      <input type="number" step="any" class="form-control" id="<%= id %>" name="<%= id %>" value="<%= f.value %>" <%= f.required ? 'required' : '' %>>
+    <% } else if (f.type === 'date') { %>
+      <input type="date" class="form-control" id="<%= id %>" name="<%= id %>" value="<%= f.value %>" <%= f.required ? 'required' : '' %>>
+    <% } else { %>
+      <input type="text" class="form-control" id="<%= id %>" name="<%= id %>" maxlength="255" value="<%= f.value %>" <%= f.required ? 'required' : '' %>>
+    <% } %>
+  <% } %>
+  <% if (f.help) { %><div class="form-text"><%= f.help %></div><% } %>
+</div>
+<% }) %>

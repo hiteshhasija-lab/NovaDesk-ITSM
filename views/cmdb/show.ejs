@@ -105,6 +105,7 @@
             <dt class="col-sm-4">Warranty Expiry</dt><dd class="col-sm-8"><%= ci.warranty_expiry || '—' %></dd>
             <dt class="col-sm-4">Install Date</dt><dd class="col-sm-8"><%= ci.install_date || '—' %></dd>
             <dt class="col-sm-4">Notes</dt><dd class="col-sm-8"><%= ci.notes || '—' %></dd>
+            <%- include('../partials/custom-fields-view', { cols: 4 }) %>
           </dl>
         </div>
       </div>

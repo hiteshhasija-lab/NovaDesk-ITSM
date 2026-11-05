@@ -1,5 +1,6 @@
 const { db } = require('../db');
 const requestActions = require('../requestActions');
+const customFields = require('../customFields');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
 const { requireFields } = require('../validate');
@@ -34,13 +35,16 @@ router.post('/manage/:id/toggle', requireAuth, requireRole('admin'), async (req,
 router.get('/:id/request', requireAuth, async (req, res) => {
   const item = await db.prepare('SELECT * FROM catalog_items WHERE id = ? AND active = 1').get(req.params.id);
   if (!item) return res.status(404).render('error', { title: 'Not Found', message: 'Catalog item not found.' });
-  res.render('catalog/request-form', { title: `Request: ${item.name}`, item });
+  res.render('catalog/request-form', { title: `Request: ${item.name}`, item, cf: await customFields.forPage('request', null, req.session.user.role) });
 });
 
 router.post('/:id/request', requireAuth, async (req, res) => {
   const item = await db.prepare('SELECT * FROM catalog_items WHERE id = ? AND active = 1').get(req.params.id);
   if (!item) return res.status(404).render('error', { title: 'Not Found', message: 'Catalog item not found.' });
+  const custom = await customFields.fromForm('request', req.body, { role: req.session.user.role });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   const created = await requestActions.createServiceRequest({ actor: req.session.user, item, notes: req.body.notes });
+  await custom.apply(created.id, req.session.user);
   res.redirect(`/requests/${created.id}`);
 });
 

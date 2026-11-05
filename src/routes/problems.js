@@ -1,6 +1,7 @@
 const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { PROBLEM_STATUS_LABELS, PRIORITY_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
+const customFields = require('../customFields');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
@@ -111,7 +112,8 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     { label: 'Workaround', value: r => r.workaround || '' },
     { label: 'Created', value: r => r.created_at },
     { label: 'Resolved', value: r => r.resolved_at || '' },
-    { label: 'Closed', value: r => r.closed_at || '' }
+    { label: 'Closed', value: r => r.closed_at || '' },
+    ...(await customFields.csvColumns('problem', problems, req.session.user.role))
   ]);
 
   res.setHeader('Content-Type', 'text/csv');
@@ -121,12 +123,14 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
 router.get('/new', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const { users, cis } = await loadFormLookups();
-  res.render('problems/form', { title: 'New Problem', problem: null, users, cis });
+  res.render('problems/form', { title: 'New Problem', problem: null, users, cis, cf: await customFields.forPage('problem', null, req.session.user.role) });
 });
 
 router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
+  const custom = await customFields.fromForm('problem', b, { role: req.session.user.role });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   const number = await nextNumber('problem', 'PRB');
   const info = await db.prepare(`
     INSERT INTO problems (number, short_description, description, priority, affected_ci_id, raised_by, assigned_to, assignment_group)
@@ -144,6 +148,7 @@ router.post('/', requireAuth, requireRole('admin', 'agent'), async (req, res) =>
   });
 
   await logActivity('problem', info.lastInsertRowid, req.session.user.id, 'Problem raised');
+  await custom.apply(info.lastInsertRowid, req.session.user);
   res.redirect(`/problems/${info.lastInsertRowid}`);
 });
 
@@ -183,7 +188,7 @@ router.get('/:id', requireAuth, requireRole('admin', 'agent'), async (req, res) 
   const attachments = await getAttachments('problem', problem.id);
   const watchers = await getWatchers('problem', problem.id);
   const watching = await isWatching('problem', problem.id, req.session.user.id);
-  res.render('problems/show', { title: problem.number, problem, linkedIncidents, timeline, users, cis, attachments, watchers, watching });
+  res.render('problems/show', { title: problem.number, problem, linkedIncidents, timeline, users, cis, attachments, watchers, watching, cf: await customFields.forPage('problem', problem.id, req.session.user.role) });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -191,6 +196,8 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   const b = req.body;
   const existing = await db.prepare('SELECT * FROM problems WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Problem not found.' });
+  const custom = await customFields.fromForm('problem', b, { role: req.session.user.role, existingId: existing.id });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
 
   const status = b.status || existing.status;
   let resolved_at = existing.resolved_at;
@@ -237,6 +244,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     });
   }
 
+  await custom.apply(existing.id, req.session.user);
   res.redirect(`/problems/${req.params.id}`);
 });
 

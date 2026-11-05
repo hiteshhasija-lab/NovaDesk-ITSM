@@ -2,6 +2,7 @@ const dayjs = require('dayjs');
 const { db, nextNumber, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { CHANGE_STATUS_LABELS, toCsv, escapeHtml, reportRangeCutoff } = require('../helpers');
+const customFields = require('../customFields');
 const { sendNotification } = require('../mailer');
 const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, notifyWatchers, purgeCollabData } = require('../collab');
 const { pushDecomThinking, pushDecomUpdate, decomTargets } = require('../novaconnect');
@@ -104,7 +105,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/new', requireAuth, async (req, res) => {
   const { users, cis } = await loadFormLookups();
-  res.render('changes/form', { title: 'New Change Request', change: null, users, cis });
+  res.render('changes/form', { title: 'New Change Request', change: null, users, cis, cf: await customFields.forPage('change', null, req.session.user.role) });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -152,7 +153,8 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     { label: 'Assigned To', value: r => r.assigned_name || '' },
     { label: 'Affected CI', value: r => r.ci_name || '' },
     { label: 'Planned Start', value: r => r.planned_start || '' },
-    { label: 'Created', value: r => r.created_at }
+    { label: 'Created', value: r => r.created_at },
+    ...(await customFields.csvColumns('change', changes, req.session.user.role))
   ]);
 
   res.setHeader('Content-Type', 'text/csv');
@@ -281,6 +283,8 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'agent'), async (re
 router.post('/', requireAuth, async (req, res) => {
   if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
+  const custom = await customFields.fromForm('change', b, { role: req.session.user.role });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   const number = await nextNumber('change', 'CHG');
   const info = await db.prepare(`
     INSERT INTO changes (number, short_description, description, change_type, risk, status, requested_by,
@@ -305,6 +309,7 @@ router.post('/', requireAuth, async (req, res) => {
   });
 
   await logActivity('change', info.lastInsertRowid, req.session.user.id, 'Change request created');
+  await custom.apply(info.lastInsertRowid, req.session.user);
   await notifyOnCreate(info.lastInsertRowid);
 
   res.redirect(`/changes/${info.lastInsertRowid}`);
@@ -387,7 +392,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   const isDecom = !!(change.novaconnect_channel_id || change.novaconnect_conversation_id);
   const chatSync = isDecom && req.session.user.role !== 'user' ? await describePendingCards(change.id) : [];
   const canDecideApproval = await mayDecideApproval(req.session.user, change);
-  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice, chatSync, canDecideApproval });
+  res.render('changes/show', { title: change.number, change, timeline, tasks, users, cis, attachments, watchers, watching, notice, chatSync, canDecideApproval, cf: await customFields.forPage('change', change.id, req.session.user.role) });
 });
 
 router.post('/:id/tasks/:taskId/toggle', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -528,6 +533,8 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
   if (approval_status !== existing.approval_status && !(await mayDecideApproval(req.session.user, existing))) {
     return res.status(403).render('error', { title: 'Not allowed', message: NOT_ALLOWED_MESSAGE });
   }
+  const custom = await customFields.fromForm('change', b, { role: req.session.user.role, existingId: existing.id });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
 
   await db.prepare(`
     UPDATE changes SET short_description=@short_description, description=@description, change_type=@change_type,
@@ -599,6 +606,7 @@ router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (re
     });
   }
 
+  await custom.apply(existing.id, req.session.user);
   res.redirect(`/changes/${req.params.id}`);
 });
 

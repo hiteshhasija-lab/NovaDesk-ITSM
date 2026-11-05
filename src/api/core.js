@@ -61,6 +61,10 @@ function parseFields(schema, input, { partial = false, where = 'body' } = {}) {
         if (typeof value !== 'boolean') { errors.push({ field: key, message: 'must be true or false' }); break; }
         out[key] = value;
         break;
+      case 'object':
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) { errors.push({ field: key, message: 'must be an object' }); break; }
+        out[key] = value;
+        break;
       case 'date':
         if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) { errors.push({ field: key, message: 'must be a date like 2026-12-31' }); break; }
         out[key] = value;

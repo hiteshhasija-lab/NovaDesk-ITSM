@@ -2,6 +2,7 @@ const { db, logActivity, nowStr } = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { REQUEST_STATUS_LABELS, toCsv, reportRangeCutoff } = require('../helpers');
 const requestActions = require('../requestActions');
+const customFields = require('../customFields');
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 
@@ -96,7 +97,8 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     { label: 'Assigned To', value: r => r.assigned_name || '' },
     { label: 'Notes', value: r => r.notes || '' },
     { label: 'Created', value: r => r.created_at },
-    { label: 'Fulfilled', value: r => r.fulfilled_at || '' }
+    { label: 'Fulfilled', value: r => r.fulfilled_at || '' },
+    ...(await customFields.csvColumns('request', requests, req.session.user.role))
   ]);
 
   res.setHeader('Content-Type', 'text/csv');
@@ -128,13 +130,16 @@ router.get('/:id', requireAuth, async (req, res) => {
 
   const staffUsers = await db.prepare("SELECT id, full_name FROM users WHERE active = 1 AND role != 'user' ORDER BY full_name").all();
 
-  res.render('catalog/request-show', { title: request.number, request, activity, staffUsers });
+  res.render('catalog/request-show', { title: request.number, request, activity, staffUsers, cf: await customFields.forPage('request', request.id, req.session.user.role) });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   const existing = await db.prepare('SELECT * FROM service_requests WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Request not found.' });
+  const custom = await customFields.fromForm('request', req.body, { role: req.session.user.role, existingId: existing.id });
+  if (custom.errors.length) return customFields.refuse(res, custom.errors);
   await requestActions.updateServiceRequest({ actor: req.session.user, existing, fields: req.body });
+  await custom.apply(existing.id, req.session.user);
   res.redirect(`/requests/${req.params.id}`);
 });
 

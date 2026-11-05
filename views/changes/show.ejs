@@ -73,6 +73,7 @@
               <dt class="col-sm-3">Affected CI</dt><dd class="col-sm-9"><%= change.ci_name ? change.ci_number + ' — ' + change.ci_name : '—' %></dd>
               <dt class="col-sm-3">Implementation Plan</dt><dd class="col-sm-9"><%= change.implementation_plan || '—' %></dd>
               <dt class="col-sm-3">Backout Plan</dt><dd class="col-sm-9"><%= change.backout_plan || '—' %></dd>
+              <%- include('../partials/custom-fields-view') %>
             </dl>
             <% if (change.requested_by === currentUser.id && ['draft','submitted'].includes(change.status)) { %>
             <hr>
@@ -158,6 +159,7 @@
                 <label class="form-label">Backout Plan</label>
                 <textarea name="backout_plan" class="form-control" rows="3"><%= change.backout_plan || '' %></textarea>
               </div>
+              <%- include('../partials/custom-fields-form') %>
             </div>
             <div class="mt-3">
               <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>

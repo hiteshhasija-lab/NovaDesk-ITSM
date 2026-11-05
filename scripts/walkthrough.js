@@ -396,6 +396,27 @@ const has = (r, re) => re.test(r.text);
     return must((await scimCall('GET', '/Users')).status === 401, 'revoked token still works');
   });
 
+  section = 'custom fields';
+  let cfId; const cfKey = `wk_${tag}`;
+  await step('custom fields: administrators only; a field is defined, then asked for on the incident form', async () => {
+    const a = await admin.get('/settings/fields'); const j = await jane.get('/settings/fields'); must(a.status === 200 && j.status === 403, `${a.status}/${j.status}`);
+    const made = await admin.post('/settings/fields', { entity_type: 'incident', label: `Walk-through ${tag}`, key: cfKey, field_type: 'text', audience: 'everyone' }); must(made.status === 200, `define ${made.status}`);
+    cfId = (await admin.get('/settings/fields')).text.match(new RegExp(`/settings/fields/(\\d+)">Walk-through ${tag}`))[1];
+    return must((await admin.get('/incidents/new')).text.includes(`name="cf_${cfKey}"`), 'not on the form');
+  });
+  await step('a value is saved with the incident, shown on its page and in the API', async () => {
+    const made = await admin.post('/incidents', { short_description: `Custom field walk-through ${tag}`, [`cf_${cfKey}`]: 'CC-WALK' }); must(made.status === 302, `create ${made.status}`);
+    const id = made.loc.split('/').pop();
+    must(new RegExp(`name="cf_${cfKey}"[^>]*value="CC-WALK"`).test((await admin.get(`/incidents/${id}`)).text), 'not on the page');
+    const key = (await admin.post('/profile/api-keys', { name: 'cf walk ' + tag, scope: 'read', expires: '' })).text.match(/ndk_[A-Za-z0-9_-]{40}/)[0];
+    const api = await fetch(`${BASE}/api/v1/incidents/${id}`, { headers: { Authorization: `Bearer ${key}` } }).then((r) => r.json());
+    return must(api.custom_fields && api.custom_fields[cfKey] === 'CC-WALK', JSON.stringify(api.custom_fields));
+  });
+  await step('the field is deleted again, and the form no longer asks for it', async () => {
+    const del = await admin.post(`/settings/fields/${cfId}/delete`); must(del.status === 200, `delete ${del.status}`);
+    return must(!(await admin.get('/incidents/new')).text.includes(`name="cf_${cfKey}"`), 'still on the form');
+  });
+
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {

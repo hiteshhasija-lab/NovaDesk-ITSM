@@ -269,7 +269,7 @@ async function run(base, knex, app) {
   section = 'anonymise: all or nothing';
   const RJ = `/privacy/person/${raj.id}`;
   await q(`CREATE OR REPLACE FUNCTION priv_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced failure'; END $$ LANGUAGE plpgsql`);
-  await q(`CREATE TRIGGER priv_fail BEFORE UPDATE ON webhook_deliveries FOR EACH ROW EXECUTE FUNCTION priv_fail()`);
+  await q(`CREATE TRIGGER priv_fail BEFORE UPDATE ON imports FOR EACH ROW EXECUTE FUNCTION priv_fail()`);
   const rajBefore = JSON.stringify(await one('SELECT * FROM users WHERE id = ?', [raj.id]));
   const rajCounts = async () => JSON.stringify([await count('SELECT count(*) AS c FROM user_identities WHERE user_id = ?', [raj.id]), await count('SELECT count(*) AS c FROM user_mfa WHERE user_id = ?', [raj.id]), await count('SELECT count(*) AS c FROM api_keys WHERE user_id = ?', [raj.id]), await count('SELECT count(*) AS c FROM watchers WHERE user_id = ?', [raj.id]), await count('SELECT count(*) AS c FROM notifications WHERE body LIKE ?', [`%${raj.name}%`]), await count('SELECT count(*) AS c FROM attachments WHERE uploaded_by = ?', [raj.id]), await count("SELECT count(*) AS c FROM incident_comments WHERE comment = 'R-comment by the person'")]);
   const countsBefore = await rajCounts();
@@ -277,7 +277,7 @@ async function run(base, knex, app) {
   check('a failure in the middle shows an error, not success', failing.status >= 500 || failing.status === 400, failing.status);
   check('and nothing at all was changed: the account, sign-in methods, text, comments and files are as they were', JSON.stringify(await one('SELECT * FROM users WHERE id = ?', [raj.id])) === rajBefore && await rajCounts() === countsBefore && fs.existsSync(path.join(uploadRoot, 'incident', rr.mine)));
   check('no "anonymised" entry was written for the failed try', await count("SELECT count(*) AS c FROM audit_log WHERE action = 'privacy.anonymised' AND target_id = ?", [raj.id]) === 0);
-  await q('DROP TRIGGER priv_fail ON webhook_deliveries'); await q('DROP FUNCTION priv_fail()');
+  await q('DROP TRIGGER priv_fail ON imports'); await q('DROP FUNCTION priv_fail()');
 
   section = 'anonymise: the extras';
   const bystanderComment = await count("SELECT count(*) AS c FROM incident_comments WHERE comment = 'R-reply by the bystander'");

@@ -99,6 +99,7 @@
             <label class="form-label">Notes</label>
             <textarea name="notes" class="form-control" rows="3"><%= ci ? (ci.notes||'') : '' %></textarea>
           </div>
+          <%- include('../partials/custom-fields-form') %>
         </div>
         <div class="mt-4">
           <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> <%= ci ? 'Save Changes' : 'Create CI' %></button>

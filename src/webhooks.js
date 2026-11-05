@@ -4,6 +4,7 @@
 'use strict';
 const crypto = require('crypto');
 const { db, nowStr } = require('./db');
+const customFields = require('./customFields');
 const { encryptSecret, decryptSecret } = require('./mfaCrypto');
 const net = require('./webhookNet');
 const { entityLoaders, commentOut } = require('./api/resources');
@@ -68,6 +69,8 @@ async function buildPayload(row, eventId) {
   const record = snapshot ? { ...(current || {}), ...snapshot } : current;
   if (!record) return null;
   const type = `${row.entity}.${row.op}`;
+  // A receiver gets every active custom field (it is an integration an administrator set up, not a person), as they stand when the event is sent.
+  if (customFields.ENTITIES[row.entity]) await customFields.attachToRows(row.entity, [record], 'admin');
   const payload = { id: eventId, type, created_at: iso(row.created_at), data: { [row.entity]: loader.out(record) } };
   if (row.op === 'status_changed') payload.previous = { status: row.previous_status };
   if (row.op === 'commented' && row.child_id) {

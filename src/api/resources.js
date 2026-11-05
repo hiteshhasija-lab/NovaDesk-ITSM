@@ -7,7 +7,8 @@ const { slaStatus, requestSlaStatus, changeSlaStatus } = require('../helpers');
 const incidentActions = require('../incidentActions');
 const requestActions = require('../requestActions');
 const cmdbActions = require('../cmdbActions');
-const { respond, notFound, forbidden, unprocessable, PAGING, paging, iso, idParam } = require('./core');
+const customFields = require('../customFields');
+const { respond, notFound, forbidden, unprocessable, badRequest, PAGING, paging, iso, idParam } = require('./core');
 
 const STAFF = ['admin', 'agent'];
 const isStaff = (user) => STAFF.includes(user.role);
@@ -24,6 +25,16 @@ const publicUrl = (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
 const htmlUrl = (path) => (publicUrl ? `${publicUrl}${path}` : null);
 const ref = (id, name) => (id ? { id, name: name || null } : null);
 
+// Adds the custom fields the caller may see to rows loaded from the database, so the serializers can show them.
+const withCustom = async (entity, req, rows) => { await customFields.attachToRows(entity, rows, req.api.user.role); return rows; };
+// The custom_fields of a request body: checked before anything is made, stored after. A bad one is a 400 with a reason per field.
+const customIn = async (entity, req, body, opts = {}) => {
+  const c = await customFields.fromApi(entity, body.custom_fields, { role: req.api.user.role, ...opts });
+  if (c.errors.length) throw badRequest('custom_fields is not valid.', c.errors);
+  return c;
+};
+const CUSTOM_BODY = { custom_fields: { type: 'object', description: 'Values for the custom fields set up under Settings > Custom fields, as { "key": value }. A key you leave out is left alone (on create it counts as empty); null clears a value.' } };
+
 const slaOut = (row, state) => (row.sla_due_at ? { due_at: iso(row.sla_due_at), status: state.key, target_minutes: row.sla_target_minutes || null, clock: row.sla_clock || null, paused: Boolean(row.sla_paused_at) } : null);
 
 // ---------------------------------------------------------------- serializers (the documented shapes)
@@ -34,12 +45,14 @@ const incidentOut = (r) => ({
   affected_ci_id: r.affected_ci_id, problem_id: r.problem_id, resolution_notes: r.resolution_notes,
   created_at: iso(r.created_at), updated_at: iso(r.updated_at), resolved_at: iso(r.resolved_at), closed_at: iso(r.closed_at),
   sla: slaOut(r, slaStatus(r)), html_url: htmlUrl(`/incidents/${r.id}`),
+  ...(r.custom_fields ? { custom_fields: r.custom_fields } : {}),
 });
 const requestOut = (r) => ({
   id: r.id, number: r.number, status: r.status, catalog_item: ref(r.catalog_item_id, r.item_name), requested_by: ref(r.requested_by, r.requester_name),
   assigned_to: ref(r.assigned_to, r.assigned_name), assignment_group: r.assignment_group, notes: r.notes,
   created_at: iso(r.created_at), updated_at: iso(r.updated_at), fulfilled_at: iso(r.fulfilled_at),
   sla: slaOut(r, requestSlaStatus(r)), html_url: htmlUrl(`/requests/${r.id}`),
+  ...(r.custom_fields ? { custom_fields: r.custom_fields } : {}),
 });
 const changeOut = (r) => ({
   id: r.id, number: r.number, short_description: r.short_description, description: r.description, change_type: r.change_type, risk: r.risk,
@@ -47,18 +60,21 @@ const changeOut = (r) => ({
   assignment_group: r.assignment_group, affected_ci_id: r.affected_ci_id, planned_start: r.planned_start, planned_end: r.planned_end,
   created_at: iso(r.created_at), updated_at: iso(r.updated_at), closed_at: iso(r.closed_at),
   approval_sla: slaOut(r, changeSlaStatus(r)), html_url: htmlUrl(`/changes/${r.id}`),
+  ...(r.custom_fields ? { custom_fields: r.custom_fields } : {}),
 });
 const problemOut = (r) => ({
   id: r.id, number: r.number, short_description: r.short_description, description: r.description, status: r.status, priority: r.priority,
   root_cause: r.root_cause, workaround: r.workaround, affected_ci_id: r.affected_ci_id, raised_by: ref(r.raised_by, r.raiser_name), assigned_to: ref(r.assigned_to, r.assigned_name),
   assignment_group: r.assignment_group, created_at: iso(r.created_at), updated_at: iso(r.updated_at), resolved_at: iso(r.resolved_at), closed_at: iso(r.closed_at),
   html_url: htmlUrl(`/problems/${r.id}`),
+  ...(r.custom_fields ? { custom_fields: r.custom_fields } : {}),
 });
 const ciOut = (r) => ({
   id: r.id, ci_number: r.ci_number, name: r.name, ci_type: r.ci_type, environment: r.environment, status: r.status, ip_address: r.ip_address, os: r.os,
   manufacturer: r.manufacturer, model: r.model, serial_number: r.serial_number, location: r.location, owner: ref(r.owner_id, r.owner_name), support_group: r.support_group,
   cpu: r.cpu, ram: r.ram, disk: r.disk, purchase_date: r.purchase_date, warranty_expiry: r.warranty_expiry, install_date: r.install_date, notes: r.notes,
   created_at: iso(r.created_at), updated_at: iso(r.updated_at), html_url: htmlUrl(`/cmdb/${r.id}`),
+  ...(r.custom_fields ? { custom_fields: r.custom_fields } : {}),
 });
 const articleOut = (r, withBody) => ({
   id: r.id, number: r.number, title: r.title, category: r.category, status: r.status, author: ref(r.author_id, r.author_name), view_count: r.view_count,
@@ -115,6 +131,7 @@ function register(api) {
   const loadIncident = async (req, id) => {
     const row = await db.prepare(`${INCIDENT_SELECT} WHERE i.id = ?`).get(id);
     if (!row || (!isStaff(req.api.user) && row.caller_id !== req.api.user.id)) throw notFound('Incident');
+    await withCustom('incident', req, [row]);
     return row;
   };
   const INCIDENT_FIELDS = {
@@ -141,6 +158,7 @@ function register(api) {
     const p = paging(query);
     const total = Number((await db.prepare(`SELECT COUNT(*) AS c FROM incidents i WHERE ${where.join(' AND ')}`).get(...params)).c);
     const rows = await db.prepare(`${INCIDENT_SELECT} WHERE ${where.join(' AND ')} ORDER BY i.id DESC LIMIT ? OFFSET ?`).all(...params, p.perPage, p.offset);
+    await withCustom('incident', req, rows);
     return list(rows, total, p, incidentOut);
   });
 
@@ -150,28 +168,32 @@ function register(api) {
   route('POST', '/incidents', { tag: 'Incidents', summary: 'Create an incident', description: 'Send an Idempotency-Key header to make a retry safe. Agents and administrators may also set caller_id and assigned_to; for end users the caller is always themselves.', scope: 'write', status: 201, response: 'Incident',
     body: { ...INCIDENT_FIELDS, short_description: { ...INCIDENT_FIELDS.short_description, required: true },
       caller_id: { type: 'integer', min: 1, description: 'Agents and administrators only. Default: the key\'s owner.' },
-      assigned_to: { type: 'integer', min: 1, nullable: true, description: 'Agents and administrators only: an active agent or administrator.' } } },
+      assigned_to: { type: 'integer', min: 1, nullable: true, description: 'Agents and administrators only: an active agent or administrator.' }, ...CUSTOM_BODY } },
   async (req, { body }) => {
     const staff = isStaff(req.api.user);
     if (!staff && (body.caller_id !== undefined || body.assigned_to !== undefined)) throw forbidden('Only agents and administrators can set caller_id or assigned_to.');
     if (body.caller_id) await mustUser(body.caller_id, 'caller_id');
     if (body.assigned_to) await mustUser(body.assigned_to, 'assigned_to', { staffOnly: true });
     if (body.affected_ci_id) await mustExist('cmdb_ci', body.affected_ci_id, 'affected_ci_id');
+    const custom = await customIn('incident', req, body, { creating: true });
     const created = await incidentActions.createIncident({ actor: req.api.user, fields: { ...body, caller_id: staff ? (body.caller_id || req.api.user.id) : req.api.user.id, assigned_to: staff ? body.assigned_to : null } });
+    await custom.apply(created.id, req.api.user);
     return respond(incidentOut(await loadIncident(req, created.id)), { status: 201, headers: { Location: `/api/v1/incidents/${created.id}` } });
   });
 
   route('PATCH', '/incidents/:id', { tag: 'Incidents', summary: 'Change an incident', description: 'Send only the fields to change. Moving to On Hold stops the SLA clock; a new impact or urgency recalculates the priority and the SLA target.', scope: 'write', roles: STAFF, response: 'Incident', partialBody: true,
     body: { ...INCIDENT_FIELDS, status: { type: 'enum', values: INCIDENT_STATUSES }, resolution_notes: { type: 'string', max: 10000, nullable: true },
-      assigned_to: { type: 'integer', min: 1, nullable: true, description: 'An active agent or administrator; null unassigns.' }, problem_id: { type: 'integer', min: 1, nullable: true } } },
+      assigned_to: { type: 'integer', min: 1, nullable: true, description: 'An active agent or administrator; null unassigns.' }, problem_id: { type: 'integer', min: 1, nullable: true }, ...CUSTOM_BODY } },
   async (req, { body }) => {
     const existing = await loadIncident(req, idParam(req));
+    const custom = await customIn('incident', req, body, { existingId: existing.id });
     if (body.assigned_to) await mustUser(body.assigned_to, 'assigned_to', { staffOnly: true });
     if (body.affected_ci_id) await mustExist('cmdb_ci', body.affected_ci_id, 'affected_ci_id');
     if (body.problem_id) await mustExist('problems', body.problem_id, 'problem_id');
     const keep = ['short_description', 'description', 'category', 'subcategory', 'impact', 'urgency', 'status', 'assigned_to', 'assignment_group', 'affected_ci_id', 'resolution_notes', 'problem_id'];
     const fields = Object.fromEntries(keep.map((k) => [k, Object.prototype.hasOwnProperty.call(body, k) ? body[k] : existing[k]]));
     await incidentActions.updateIncident({ actor: req.api.user, existing, fields });
+    await custom.apply(existing.id, req.api.user);
     return incidentOut(await loadIncident(req, existing.id));
   });
 
@@ -199,6 +221,7 @@ function register(api) {
   const loadRequest = async (req, id) => {
     const row = await db.prepare(`${REQUEST_SELECT} WHERE r.id = ?`).get(id);
     if (!row || (!isStaff(req.api.user) && row.requested_by !== req.api.user.id)) throw notFound('Request');
+    await withCustom('request', req, [row]);
     return row;
   };
 
@@ -220,6 +243,7 @@ function register(api) {
     const p = paging(query);
     const total = Number((await db.prepare(`SELECT COUNT(*) AS c FROM service_requests r WHERE ${where.join(' AND ')}`).get(...params)).c);
     const rows = await db.prepare(`${REQUEST_SELECT} WHERE ${where.join(' AND ')} ORDER BY r.id DESC LIMIT ? OFFSET ?`).all(...params, p.perPage, p.offset);
+    await withCustom('request', req, rows);
     return list(rows, total, p, requestOut);
   });
 
@@ -227,23 +251,27 @@ function register(api) {
     async (req) => requestOut(await loadRequest(req, idParam(req))));
 
   route('POST', '/requests', { tag: 'Service requests', summary: 'Submit a service request', description: 'Send an Idempotency-Key header to make a retry safe.', scope: 'write', status: 201, response: 'Request',
-    body: { catalog_item_id: { type: 'integer', min: 1, required: true }, notes: { type: 'string', max: 5000, nullable: true } } },
+    body: { catalog_item_id: { type: 'integer', min: 1, required: true }, notes: { type: 'string', max: 5000, nullable: true }, ...CUSTOM_BODY } },
   async (req, { body }) => {
     const item = await db.prepare('SELECT * FROM catalog_items WHERE id = ? AND active = 1').get(body.catalog_item_id);
     if (!item) throw unprocessable(`catalog_item_id ${body.catalog_item_id} is not an item that can be requested.`, [{ field: 'catalog_item_id', message: 'does not refer to an active catalog item' }]);
+    const custom = await customIn('request', req, body, { creating: true });
     const created = await requestActions.createServiceRequest({ actor: req.api.user, item, notes: body.notes });
+    await custom.apply(created.id, req.api.user);
     return respond(requestOut(await loadRequest(req, created.id)), { status: 201, headers: { Location: `/api/v1/requests/${created.id}` } });
   });
 
   route('PATCH', '/requests/:id', { tag: 'Service requests', summary: 'Change a service request', scope: 'write', roles: STAFF, response: 'Request', partialBody: true,
-    body: { status: { type: 'enum', values: REQUEST_STATUSES }, assigned_to: { type: 'integer', min: 1, nullable: true }, assignment_group: { type: 'string', max: 100, nullable: true } } },
+    body: { status: { type: 'enum', values: REQUEST_STATUSES }, assigned_to: { type: 'integer', min: 1, nullable: true }, assignment_group: { type: 'string', max: 100, nullable: true }, ...CUSTOM_BODY } },
   async (req, { body }) => {
     const existing = await loadRequest(req, idParam(req));
+    const custom = await customIn('request', req, body, { existingId: existing.id });
     if (body.assigned_to) await mustUser(body.assigned_to, 'assigned_to', { staffOnly: true });
     const fields = { status: body.status || existing.status,
       assigned_to: Object.prototype.hasOwnProperty.call(body, 'assigned_to') ? body.assigned_to : existing.assigned_to,
       assignment_group: Object.prototype.hasOwnProperty.call(body, 'assignment_group') ? body.assignment_group : existing.assignment_group };
     await requestActions.updateServiceRequest({ actor: req.api.user, existing, fields });
+    await custom.apply(existing.id, req.api.user);
     return requestOut(await loadRequest(req, existing.id));
   });
 
@@ -257,10 +285,11 @@ function register(api) {
     const p = paging(query);
     const total = Number((await db.prepare(`SELECT COUNT(*) AS c FROM changes c WHERE ${where.join(' AND ')}`).get(...params)).c);
     const rows = await db.prepare(`${CHANGE_SELECT} WHERE ${where.join(' AND ')} ORDER BY c.id DESC LIMIT ? OFFSET ?`).all(...params, p.perPage, p.offset);
+    await withCustom('change', req, rows);
     return list(rows, total, p, changeOut);
   });
   route('GET', '/changes/:id', { tag: 'Changes', summary: 'Get a change', scope: 'read', roles: STAFF, response: 'Change' },
-    async (req) => { const row = await db.prepare(`${CHANGE_SELECT} WHERE c.id = ?`).get(idParam(req)); if (!row) throw notFound('Change'); return changeOut(row); });
+    async (req) => { const row = await db.prepare(`${CHANGE_SELECT} WHERE c.id = ?`).get(idParam(req)); if (!row) throw notFound('Change'); await withCustom('change', req, [row]); return changeOut(row); });
 
   route('GET', '/problems', { tag: 'Problems', summary: 'List problems (read-only)', scope: 'read', roles: STAFF, response: 'ProblemList',
     query: { status: { type: 'enum', values: PROBLEM_STATUSES }, q: { type: 'string', max: 100 }, ...PAGING } },
@@ -271,10 +300,11 @@ function register(api) {
     const p = paging(query);
     const total = Number((await db.prepare(`SELECT COUNT(*) AS c FROM problems p WHERE ${where.join(' AND ')}`).get(...params)).c);
     const rows = await db.prepare(`${PROBLEM_SELECT} WHERE ${where.join(' AND ')} ORDER BY p.id DESC LIMIT ? OFFSET ?`).all(...params, p.perPage, p.offset);
+    await withCustom('problem', req, rows);
     return list(rows, total, p, problemOut);
   });
   route('GET', '/problems/:id', { tag: 'Problems', summary: 'Get a problem', scope: 'read', roles: STAFF, response: 'Problem' },
-    async (req) => { const row = await db.prepare(`${PROBLEM_SELECT} WHERE p.id = ?`).get(idParam(req)); if (!row) throw notFound('Problem'); return problemOut(row); });
+    async (req) => { const row = await db.prepare(`${PROBLEM_SELECT} WHERE p.id = ?`).get(idParam(req)); if (!row) throw notFound('Problem'); await withCustom('problem', req, [row]); return problemOut(row); });
 
   // ---------------------------------------------------------------- configuration items
   const CI_FIELDS = {
@@ -294,25 +324,30 @@ function register(api) {
     const p = paging(query);
     const total = Number((await db.prepare(`SELECT COUNT(*) AS c FROM cmdb_ci c WHERE ${where.join(' AND ')}`).get(...params)).c);
     const rows = await db.prepare(`${CI_SELECT} WHERE ${where.join(' AND ')} ORDER BY c.id DESC LIMIT ? OFFSET ?`).all(...params, p.perPage, p.offset);
+    await withCustom('ci', req, rows);
     return list(rows, total, p, ciOut);
   });
   route('GET', '/cis/:id', { tag: 'Configuration items', summary: 'Get a configuration item', scope: 'read', response: 'Ci' },
-    async (req) => { const row = await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(idParam(req)); if (!row) throw notFound('Configuration item'); return ciOut(row); });
+    async (req) => { const row = await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(idParam(req)); if (!row) throw notFound('Configuration item'); await withCustom('ci', req, [row]); return ciOut(row); });
   route('POST', '/cis', { tag: 'Configuration items', summary: 'Create a configuration item', description: 'Send an Idempotency-Key header to make a retry safe.', scope: 'write', roles: STAFF, status: 201, response: 'Ci',
-    body: { ...CI_FIELDS, name: { ...CI_FIELDS.name, required: true }, ci_type: { ...CI_FIELDS.ci_type, required: true } } },
+    body: { ...CI_FIELDS, name: { ...CI_FIELDS.name, required: true }, ci_type: { ...CI_FIELDS.ci_type, required: true }, ...CUSTOM_BODY } },
   async (req, { body }) => {
     if (body.owner_id) await mustUser(body.owner_id, 'owner_id');
+    const custom = await customIn('ci', req, body, { creating: true });
     const created = await cmdbActions.createCi({ actor: req.api.user, fields: body });
-    return respond(ciOut(await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(created.id)), { status: 201, headers: { Location: `/api/v1/cis/${created.id}` } });
+    await custom.apply(created.id, req.api.user);
+    return respond(ciOut((await withCustom('ci', req, [await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(created.id)]))[0]), { status: 201, headers: { Location: `/api/v1/cis/${created.id}` } });
   });
-  route('PATCH', '/cis/:id', { tag: 'Configuration items', summary: 'Change a configuration item', scope: 'write', roles: STAFF, response: 'Ci', partialBody: true, body: CI_FIELDS },
+  route('PATCH', '/cis/:id', { tag: 'Configuration items', summary: 'Change a configuration item', scope: 'write', roles: STAFF, response: 'Ci', partialBody: true, body: { ...CI_FIELDS, ...CUSTOM_BODY } },
     async (req, { body }) => {
       const existing = await db.prepare('SELECT * FROM cmdb_ci WHERE id = ?').get(idParam(req));
       if (!existing) throw notFound('Configuration item');
       if (body.owner_id) await mustUser(body.owner_id, 'owner_id');
+      const custom = await customIn('ci', req, body, { existingId: existing.id });
       const fields = Object.fromEntries(cmdbActions.CI_COLUMNS.map((k) => [k, Object.prototype.hasOwnProperty.call(body, k) ? body[k] : existing[k]]));
       await cmdbActions.updateCi({ existing, fields });
-      return ciOut(await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(existing.id));
+      await custom.apply(existing.id, req.api.user);
+      return ciOut((await withCustom('ci', req, [await db.prepare(`${CI_SELECT} WHERE c.id = ?`).get(existing.id)]))[0]);
     });
 
   // ---------------------------------------------------------------- knowledge base

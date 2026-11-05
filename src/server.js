@@ -45,6 +45,7 @@ const inboundRoutes = require('./routes/inbound');
 const importRoutes = require('./routes/import');
 const privacyRoutes = require('./routes/privacy');
 const scimAdminRoutes = require('./routes/scimAdmin');
+const customFieldRoutes = require('./routes/customFields');
 const scimRouter = require('./scim/router');
 
 const app = express();
@@ -153,6 +154,7 @@ app.use('/settings/inbound', inboundRoutes);
 app.use('/import', importRoutes);
 app.use('/privacy', privacyRoutes);
 app.use('/settings/scim', scimAdminRoutes);
+app.use('/settings/fields', customFieldRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);

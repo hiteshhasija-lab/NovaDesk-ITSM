@@ -1,0 +1,4 @@
+<%# The custom fields of a record as read-only details. Expects `cf`: [{ label, display }]. Goes inside a <dl class="row">; pass compact: true in a narrow column, or cols: N for the width of the labels. %>
+<% (typeof cf !== 'undefined' && cf ? cf : []).forEach(function (f) { const narrow = typeof compact !== 'undefined' && compact; const w = typeof cols !== 'undefined' ? cols : (narrow ? 6 : 3); %>
+  <dt class="col-sm-<%= w %>"><%= f.label %></dt><dd class="col-sm-<%= 12 - w %>" style="white-space: pre-line;"><%= f.display || '—' %></dd>
+<% }) %>

@@ -7,6 +7,9 @@ const { attachRoutes, getAttachments, watchRoutes, getWatchers, isWatching, purg
 const { parseSort, sortRows, paginate } = require('../listquery');
 const createAsyncRouter = require('../asyncRouter');
 const { requireFields } = require('../validate');
+const customFields = require('../customFields');
+
+const fieldsRefused = customFields.refuse;
 
 const INCIDENT_SORT_COLUMNS = {
   number: r => r.number,
@@ -87,7 +90,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/new', requireAuth, async (req, res) => {
   const { users, cis } = await loadFormLookups();
-  res.render('incidents/form', { title: 'New Incident', incident: null, users, cis });
+  res.render('incidents/form', { title: 'New Incident', incident: null, users, cis, cf: await customFields.forPage('incident', null, req.session.user.role) });
 });
 
 router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
@@ -141,7 +144,8 @@ const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     { label: 'Assignment Group', value: r => r.assignment_group || '' },
     { label: 'Affected CI', value: r => r.ci_name || '' },
     { label: 'SLA Due', value: r => r.sla_due_at || '' },
-    { label: 'Created', value: r => r.created_at }
+    { label: 'Created', value: r => r.created_at },
+    ...(await customFields.csvColumns('incident', incidents, req.session.user.role))
   ]);
 
   res.setHeader('Content-Type', 'text/csv');
@@ -206,6 +210,8 @@ router.post('/', requireAuth, async (req, res) => {
   if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const b = req.body;
   const isEndUser = req.session.user.role === 'user';
+  const custom = await customFields.fromForm('incident', b, { role: req.session.user.role });
+  if (custom.errors.length) return fieldsRefused(res, custom.errors);
   const created = await incidentActions.createIncident({
     actor: req.session.user,
     fields: {
@@ -221,6 +227,7 @@ router.post('/', requireAuth, async (req, res) => {
       affected_ci_id: b.affected_ci_id
     }
   });
+  await custom.apply(created.id, req.session.user);
   res.redirect(`/incidents/${created.id}`);
 });
 
@@ -276,14 +283,17 @@ router.get('/:id', requireAuth, async (req, res) => {
   const attachments = await getAttachments('incident', incident.id);
   const watchers = await getWatchers('incident', incident.id);
   const watching = await isWatching('incident', incident.id, req.session.user.id);
-  res.render('incidents/show', { title: incident.number, incident, timeline, users, cis, problems, relatedArticles, attachments, watchers, watching });
+  res.render('incidents/show', { title: incident.number, incident, timeline, users, cis, problems, relatedArticles, attachments, watchers, watching, cf: await customFields.forPage('incident', incident.id, req.session.user.role) });
 });
 
 router.post('/:id/update', requireAuth, requireRole('admin', 'agent'), async (req, res) => {
   if (!requireFields(req, res, [['short_description', 'Short description']])) return;
   const existing = await db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).render('error', { title: 'Not Found', message: 'Incident not found.' });
+  const custom = await customFields.fromForm('incident', req.body, { role: req.session.user.role, existingId: existing.id });
+  if (custom.errors.length) return fieldsRefused(res, custom.errors);
   await incidentActions.updateIncident({ actor: req.session.user, existing, fields: req.body });
+  await custom.apply(existing.id, req.session.user);
   res.redirect(`/incidents/${req.params.id}`);
 });
 

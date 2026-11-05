@@ -205,6 +205,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Import** — users, configuration items and knowledge articles from a CSV file, with a preview before anything is saved (see *Importing data*).
 - **Privacy** — download everything held about a person, anonymise a person who has left, and set how long logs and messages are kept (see *Privacy tools*).
 - **SCIM** — an identity provider creates, changes and switches off people by itself (see *SCIM provisioning*).
+- **Custom fields** — the extra fields an organisation wants on incidents, requests, changes, problems and configuration items (see *Custom fields*).
 
 ## Inbound email
 
@@ -372,6 +373,43 @@ page: edits made by hand there may be overwritten at the provider's next sync.
 Checked by `node scripts/scim-check.js` (runs in CI, against the mock identity provider): tokens and who may make them,
 the lifecycle the way Okta and Entra drive it, every refusal, the administrator and anonymised-person protections,
 groups, single sign-on of a provisioned person (and its refusal when switched off), the audit log, and rate limits.
+
+## Custom fields
+
+*Custom fields* in the administrator's menu. Add the fields your organisation wants to record that NovaDesk does not ask
+for out of the box, to **incidents, service requests, changes, problems and configuration items**: a cost centre on an
+incident, a support contract on a CI, a change window on a change.
+
+- **Kinds of value:** text (one line, 255 characters), text (several lines, 4,000), number, date, choice from a list (up
+  to 50 choices, one per line, or `value|Label`) and yes/no. Each field has a **label**, optional **help text** shown under
+  it, and a **key** (made from the label unless you give one) that is used in the API. The key and the kind of value can
+  never change once the field exists; everything else can. Up to 30 fields for each kind of record.
+- **Required:** the form (and the API, when creating) will not accept the record without a value; a required yes/no has to
+  be ticked. Records made by something that is not a form (inbound email, the decommission automation) are not held up:
+  they are made without a value, and the next person to save the record in a page is asked for it.
+- **Who sees it:** everyone who can see the record, or agents and administrators only (an end user never sees a staff-only
+  field on the form, the page, the API or anywhere else, and cannot set it).
+- **Switch off** hides a field everywhere (forms, pages, API, exports) and keeps its values; switching it on brings them
+  back. **Delete** removes the field and every value it holds, and says how many. A choice that records use cannot be
+  removed from a list (rename it instead).
+- **Where they appear:** on the new-record and edit forms; as details on the record's page (for end users who may see
+  the record, read-only); in the history of the record ("Cost centre changed from ... to ..."), and as extra columns at
+  the end of each list's CSV export.
+- **API:** every incident, request, change, problem and CI carries `custom_fields` (`{ "key": value }`, numbers as numbers,
+  yes/no as booleans, a choice as its value, an unset field as `null`, only the fields the key's owner may see).
+  Incidents, requests and CIs also accept `custom_fields` when created and changed (a key you leave out is left alone, `null`
+  clears it, a choice can be given by its label); changes and problems are read-only in the API. See `/api/docs`.
+- **Webhooks:** every event for these records carries `custom_fields` in the record, with every active field (a receiver is an
+  integration an administrator set up, so staff-only fields are included), as they stand when the event is sent.
+- **Not (yet) covered:** CSV import, search and list filters do not use custom fields. Knowledge articles and people have none.
+
+Everything is audited (`customfield.created`, `.updated`, `.moved`, `.deleted`). Values live in their own table, never as
+a column on a record table, so adding a field changes no table; a database trigger removes a record's values when the
+record is deleted, whichever way it is deleted.
+
+Checked by `node scripts/custom-fields-check.js` (runs in CI): who may define fields and every refusal, the fields on all five
+kinds of record as an administrator, an agent and an end user, required, staff-only and switched-off fields, the history,
+the API (read and write, typed values, every error), the OpenAPI document, the exports, and deleting.
 
 ## Security
 

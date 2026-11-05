@@ -419,3 +419,44 @@ test('0012: SCIM columns start empty, tokens are unique by hash, and the one set
     assert.strictEqual((await knex.raw('SELECT created_by FROM scim_tokens')).rows[0].created_by, null, 'deleting the administrator who made a token does not delete the token');
   });
 });
+
+test('0013: custom field definitions are checked by the database, values go with their field, and with their record whichever route deletes it', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const field = async (entity, key, extra = '') => (await knex.raw(`INSERT INTO custom_fields (entity_type, key, label, field_type${extra ? ', ' + extra.cols : ''}) VALUES (?, ?, ?, 'text'${extra ? ', ' + extra.vals : ''}) RETURNING id`, [entity, key, key])).rows[0].id;
+    const f = await field('incident', 'cost_centre');
+    const row = (await knex.raw('SELECT * FROM custom_fields WHERE id = ?', [f])).rows[0];
+    assert.deepStrictEqual([row.required, row.audience, row.active, row.position, row.options], [0, 'everyone', 1, 0, null], 'a new field is optional, for everyone, on');
+    await assert.rejects(() => field('incident', 'cost_centre'), /duplicate|unique/i);
+    assert.ok(await field('request', 'cost_centre'), 'the same key on another kind of record is fine');
+    await assert.rejects(() => field('widget', 'x'), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO custom_fields (entity_type, key, label, field_type) VALUES ('incident', 'k', 'k', 'file')`), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO custom_fields (entity_type, key, label, field_type, audience) VALUES ('incident', 'k2', 'k', 'text', 'nobody')`), /check/i);
+
+    const user = (await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('u', 'x', 'U') RETURNING id`)).rows[0].id;
+    const ids = {};
+    ids.incident = (await knex.raw(`INSERT INTO incidents (number, short_description, caller_id) VALUES ('INC1', 'x', ?) RETURNING id`, [user])).rows[0].id;
+    ids.request = (await knex.raw(`INSERT INTO service_requests (number, requested_by) VALUES ('REQ1', ?) RETURNING id`, [user])).rows[0].id;
+    ids.change = (await knex.raw(`INSERT INTO changes (number, short_description, requested_by) VALUES ('CHG1', 'x', ?) RETURNING id`, [user])).rows[0].id;
+    ids.problem = (await knex.raw(`INSERT INTO problems (number, short_description, raised_by) VALUES ('PRB1', 'x', ?) RETURNING id`, [user])).rows[0].id;
+    ids.ci = (await knex.raw(`INSERT INTO cmdb_ci (ci_number, name, ci_type) VALUES ('CI1', 'x', 'server') RETURNING id`)).rows[0].id;
+    const tables = { incident: 'incidents', request: 'service_requests', change: 'changes', problem: 'problems', ci: 'cmdb_ci' };
+    for (const [entity, id] of Object.entries(ids)) {
+      const fid = entity === 'incident' ? f : await field(entity, 'k_' + entity);
+      await knex.raw(`INSERT INTO custom_field_values (entity_type, entity_id, field_id, value) VALUES (?, ?, ?, 'v')`, [entity, id, fid]);
+      await knex.raw(`INSERT INTO custom_field_values (entity_type, entity_id, field_id, value) VALUES (?, ?, ?, 'other record')`, [entity, id + 1000, fid]);
+    }
+    await assert.rejects(() => knex.raw(`INSERT INTO custom_field_values (entity_type, entity_id, field_id, value) VALUES ('incident', ?, ?, 'twice')`, [ids.incident, f]), /duplicate|unique|primary/i);
+    const count = async (entity) => Number((await knex.raw(`SELECT count(*) AS c FROM custom_field_values WHERE entity_type = ? AND entity_id = ?`, [entity, ids[entity]])).rows[0].c);
+    for (const [entity, table] of Object.entries(tables)) {
+      assert.strictEqual(await count(entity), 1, `${entity} has its value`);
+      await knex.raw(`DELETE FROM ${table} WHERE id = ?`, [ids[entity]]);
+      assert.strictEqual(await count(entity), 0, `deleting the ${entity} removes its values`);
+      assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM custom_field_values WHERE entity_type = ? AND entity_id = ?`, [entity, ids[entity] + 1000])).rows[0].c), 1, `another ${entity}'s values are not touched`);
+    }
+    const other = (await knex.raw(`INSERT INTO incidents (number, short_description, caller_id) VALUES ('INC2', 'y', ?) RETURNING id`, [user])).rows[0].id;
+    await knex.raw(`INSERT INTO custom_field_values (entity_type, entity_id, field_id, value) VALUES ('incident', ?, ?, 'kept')`, [other, f]);
+    await knex.raw('DELETE FROM custom_fields WHERE id = ?', [f]);
+    assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM custom_field_values WHERE field_id = ?`, [f])).rows[0].c), 0, 'deleting a field deletes the values it holds');
+  });
+});

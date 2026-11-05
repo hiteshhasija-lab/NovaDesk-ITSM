@@ -1,0 +1,63 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1150px;">
+  <h4 class="mb-2"><i class="bi bi-input-cursor-text text-primary me-1"></i>Custom fields</h4>
+  <p class="text-muted small">Add the fields your organisation wants to record that NovaDesk does not ask for, such as a cost centre on an incident or a warranty contract on a configuration item. They appear on the forms and pages of that kind of record, in the REST API (as <code>custom_fields</code>) and in CSV exports.</p>
+
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+  <% Object.keys(entities).forEach(function (e) { const list = fields[e]; %>
+  <div class="card mb-3" id="<%= e %>"><div class="card-body">
+    <h6 class="section-title"><%= entities[e].label %></h6>
+    <% if (!list.length) { %><p class="small text-muted mb-0">No custom fields yet.</p><% } else { %>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>Label</th><th>Key</th><th>Kind</th><th>Who sees it</th><th>Required</th><th>Values</th><th></th></tr></thead>
+      <tbody>
+      <% list.forEach(function (f, i) { %>
+        <tr class="<%= f.active ? '' : 'text-muted' %>">
+          <td><a href="/settings/fields/<%= f.id %>"><%= f.label %></a><% if (!f.active) { %> <span class="badge bg-secondary">off</span><% } %></td>
+          <td><code class="small"><%= f.key %></code></td>
+          <td class="small"><%= types[f.type].label %><% if (f.type === 'select') { %> (<%= f.options.length %>)<% } %></td>
+          <td class="small"><%= f.audience === 'staff' ? 'Agents and administrators' : 'Everyone' %></td>
+          <td class="small"><%= f.required ? 'Yes' : '—' %></td>
+          <td class="small"><%= usage.get(f.id) || 0 %></td>
+          <td class="text-end text-nowrap">
+            <form method="POST" action="/settings/fields/<%= f.id %>/move" class="d-inline"><input type="hidden" name="direction" value="up"><button type="submit" class="btn btn-sm btn-outline-secondary" <%= i === 0 ? 'disabled' : '' %> title="Move up" aria-label="Move <%= f.label %> up"><i class="bi bi-arrow-up"></i></button></form>
+            <form method="POST" action="/settings/fields/<%= f.id %>/move" class="d-inline"><input type="hidden" name="direction" value="down"><button type="submit" class="btn btn-sm btn-outline-secondary" <%= i === list.length - 1 ? 'disabled' : '' %> title="Move down" aria-label="Move <%= f.label %> down"><i class="bi bi-arrow-down"></i></button></form>
+            <a href="/settings/fields/<%= f.id %>" class="btn btn-sm btn-outline-secondary">Edit</a>
+          </td>
+        </tr>
+      <% }) %>
+      </tbody>
+    </table></div>
+    <% } %>
+  </div></div>
+  <% }) %>
+
+  <div class="card"><div class="card-body">
+    <h6 class="section-title">Add a field</h6>
+    <form method="POST" action="/settings/fields" class="row g-3">
+      <div class="col-md-4"><label class="form-label small" for="f_entity">For</label>
+        <select class="form-select form-select-sm" id="f_entity" name="entity_type" required>
+          <% Object.keys(entities).forEach(function (e) { %><option value="<%= e %>" <%= form.entity_type === e ? 'selected' : '' %>><%= entities[e].label %></option><% }) %>
+        </select></div>
+      <div class="col-md-4"><label class="form-label small" for="f_label">Label</label><input class="form-control form-control-sm" id="f_label" name="label" maxlength="<%= limits.label %>" value="<%= form.label || '' %>" placeholder="Cost centre" required></div>
+      <div class="col-md-4"><label class="form-label small" for="f_key">Key <span class="text-muted">(for the API; made from the label when empty; cannot be changed later)</span></label><input class="form-control form-control-sm" id="f_key" name="key" maxlength="40" value="<%= form.key || '' %>" placeholder="cost_centre"></div>
+      <div class="col-md-4"><label class="form-label small" for="f_type">Kind of value</label>
+        <select class="form-select form-select-sm" id="f_type" name="field_type" required>
+          <% Object.keys(types).forEach(function (t) { %><option value="<%= t %>" <%= form.field_type === t ? 'selected' : '' %>><%= types[t].label %></option><% }) %>
+        </select><div class="form-text">Cannot be changed later.</div></div>
+      <div class="col-md-4"><label class="form-label small" for="f_audience">Who sees and fills it in</label>
+        <select class="form-select form-select-sm" id="f_audience" name="audience">
+          <option value="everyone" <%= form.audience !== 'staff' ? 'selected' : '' %>>Everyone who can see the record</option>
+          <option value="staff" <%= form.audience === 'staff' ? 'selected' : '' %>>Agents and administrators only</option>
+        </select></div>
+      <div class="col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="f_required" name="required" <%= form.required ? 'checked' : '' %>><label class="form-check-label small" for="f_required">Required when someone fills in the form</label></div></div>
+      <div class="col-md-6"><label class="form-label small" for="f_options">Choices <span class="text-muted">(only for "Choice from a list": one per line, or <code>value|Label</code>)</span></label><textarea class="form-control form-control-sm" id="f_options" name="options" rows="3"><%= form.options || '' %></textarea></div>
+      <div class="col-md-6"><label class="form-label small" for="f_help">Help text <span class="text-muted">(shown under the field)</span></label><input class="form-control form-control-sm" id="f_help" name="help" maxlength="<%= limits.help %>" value="<%= form.help || '' %>"></div>
+      <div class="col-12"><button type="submit" class="btn btn-sm btn-primary">Add field</button> <span class="small text-muted ms-2">Up to <%= limits.perEntity %> for each kind of record.</span></div>
+    </form>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>
