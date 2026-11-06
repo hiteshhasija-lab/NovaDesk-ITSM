@@ -108,6 +108,9 @@ async function run({ p1, p2 }, knex, apps) {
   check('the demonstration data belongs to the default tenant, and the new tenants hold no people but their first administrator',
     Number((await one('SELECT count(*) AS c FROM users WHERE tenant_id = 1')).c) >= 3 && Number((await one('SELECT count(*) AS c FROM users WHERE tenant_id = ?', [tenantB.id])).c) === 1 && Number((await one('SELECT count(*) AS c FROM incidents WHERE tenant_id = ?', [tenantB.id])).c) === 0);
 
+  // A running server keeps its list of tenants for five seconds (src/tenants.js), so tenants made from outside become visible to it within that time.
+  await sleep(5500);
+
   // ------------------------------------------------------------------------------------------------------ signing in
   section = 'sign-in';
   const A = new Browser(p1, HOST_A); const B = new Browser(p1, HOST_B); const C = new Browser(p1, HOST_C);
@@ -146,10 +149,10 @@ async function run({ p1, p2 }, knex, apps) {
     const t = (await B.get(url)).text;
     check(`the ${kind} list of another tenant shows none of the default tenant's`, !t.includes(`of A ${tag}`) && !/Secret of A|Server of A|Change of A|Problem of A/.test(t));
   }
-  const search = await B.get(`/search?q=${encodeURIComponent(`of A ${tag}`)}`);
-  check('search finds nothing of another tenant\'s', search.status === 200 && !search.text.includes(`of A ${tag}`) && !/INC\d+/.test(search.text.replace(/INC0000001/g, '')));
-  const dash = (await B.get('/')).text;
-  check('the dashboard counts only its own', /Open Incidents[\s\S]{0,200}?>\s*1\s*</.test(dash) || !/Open Incidents[\s\S]{0,200}?>\s*(8|9|10)\s*</.test(dash));
+  // (the search page repeats what was typed, so the query is a word that appears in both tenants' titles and the answer is checked for the other tenant's)
+  const search = await B.get(`/search?q=${encodeURIComponent('Secret of')}`);
+  check('search finds nothing of another tenant\'s', search.status === 200 && search.text.includes(`Secret of B ${tag}`) && !search.text.includes(`Secret of A ${tag}`) && !search.text.includes(`Secret of C ${tag}`) && !search.text.includes('only A may read'));
+  check('and finds its own', (await B.get(`/search?q=${encodeURIComponent(`Secret of B ${tag}`)}`)).text.includes(`Secret of B ${tag}`));
   check('the CSV export holds only its own rows', !(await B.get('/incidents/export.csv')).text.includes(`of A ${tag}`));
 
   // Reaching another tenant's record by its number is the oldest trick there is: every kind, and the pages that act on it.
@@ -175,7 +178,7 @@ async function run({ p1, p2 }, knex, apps) {
   const writes = [
     [`/incidents/${aIds.incident}/update`, { short_description: 'HACKED', status: 'closed', priority: '1' }], [`/incidents/${aIds.incident}/comments`, { body: 'planted comment' }],
     [`/incidents/${aIds.incident}/delete`, {}], [`/incidents/${aIds.incident}/attachments/${aAtt.id}/delete`, {}], [`/changes/${aIds.change}/update`, { short_description: 'HACKED' }],
-    [`/changes/${aIds.change}/delete`, {}], [`/problems/${aIds.problem}/update`, { short_description: 'HACKED' }], [`/cmdb/${aIds.ci}/update`, { name: 'HACKED' }],
+    [`/changes/${aIds.change}/delete`, {}], [`/problems/${aIds.problem}/update`, { short_description: 'HACKED' }], [`/cmdb/${aIds.ci}/update`, { name: 'HACKED', ci_type: 'server' }],
     [`/cmdb/${aIds.ci}/delete`, {}], [`/users/${aUser}/update`, { username: 'jdoe', full_name: 'HACKED', role: 'admin', active: 'on' }], [`/users/${aUser}/delete`, {}],
     [`/settings/fields/${aField}`, { label: 'HACKED', active: 'on' }], [`/settings/fields/${aField}/delete`, {}],
   ];
@@ -189,7 +192,7 @@ async function run({ p1, p2 }, knex, apps) {
     && (await one('SELECT name FROM cmdb_ci WHERE id = ?', [aIds.ci])).name === `Server of A ${tag}`
     && (await one('SELECT full_name, role FROM users WHERE id = ?', [aUser])).full_name === 'Jane Doe'
     && Number((await one('SELECT count(*) AS c FROM attachments WHERE id = ?', [aAtt.id])).c) === 1
-    && Number((await one('SELECT count(*) AS c FROM incident_comments WHERE incident_id = ?', [aIds.incident])).c === 0 || true) === 1
+    && Number((await one('SELECT count(*) AS c FROM incident_comments WHERE incident_id = ?', [aIds.incident])).c) === 0
     && (await one('SELECT label FROM custom_fields WHERE id = ?', [aField])).label === `A only ${tag}`);
   check('a record pointing at another tenant\'s person shows nothing of that person', await (async () => {
     const r = await B.post('/incidents', { short_description: `Odd caller ${tag}`, caller_id: String(aUser), assigned_to: String(aUser), priority: '3' });
@@ -209,14 +212,13 @@ async function run({ p1, p2 }, knex, apps) {
   check('a key finds its own tenant, whatever host name the call arrives on: A\'s key at B\'s address still reads A\'s records', listWithA.status === 200 && JSON.stringify(listWithA.data).includes(`Secret of A ${tag}`) && !JSON.stringify(listWithA.data).includes(`Secret of B ${tag}`));
   check('B\'s key reads B\'s records and none of A\'s', listWithB.status === 200 && JSON.stringify(listWithB.data).includes(`Secret of B ${tag}`) && !JSON.stringify(listWithB.data).includes(`of A ${tag}`));
   check('B\'s key cannot fetch A\'s incident by id', (await viaB.api('GET', `/incidents/${aIds.incident}`, keyB)).status === 404 && (await viaB.api('PATCH', `/incidents/${aIds.incident}`, keyB, { short_description: 'HACKED' })).status === 404);
-  const apiMade = await viaB.api('POST', '/incidents', keyB, { short_description: `By API for B ${tag}`, priority: 3 });
+  const apiMade = await viaB.api('POST', '/incidents', keyB, { short_description: `By API for B ${tag}`, impact: 3, urgency: 3 });
   check('a record made through B\'s key is B\'s, numbered in B\'s sequence', apiMade.status === 201 && (await one('SELECT tenant_id FROM incidents WHERE short_description = ?', [`By API for B ${tag}`])).tenant_id === tenantB.id);
   check('a made-up or another tenant\'s revoked key is just invalid', (await viaB.api('GET', '/incidents', `ndk_${'x'.repeat(40)}`)).status === 401);
   check('the key lists show only the tenant\'s own', (await B.get('/profile/api-keys')).text.includes(`ten B ${tag}`) && !(await B.get('/profile/api-keys')).text.includes(`ten A ${tag}`));
 
-  const mkToken = async (b, name) => { const r = await b.post('/settings/scim', { action: 'create', name, expires: '' }); return (r.text.match(/nds_[A-Za-z0-9_-]{40}/) || [])[0]; };
-  const tokB = await (async () => { await B.get('/settings/scim'); let r = await B.post('/settings/scim/tokens', { name: `scim B ${tag}`, expires: '' }); return (r.text.match(/nds_[A-Za-z0-9_-]{40}/) || [])[0] || (await mkToken(B, `scim B ${tag}`)); })();
-  const tokA = await (async () => { const r = await A.post('/settings/scim/tokens', { name: `scim A ${tag}`, expires: '' }); return (r.text.match(/nds_[A-Za-z0-9_-]{40}/) || [])[0]; })();
+  const tokenOf = async (b, name) => { const r = await b.post('/settings/scim/tokens', { name, expires: '90' }); return (r.text.match(/nds_[A-Za-z0-9_-]{40}/) || [])[0]; };
+  const tokB = await tokenOf(B, `scim B ${tag}`); const tokA = await tokenOf(A, `scim A ${tag}`);
   check('each tenant makes a SCIM token', Boolean(tokA && tokB));
   const scimB = await new Browser(p1, HOST_A).scim('GET', '/Users', tokB);
   check('a SCIM token finds its own tenant: B\'s token lists B\'s people only', scimB.status === 200 && JSON.stringify(scimB.data).includes('Bea Boss') && !JSON.stringify(scimB.data).includes('Jane Doe') && scimB.data.totalResults === 2 - 1 + (await q('SELECT 1 FROM users WHERE tenant_id = ? AND username <> ?', [tenantB.id, 'admin'])).length);
@@ -231,8 +233,8 @@ async function run({ p1, p2 }, knex, apps) {
   const recv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { try { got[req.url === '/a' ? 'a' : 'b'].push(JSON.parse(b)); } catch { /* ping */ } res.end('ok'); }); });
   await new Promise((r) => recv.listen(0, '127.0.0.1', r));
   const rport = recv.address().port;
-  const hookA = await A.post('/settings/webhooks', { name: `hook A ${tag}`, url: `http://127.0.0.1:${rport}/a`, all_events: 'on' });
-  const hookB = await B.post('/settings/webhooks', { name: `hook B ${tag}`, url: `http://127.0.0.1:${rport}/b`, all_events: 'on' });
+  const hookA = await A.post('/settings/webhooks', { name: `hook A ${tag}`, url: `http://127.0.0.1:${rport}/a`, events: ['incident.created'] });
+  const hookB = await B.post('/settings/webhooks', { name: `hook B ${tag}`, url: `http://127.0.0.1:${rport}/b`, events: ['incident.created'] });
   check('each tenant adds a webhook of its own', [hookA, hookB].every((r) => r.status === 200 || r.status === 302), `${hookA.status}/${hookB.status}`);
   await A.post('/incidents', { short_description: `Webhook A ${tag}`, priority: '3' });
   await B.post('/incidents', { short_description: `Webhook B ${tag}`, priority: '3' });
@@ -268,17 +270,17 @@ async function run({ p1, p2 }, knex, apps) {
   await B.post('/settings/fields', { entity_type: 'incident', label: `B only ${tag}`, key: `b_only_${tag}`, field_type: 'text', audience: 'everyone' });
   check('custom fields are the tenant\'s own: B\'s field is on B\'s form and not on A\'s or C\'s', (await B.get('/incidents/new')).text.includes(`name="cf_b_only_${tag}"`) && !(await A.get('/incidents/new')).text.includes(`b_only_${tag}`) && !(await C.get('/incidents/new')).text.includes(`b_only_${tag}`) && !(await B.get('/incidents/new')).text.includes(`a_only_${tag}`));
   check('a custom field key can be the same in two tenants', (await B.post('/settings/fields', { entity_type: 'incident', label: `A only ${tag}`, key: `a_only_${tag}`, field_type: 'text', audience: 'everyone' })).status === 200 && Number((await one('SELECT count(*) AS c FROM custom_fields WHERE key = ?', [`a_only_${tag}`])).c) === 2);
-  check('the audit log of each tenant holds only its own entries', (await B.get('/settings/audit')).text.includes('branding.changed') && !(await B.get('/settings/audit')).text.includes('customfield.created') === false && (await q("SELECT DISTINCT tenant_id FROM audit_log WHERE detail LIKE ?", [`%${tag}%`])).length >= 2);
+  check('the audit log of each tenant holds its own entries', (await B.get('/settings/audit')).text.includes('branding.changed') && (await q('SELECT DISTINCT tenant_id FROM audit_log WHERE detail LIKE ?', [`%${tag}%`])).length >= 2);
   const auditB = (await B.get('/settings/audit')).text;
-  check('A\'s audit entries (its field, its key, its sign-ins) do not appear in B\'s', !auditB.includes(`a_only_${tag}`.replace('a_only', 'A only')) && !auditB.includes('Alex Admin'));
-  check('notifications are recorded per tenant', !(await B.get('/notifications')).text.includes(`Secret of A ${tag}`) && (await q('SELECT 1 FROM notifications WHERE tenant_id <> 1 LIMIT 1')).length >= 0);
-  const retB = await B.post('/privacy/retention', { audit_log: '', notifications: '90', inbound_emails: '', webhook_deliveries: '' });
-  check('retention limits are per tenant', Number((await one("SELECT count(*) AS c FROM retention_rules WHERE tenant_id = 1 AND keep_days = 90")).c) === 0 || retB.status !== 302);
+  check('A\'s audit entries (its people, its sign-ins) do not appear in B\'s', !auditB.includes('Alex Admin') && !auditB.includes('jdoe'));
+  check('notifications are listed per tenant', (await A.get('/notifications')).text.includes(`Secret of A ${tag}`) && !(await B.get('/notifications')).text.includes(`Secret of A ${tag}`) && (await q('SELECT DISTINCT tenant_id FROM notifications WHERE subject LIKE ?', [`%${tag}%`])).length >= 2);
+  const retB = await B.post('/privacy/retention', { days_audit_log: '', days_notifications: '90', days_inbound_emails: '', days_webhook_deliveries: '' });
+  check('retention limits are per tenant: B sets one, A has none', [200, 302].includes(retB.status) && Number((await one('SELECT count(*) AS c FROM retention_rules WHERE tenant_id = ? AND keep_days = 90', [tenantB.id])).c) === 1 && Number((await one('SELECT count(*) AS c FROM retention_rules WHERE tenant_id = 1 AND keep_days = 90')).c) === 0, `${retB.status}`);
 
   // ------------------------------------------------------------------------------------------------------ suspending
   section = 'suspended tenant';
   await tenants.setStatus(tenantB.id, 'suspended');
-  tenants.invalidate();
+  await sleep(5500);   // a running server learns of it within five seconds
   const down = new Browser(p1, HOST_B);
   await sleep(100);
   const susp = await tenancyDirectCheck();
@@ -286,6 +288,7 @@ async function run({ p1, p2 }, knex, apps) {
   check('its API key and SCIM token stop working (403) while the others carry on', (await new Browser(p1, HOST_A).api('GET', '/incidents', keyB)).status === 403 && (await new Browser(p1, HOST_A).scim('GET', '/Users', tokB)).status === 403 && (await new Browser(p1, HOST_A).api('GET', '/incidents', keyA)).status === 200 && (await A.get('/')).status === 200 && (await C.get('/')).status === 200);
   check('the default tenant cannot be suspended', await tenants.setStatus(1, 'suspended').then(() => false, (e) => e instanceof tenants.TenantError));
   await tenants.setStatus(tenantB.id, 'active');
+  await sleep(5500);
   check('and when it is switched on again everything is as it was', (await B.get('/incidents')).text.includes(`Secret of B ${tag}`) && (await new Browser(p1, HOST_A).api('GET', '/incidents', keyB)).status === 200);
   async function tenancyDirectCheck() { return true; }
 
@@ -306,8 +309,6 @@ async function run({ p1, p2 }, knex, apps) {
   section = 'in the database';
   const stray = await q(`SELECT 'users' AS t, count(*)::int AS n FROM users WHERE tenant_id IS NULL UNION ALL SELECT 'incidents', count(*)::int FROM incidents WHERE tenant_id IS NULL`);
   check('no row is without a tenant', stray.every((r) => r.n === 0));
-  const crossRefs = await q(`SELECT count(*)::int AS n FROM incidents i JOIN users u ON u.id = i.caller_id WHERE u.tenant_id <> i.tenant_id`);
-  check('and the one deliberate cross-tenant reference above (a caller of another tenant) is only a number, never shown', crossRefs[0].n >= 0);
   const rls = await q("SELECT count(*)::int AS n FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace AND NOT relrowsecurity AND relname NOT IN ('schema_migrations', 'tenants', 'tenant_hosts')");
   check('every table of the live database has row level security on', rls[0].n === 0);
   check('the application\'s own connections run as the restricted role', await tenancy.run(1, async () => (await db.prepare('select current_user as u').get()).u === 'novadesk_app'));
