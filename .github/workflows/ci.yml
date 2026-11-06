@@ -159,7 +159,7 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/branding-check.js
-      - name: Multi-tenancy (two more tenants on one app: sign-in, sessions, every record by id, writes, keys, SCIM, webhooks, settings, suspension, host names)
+      - name: Multi-tenancy (two more tenants on one app, sign-in, sessions, every record by id, writes, keys, SCIM, webhooks, settings, suspension, host names)
         run: |
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
