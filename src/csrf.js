@@ -34,7 +34,7 @@ const wantsJson = (req) => req.get('x-csrf-token') !== undefined || /json/.test(
 function refuse(req, res) {
   console.warn(`[CSRF] refused ${req.method} ${req.path} from ${req.ip}`);
   if (wantsJson(req)) return res.status(403).json({ error: 'Your session has changed since this page was loaded. Reload the page and try again.' });
-  return res.status(403).render('error', { title: 'Please reload the page', message: 'This form was opened in an earlier session, or came from somewhere other than NovaDesk, so it was not submitted. Reload the page and try again.' });
+  return res.status(403).render('error', { title: 'Please reload the page', message: `This form was opened in an earlier session, or came from somewhere other than ${(res.locals && res.locals.brand && res.locals.brand.name) || 'NovaDesk'}, so it was not submitted. Reload the page and try again.` });
 }
 
 function middleware(req, res, next) {

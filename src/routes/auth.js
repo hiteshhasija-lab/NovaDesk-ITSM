@@ -102,7 +102,8 @@ router.post('/login/mfa', async (req, res) => {
 });
 
 // ---- single sign-on (OpenID Connect)
-const ssoFailure = (res, status, message) => res.status(status).render('login', loginView({ error: message }));
+// The messages are written with the built-in name; the organisation's own name (Settings > Branding) replaces it here.
+const ssoFailure = (res, status, message) => res.status(status).render('login', loginView({ error: String(message).replace(/NovaDesk/g, () => res.locals.brand.name) }));
 
 router.get('/auth/oidc/start', async (req, res) => {
   if (!sso.enabled()) return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });

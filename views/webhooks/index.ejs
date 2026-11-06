@@ -2,7 +2,7 @@
 <%- include('../partials/nav') %>
 <div class="container-fluid px-4 py-4" style="max-width: 1100px;">
   <h4 class="mb-3"><i class="bi bi-broadcast text-primary me-1"></i>Webhooks</h4>
-  <p class="text-muted small">NovaDesk can call a web address of yours whenever a record is created, changed, moves to another status or gets a comment, so other systems hear about it at once. Each call is signed with a secret only you and NovaDesk know. How to read and check a call: <a href="/api/docs#webhooks">the guide</a>.</p>
+  <p class="text-muted small"><%= brand.name %> can call a web address of yours whenever a record is created, changed, moves to another status or gets a comment, so other systems hear about it at once. Each call is signed with a secret only you and <%= brand.name %> know. How to read and check a call: <a href="/api/docs#webhooks">the guide</a>.</p>
 
   <% if (success) { %><div class="alert alert-success py-2"><%= success %></div><% } %>
   <% if (error) { %><div class="alert alert-danger py-2"><%= error %></div><% } %>
@@ -10,7 +10,7 @@
   <div class="card mb-3 border-warning"><div class="card-body">
     <h6 class="section-title">Signing secret</h6>
     <pre class="border rounded p-3 mb-2 user-select-all" id="newWebhookSecret" style="white-space: pre-wrap; word-break: break-all;"><%= newSecret %></pre>
-    <p class="small text-muted mb-0">Give this to the receiver, which uses it to check that a call really came from NovaDesk. Keep it like a password.</p>
+    <p class="small text-muted mb-0">Give this to the receiver, which uses it to check that a call really came from <%= brand.name %>. Keep it like a password.</p>
   </div></div>
   <% } %>
 

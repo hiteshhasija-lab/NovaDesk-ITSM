@@ -417,6 +417,16 @@ const has = (r, re) => re.test(r.text);
     return must(!(await admin.get('/incidents/new')).text.includes(`name="cf_${cfKey}"`), 'still on the form');
   });
 
+  section = 'branding';
+  await step('branding: administrators only; a name is saved and shown on the sign-in page, then put back', async () => {
+    const a = await admin.get('/settings/branding'); const j = await jane.get('/settings/branding'); must(a.status === 200 && j.status === 403, `${a.status}/${j.status}`);
+    const mk = async (name) => { const fd = new FormData(); fd.append('product_name', name); fd.append('login_background', 'builtin'); return admin.req('POST', '/settings/branding', { multipart: fd }); };
+    const saved = await mk(`Walk Desk ${tag}`); must(saved.status === 302, `save ${saved.status}`);
+    const login = await new Person('b').get('/login'); must(login.text.includes(`Walk Desk ${tag}`), 'name not on the sign-in page');
+    const reset = await admin.post('/settings/branding/reset'); must(reset.status === 302, `reset ${reset.status}`);
+    return must((await new Person('b2').get('/login')).text.includes('<div class="login-title">NovaDesk</div>'), 'not back to the built-in look');
+  });
+
   section = 'users, profile & roles';
   let newUserId;
   await step('an admin creates a user; the duplicate is refused; the user signs in', async () => {

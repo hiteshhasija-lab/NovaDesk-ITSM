@@ -1,0 +1,107 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<%
+  const f = form || {};
+  const val = (k, fallback) => (f[k] !== undefined ? f[k] : fallback);
+  const accentShown = val('accent_color', brand.accent || '');
+%>
+<div class="container-fluid px-4 py-4" style="max-width: 980px;">
+  <h4 class="mb-2"><i class="bi bi-palette text-primary me-1"></i>Branding</h4>
+  <p class="text-muted small">Show your own name, logo and colour instead of the built-in ones. They appear in the navigation bar, on the sign-in pages, in the browser tab and at the top of emails. Anything left empty keeps the built-in look. Changes are recorded in the audit log.</p>
+
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+  <form method="POST" action="/settings/branding" enctype="multipart/form-data" id="brandingForm">
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Name</h6>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label" for="product_name">Product name</label>
+          <input type="text" class="form-control" id="product_name" name="product_name" maxlength="<%= limits.name %>" value="<%= val('product_name', brand.name) %>" required>
+          <div class="form-text">Up to <%= limits.name %> characters. Shown wherever a page or an email says what this system is called, and as the label in authenticator apps for people who turn on two-step verification from now on.</div>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Logo</h6>
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <span class="brand-logo-sample"><img src="<%= brand.iconUrl %>" alt="Current logo" height="40"></span>
+        <div class="small text-muted"><%= brand.logoUrl ? 'Your logo is in use.' : 'The built-in icon is in use.' %></div>
+      </div>
+      <label class="form-label" for="logo">Upload a logo</label>
+      <input type="file" class="form-control" id="logo" name="logo" accept="image/png,image/jpeg,image/gif,image/webp">
+      <div class="form-text">PNG, JPEG, GIF or WebP, up to <%= limits.logoBytes / 1024 %> KB; about 400 pixels across is plenty. A transparent PNG works best, and it is shown on a light tile so dark logos stay visible on the dark navigation bar. SVG is not accepted, because an SVG can carry script.</div>
+      <% if (brand.logoUrl) { %>
+      <div class="form-check mt-2">
+        <input type="checkbox" class="form-check-input" id="remove_logo" name="remove_logo" value="on">
+        <label class="form-check-label" for="remove_logo">Remove my logo and go back to the built-in icon</label>
+      </div>
+      <% } %>
+    </div></div>
+
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Accent colour</h6>
+      <div class="d-flex align-items-center gap-3 flex-wrap">
+        <input type="color" class="form-control form-control-color" id="accentPicker" value="<%= /^#[0-9a-fA-F]{6}$/.test(accentShown) ? accentShown : '#2f4b7c' %>" title="Choose a colour" aria-label="Choose an accent colour">
+        <input type="text" class="form-control" style="max-width: 9rem;" id="accent_color" name="accent_color" value="<%= accentShown %>" placeholder="#2f4b7c" maxlength="7" spellcheck="false" aria-label="Accent colour as #rrggbb">
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="accentClear">Use the built-in colour</button>
+      </div>
+      <div class="form-text mt-2">Links, buttons, the navigation bar and the sign-in page are worked out from this one colour, in both the light and the dark theme. White text has to stay readable on it, so a very light colour is refused with a message. Leave it empty for the built-in blue.</div>
+    </div></div>
+
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Sign-in pages</h6>
+      <label class="form-label">Behind the sign-in card</label>
+      <% const bgMode = val('login_background', brand.loginBackground); %>
+      <div class="mb-2">
+        <div class="form-check"><input class="form-check-input" type="radio" name="login_background" id="bgBuiltin" value="builtin" <%= bgMode === 'builtin' ? 'checked' : '' %>><label class="form-check-label" for="bgBuiltin">The built-in picture <span class="text-muted small">(it shows NovaDesk's own artwork, so choose another if the product is shown under your name)</span></label></div>
+        <div class="form-check"><input class="form-check-input" type="radio" name="login_background" id="bgPlain" value="plain" <%= bgMode === 'plain' ? 'checked' : '' %>><label class="form-check-label" for="bgPlain">A plain backdrop in your accent colour</label></div>
+        <div class="form-check"><input class="form-check-input" type="radio" name="login_background" id="bgCustom" value="custom" <%= bgMode === 'custom' ? 'checked' : '' %>><label class="form-check-label" for="bgCustom">My own picture<%= brand.backgroundUrl ? ' (one is stored)' : '' %></label></div>
+      </div>
+      <input type="file" class="form-control mb-1" id="background" name="background" accept="image/png,image/jpeg,image/gif,image/webp" aria-label="Sign-in background picture">
+      <div class="form-text mb-3">PNG, JPEG, GIF or WebP, up to <%= limits.backgroundBytes / 1048576 %> MB; about 1920 pixels wide as a JPEG is plenty. Choosing a file switches this on. The card stays dark and readable on top of any picture.</div>
+      <div class="row g-3">
+        <div class="col-md-5">
+          <label class="form-label" for="login_welcome">Line above the name</label>
+          <input type="text" class="form-control" id="login_welcome" name="login_welcome" maxlength="<%= limits.welcome %>" value="<%= val('login_welcome', brand.raw.welcome) %>" placeholder="<%= defaults.welcome %>">
+        </div>
+        <div class="col-md-7">
+          <label class="form-label" for="login_tagline">Line under the name</label>
+          <input type="text" class="form-control" id="login_tagline" name="login_tagline" maxlength="<%= limits.tagline %>" value="<%= val('login_tagline', brand.raw.tagline) %>" placeholder="<%= defaults.tagline %>">
+        </div>
+      </div>
+      <div class="form-text mt-2">Empty means the wording shown here in grey. The sign-up page keeps its own second line.</div>
+    </div></div>
+
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Email</h6>
+      <label class="form-label" for="email_footer">Closing line</label>
+      <textarea class="form-control" id="email_footer" name="email_footer" rows="3" maxlength="<%= limits.footer %>" placeholder="Sent by <%= brand.name %>."><%= val('email_footer', brand.footer) %></textarea>
+      <div class="form-text">Up to <%= limits.footer %> characters, shown at the bottom of every email. Plain text; line breaks are kept. The sender address is not set here: it comes from <code>SMTP_FROM</code> in the server's settings. The logo appears in emails only when <code>PUBLIC_URL</code> is set, because a mail program needs a full address to fetch it from.</div>
+    </div></div>
+
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save branding</button>
+      <a href="/settings/branding" class="btn btn-outline-secondary">Cancel</a>
+    </div>
+  </form>
+
+  <form method="POST" action="/settings/branding/reset" class="mt-4" id="resetForm">
+    <details>
+      <summary class="small text-muted">Put everything back to the built-in look</summary>
+      <p class="small text-muted mt-2 mb-2">Removes your name, logo, colour and wording. Nothing else changes.</p>
+      <button type="submit" class="btn btn-sm btn-outline-danger">Reset branding</button>
+    </details>
+  </form>
+</div>
+<script nonce="<%= cspNonce %>">
+  (function () {
+    var pick = document.getElementById('accentPicker'), text = document.getElementById('accent_color');
+    pick.addEventListener('input', function () { text.value = pick.value; });
+    text.addEventListener('input', function () { if (/^#[0-9a-fA-F]{6}$/.test(text.value)) pick.value = text.value; });
+    document.getElementById('accentClear').addEventListener('click', function () { text.value = ''; });
+  })();
+</script>
+<%- include('../partials/foot') %>

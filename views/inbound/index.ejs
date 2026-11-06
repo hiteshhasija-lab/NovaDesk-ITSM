@@ -12,7 +12,7 @@
         <h6 class="section-title">Mailbox</h6>
         <% if (!cfg.imap) { %>
           <p><span class="badge bg-secondary">Not set up</span></p>
-          <p class="small text-muted mb-1">To have NovaDesk read a mailbox, set <code>INBOUND_IMAP_HOST</code>, <code>INBOUND_IMAP_USER</code> and <code>INBOUND_IMAP_PASSWORD</code> in the server's environment (see the README, "Inbound email").</p>
+          <p class="small text-muted mb-1">To have <%= brand.name %> read a mailbox, set <code>INBOUND_IMAP_HOST</code>, <code>INBOUND_IMAP_USER</code> and <code>INBOUND_IMAP_PASSWORD</code> in the server's environment (see the README, "Inbound email").</p>
         <% } else { %>
           <p>
             <% if (status.lastError) { %><span class="badge bg-danger">Problem</span>

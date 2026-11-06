@@ -2,7 +2,7 @@
 <%- include('../partials/nav') %>
 <div class="container-fluid px-4 py-4" style="max-width: 1100px;">
   <h4 class="mb-2"><i class="bi bi-people-fill text-primary me-1"></i>SCIM provisioning</h4>
-  <p class="text-muted small">Lets your identity provider (Okta, Microsoft Entra ID and others) create, change and switch off people in NovaDesk by itself, so nobody has to be added or removed by hand. People it creates sign in with single sign-on; it never sets a password. Nothing can use this until you make a token below.</p>
+  <p class="text-muted small">Lets your identity provider (Okta, Microsoft Entra ID and others) create, change and switch off people in <%= brand.name %> by itself, so nobody has to be added or removed by hand. People it creates sign in with single sign-on; it never sets a password. Nothing can use this until you make a token below.</p>
 
   <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
   <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>

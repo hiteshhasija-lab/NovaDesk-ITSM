@@ -12,11 +12,11 @@
       <h6 class="section-title">Your new key</h6>
       <pre class="border rounded p-3 mb-2 user-select-all" id="newApiKey" style="white-space: pre-wrap; word-break: break-all;"><%= newKey %></pre>
       <p class="small text-muted">Keep it secret, like a password: anyone with it can act as you. Use it as <code>Authorization: Bearer &lt;key&gt;</code>. For example:</p>
-      <pre class="border rounded p-3 small"><%= 'curl -H "Authorization: Bearer ' + newKey + '" ' + (publicUrl || 'https://<your NovaDesk>') + '/api/v1/me' %></pre>
+      <pre class="border rounded p-3 small"><%= 'curl -H "Authorization: Bearer ' + newKey + '" ' + (publicUrl || 'https://<your ' + brand.name + '>') + '/api/v1/me' %></pre>
       <hr>
       <% } %>
 
-      <p class="small text-muted">A personal API key lets a script or another system use NovaDesk as you, with your role and your access. Read-only keys can only look; write keys can also create and change records. Details: <a href="/api/docs">API guide</a>.</p>
+      <p class="small text-muted">A personal API key lets a script or another system use <%= brand.name %> as you, with your role and your access. Read-only keys can only look; write keys can also create and change records. Details: <a href="/api/docs">API guide</a>.</p>
 
       <h6 class="section-title">Make a key</h6>
       <form method="POST" action="/profile/api-keys" class="row g-2 align-items-end mb-4">

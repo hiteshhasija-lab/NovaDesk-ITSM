@@ -19,11 +19,11 @@
     <% } %>
   <% } %>
   <% if (mail.mode === 'smtp') { %>
-    <p class="text-muted small">Every email NovaDesk has sent or tried to send, through <strong><%= mail.host %>:<%= mail.port %></strong> from <strong><%= mail.from %></strong>. "Preview" shows exactly what was sent, from NovaDesk's own copy.</p>
+    <p class="text-muted small">Every email <%= brand.name %> has sent or tried to send, through <strong><%= mail.host %>:<%= mail.port %></strong> from <strong><%= mail.from %></strong>. "Preview" shows exactly what was sent, from <%= brand.name %>'s own copy.</p>
   <% } else if (mail.mode === 'none') { %>
-    <div class="alert alert-warning py-2 small">Email is not set up on this server, so notifications are recorded here but not sent. An administrator sets <code>SMTP_HOST</code> and <code>SMTP_FROM</code> (and <code>SMTP_USER</code> and <code>SMTP_PASSWORD</code> if the server needs them) in <code>.env</code>, then restarts NovaDesk.</div>
+    <div class="alert alert-warning py-2 small">Email is not set up on this server, so notifications are recorded here but not sent. An administrator sets <code>SMTP_HOST</code> and <code>SMTP_FROM</code> (and <code>SMTP_USER</code> and <code>SMTP_PASSWORD</code> if the server needs them) in <code>.env</code>, then restarts <%= brand.name %>.</div>
   <% } else { %>
-    <p class="text-muted small">Every email NovaDesk has tried to send. Since this is a demo environment, messages go to a sandbox inbox rather than to real mailboxes. "Preview" shows exactly what was sent, from NovaDesk's own copy.</p>
+    <p class="text-muted small">Every email <%= brand.name %> has tried to send. Since this is a demo environment, messages go to a sandbox inbox rather than to real mailboxes. "Preview" shows exactly what was sent, from <%= brand.name %>'s own copy.</p>
   <% } %>
 
   <div class="card">

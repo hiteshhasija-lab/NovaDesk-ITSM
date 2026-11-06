@@ -1,13 +1,13 @@
 <%- include('partials/head') %>
-<div class="login-wrapper">
+<div class="login-wrapper<%= brand.loginClass %>"<%- brand.loginStyle %>>
   <div class="login-content">
     <div class="card login-card">
     <div class="card-body px-4 px-md-5 py-3">
       <div class="text-center mb-2">
-        <div class="login-logo-mark mx-auto"><img src="/img/novadesk-icon.png" alt=""></div>
-        <div class="login-welcome">Welcome to</div>
-        <div class="login-title">NovaDesk</div>
-        <div class="login-tagline">Sign in to your account</div>
+        <div class="login-logo-mark mx-auto<%= brand.logoUrl ? ' brand-logo-custom' : '' %>"><img src="<%= brand.iconUrl %>" alt=""></div>
+        <div class="login-welcome"><%= brand.welcome %></div>
+        <div class="login-title<%= brand.name.length > 24 ? ' login-title-long' : (brand.name.length > 14 ? ' login-title-mid' : '') %>"><%= brand.name %></div>
+        <div class="login-tagline"><%= brand.tagline %></div>
       </div>
 
       <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>

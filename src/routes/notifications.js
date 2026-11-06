@@ -29,8 +29,8 @@ router.post('/test', requireAuth, requireRole('admin'), async (req, res) => {
   const result = await sendNotificationDetailed({
     to: me.email,
     toName: me.full_name,
-    subject: 'NovaDesk test email',
-    html: `<p>Hi ${escapeHtml(me.full_name)},</p><p>This is a test message from NovaDesk. If you can read it, email notifications are working.</p>`
+    subject: `${res.locals.brand.name} test email`,
+    html: `<p>Hi ${escapeHtml(me.full_name)},</p><p>This is a test message from ${escapeHtml(res.locals.brand.name)}. If you can read it, email notifications are working.</p>`
   });
   req.session.mailTest = { status: result.status, error: result.error, to: me.email };
   res.redirect('/notifications');

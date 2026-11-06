@@ -206,6 +206,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Privacy** — download everything held about a person, anonymise a person who has left, and set how long logs and messages are kept (see *Privacy tools*).
 - **SCIM** — an identity provider creates, changes and switches off people by itself (see *SCIM provisioning*).
 - **Custom fields** — the extra fields an organisation wants on incidents, requests, changes, problems and configuration items (see *Custom fields*).
+- **Branding** — your own product name, logo, colour, sign-in picture and wording, instead of NovaDesk's (see *Branding*).
 
 ## Inbound email
 
@@ -410,6 +411,45 @@ record is deleted, whichever way it is deleted.
 Checked by `node scripts/custom-fields-check.js` (runs in CI): who may define fields and every refusal, the fields on all five
 kinds of record as an administrator, an agent and an end user, required, staff-only and switched-off fields, the history,
 the API (read and write, typed values, every error), the OpenAPI document, the exports, and deleting.
+
+## Branding
+
+*Branding* in the administrator's menu. Show your own name, logo and colour instead of NovaDesk's, so the product can be
+presented under another name. Everything left empty keeps the built-in look, and an install that never opens the page looks
+exactly as before.
+
+- **Name** (1 to 40 characters): the navigation bar, both sign-in pages, the browser tab, the API guide, help text on the
+  pages, outgoing email, the "from" name of the sandbox mailbox, and the label in an authenticator app for people who set up
+  two-step verification from then on (authenticator entries made earlier keep their old label).
+- **Logo:** PNG, JPEG, GIF or WebP up to 512 KB, recognised from its first bytes (a wrong file name or type does not matter).
+  **SVG is refused** because an SVG can carry script and the logo is served from the application's own address. It is shown
+  on a light tile so a dark logo stays visible on the dark navigation bar; it is also the browser-tab icon and, when
+  `PUBLIC_URL` is set, sits at the top of emails (a mail program needs a full address to fetch it from).
+- **Accent colour** (`#rrggbb`): everything is worked out from this one colour, in both the light and the dark theme:
+  links, buttons, the navigation bar, pagination, ticked boxes, focus rings, and the sign-in page. A colour that white text
+  cannot be read on (contrast below 4.5) is refused with the reason; for the dark theme the colour is lightened until it
+  reads on the dark page, and the sign-in button's shades are chosen so its dark text reads on both ends.
+- **Sign-in pages:** the line above and below the name, and what is behind the card: the **built-in picture** (it shows
+  NovaDesk's own artwork, so choose another when the product is shown under your name), a **plain backdrop** in your colour,
+  or **your own picture** (up to 2 MB; choosing a file switches it on; switching away keeps it stored).
+- **Email:** every notice is framed the same way: the name (and logo) in the accent colour, the message, and a closing line
+  you can write (default "Sent by <name>."). The sender address is still `SMTP_FROM`. The copy kept for Preview on the
+  Notifications page is the framed one; earlier notices are not rewritten.
+- **Not changed:** the names integrations rely on stay as they are: the `X-NovaDesk-*` webhook headers and the
+  `NovaDesk-Webhooks` user agent, and the SCIM and OpenAPI descriptions. Messages between NovaDesk and NovaConnect (the
+  decommission cards) are internal and keep the name too.
+
+Settings live in one table (`branding_settings`), pictures included, so a database backup is a backup of the branding. Every
+change and a reset is audited (`branding.changed`, `branding.reset`; the picture itself is never written to the log). The logo
+and the sign-in picture are public (the sign-in page shows them) at `/branding/logo` and `/branding/background`, served with
+`Content-Security-Policy: sandbox` so even a file opened directly cannot run anything, cached by the browser for an hour and
+fetched afresh when the picture changes (the address carries a version). Changes show at once on the server that saved them
+and within five seconds on another copy behind the same database.
+
+Checked by `node scripts/branding-check.js` (runs in CI): who may change it, the name, wording, colour and pictures on every
+kind of page, every refusal (empty or long text, a colour too light to read, markup in a name, an SVG or a disguised file as
+a logo or background, a picture over its limit), the address the pictures are served from, the email frame, the
+authenticator label, the audit log, and putting everything back.
 
 ## Security
 

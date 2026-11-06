@@ -2,7 +2,7 @@
 <%- include('../partials/nav') %>
 <div class="container-fluid px-4 py-4" style="max-width: 1150px;">
   <h4 class="mb-2"><i class="bi bi-input-cursor-text text-primary me-1"></i>Custom fields</h4>
-  <p class="text-muted small">Add the fields your organisation wants to record that NovaDesk does not ask for, such as a cost centre on an incident or a warranty contract on a configuration item. They appear on the forms and pages of that kind of record, in the REST API (as <code>custom_fields</code>) and in CSV exports.</p>
+  <p class="text-muted small">Add the fields your organisation wants to record that <%= brand.name %> does not ask for, such as a cost centre on an incident or a warranty contract on a configuration item. They appear on the forms and pages of that kind of record, in the REST API (as <code>custom_fields</code>) and in CSV exports.</p>
 
   <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
   <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>

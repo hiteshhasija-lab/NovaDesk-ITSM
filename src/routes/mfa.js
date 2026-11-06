@@ -20,7 +20,7 @@ async function view(req, extra = {}) {
   const state = await mfa.status(user.id);
   const setup = state.pending ? await mfa.pendingSetup(user).catch(() => null) : null;
   // Drawn here, so the key never goes to an outside QR service. Null if the link were ever too long: the typed key still works.
-  if (setup) setup.qrSvg = qr.toSvg(setup.uri, { label: 'QR code for the NovaDesk setup key' });
+  if (setup) setup.qrSvg = qr.toSvg(setup.uri, { label: `QR code for the ${req.res.locals.brand.name} setup key` });
   const required = mfa.requiredFor(policy, user.role) && req.session.user.via !== 'sso';
   return { title: 'Two-step verification', state, setup, required, forced: Boolean(req.query.required) && required && !state.enabled, error: null, success: null, recoveryCodes: null, ...extra };
 }

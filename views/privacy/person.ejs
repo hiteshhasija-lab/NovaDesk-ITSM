@@ -12,7 +12,7 @@
   <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
 
   <div class="card mb-3"><div class="card-body">
-    <h6 class="section-title">What NovaDesk holds about them</h6>
+    <h6 class="section-title">What <%= brand.name %> holds about them</h6>
     <% if (!held.length) { %><p class="small text-muted">Nothing but the account itself.</p><% } else { %>
     <ul class="list-unstyled small mb-3 row">
       <% held.forEach(x => { %><li class="col-sm-6"><%= x.label %>: <strong><%= x.count %></strong></li><% }) %>
@@ -47,7 +47,7 @@
         <ul class="ps-3 mb-0">
           <li>The tickets, comments and files themselves (unless you choose below)</li>
           <li>Anything other people typed about them, such as their name in someone else's description</li>
-          <li>Copies outside NovaDesk: server backups, the mail server, other connected systems</li>
+          <li>Copies outside <%= brand.name %>: server backups, the mail server, other connected systems</li>
         </ul>
       </div>
     </div>

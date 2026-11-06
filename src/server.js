@@ -46,6 +46,8 @@ const importRoutes = require('./routes/import');
 const privacyRoutes = require('./routes/privacy');
 const scimAdminRoutes = require('./routes/scimAdmin');
 const customFieldRoutes = require('./routes/customFields');
+const brandingRoutes = require('./routes/branding');
+const branding = require('./branding');
 const scimRouter = require('./scim/router');
 
 const app = express();
@@ -75,6 +77,7 @@ app.get('/health', async (req, res) => {
 app.use((req, res, next) => {
   res.locals.h = helpers;
   res.locals.path = req.path;
+  res.locals.brand = branding.viewModel(null);   // the built-in look; replaced below once the settings are read
   next();
 });
 
@@ -104,6 +107,11 @@ app.use('/api/v1', api.router);
 app.use('/scim/v2', scimRouter);
 // Mail handed over by a mail system (raw message, shared secret): before the page body parsers, which would not suit it.
 app.post('/api/inbound/email', ...inboundIntake.handler(process.env));
+
+// The organisation's own name, logo and colour (src/branding.js): every page gets `brand`. The logo itself is public (the sign-in page shows it).
+app.get('/branding/logo', branding.serveLogo);
+app.get('/branding/background', branding.serveBackground);
+app.use(branding.middleware);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -135,7 +143,7 @@ app.get('/auth/oidc/callback', createLimiter({ windowMs: 15 * 60 * 1000, max: 30
 
 // The API guide (public: it describes the API and holds no data).
 app.get('/api/docs', (req, res) => {
-  res.render('api-docs', { title: 'NovaDesk API', specPath: '/api/v1/openapi.json', spec: api.openApi(), publicUrl: (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, ''), limits: api.limits });
+  res.render('api-docs', { title: `${res.locals.brand.name} API`, specPath: '/api/v1/openapi.json', spec: api.openApi(), publicUrl: (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, ''), limits: api.limits });
 });
 
 app.use('/api/integrations', integrationRoutes);
@@ -155,6 +163,7 @@ app.use('/import', importRoutes);
 app.use('/privacy', privacyRoutes);
 app.use('/settings/scim', scimAdminRoutes);
 app.use('/settings/fields', customFieldRoutes);
+app.use('/settings/branding', brandingRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);

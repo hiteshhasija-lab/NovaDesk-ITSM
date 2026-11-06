@@ -10,7 +10,7 @@ const { createSmtpTransport, sendMail, describeError } = require('./mailTranspor
 const config = mailConfig(process.env);   // throws at start-up when the settings do not fit together
 const inbound = inboundConfig(process.env);
 
-const SANDBOX_FROM = '"NovaDesk ITSM" <notifications@novadesk.local>';
+const branding = require('./branding');
 let transporterPromise = null;
 
 function getTransporter() {
@@ -48,7 +48,7 @@ async function deliver({ to, subject, html }) {
     const transporter = await getTransporter();
     if (!transporter) return { status: 'failed', error: 'The test mailbox service could not be reached.', previewUrl: null };
     // Replies to a notice go to the help desk's own address (INBOUND_ADDRESS) when there is one, and are matched back to the ticket.
-    const info = await sendMail(transporter, { from: config.mode === 'smtp' ? config.from : SANDBOX_FROM, to, subject, html, replyTo: inbound.address || undefined });
+    const info = await sendMail(transporter, { from: config.mode === 'smtp' ? config.from : `"${await branding.senderName()}" <notifications@novadesk.local>`, to, subject, html, replyTo: inbound.address || undefined });
     return { status: 'sent', error: null, previewUrl: config.mode === 'smtp' ? null : (nodemailer.getTestMessageUrl(info) || null), messageId: info.messageId ? String(info.messageId).replace(/^<|>$/g, '') : null };
   } catch (err) {
     console.error('Notifications: failed to send:', err.message);
@@ -60,6 +60,8 @@ async function deliver({ to, subject, html }) {
 // the mail server (a failed send is a recorded outcome, not an error for the caller).
 async function sendNotificationDetailed({ to, toName, subject, html, relatedType, relatedId }) {
   if (!to) return null;
+  // The same frame around every notice (name, logo, closing line: Settings > Branding); the copy kept for Preview is the framed one.
+  html = await branding.emailFrame(html);
   const result = await deliver({ to, subject, html });
   await db.prepare(`
     INSERT INTO notifications (recipient_email, recipient_name, subject, body, related_type, related_id, preview_url, status, error, message_id)

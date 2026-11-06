@@ -5,7 +5,7 @@ const { db, nowStr } = require('./db');
 const totp = require('./totp');
 const { encryptSecret, decryptSecret, generateRecoveryCodes, hashRecoveryCode } = require('./mfaCrypto');
 
-const ISSUER = 'NovaDesk';
+const branding = require('./branding');
 
 async function status(userId) {
   const row = await db.prepare('SELECT user_id, enabled, enabled_at FROM user_mfa WHERE user_id = ?').get(userId);
@@ -24,7 +24,7 @@ async function beginSetup(user) {
     ON CONFLICT (user_id) DO UPDATE SET secret_enc = EXCLUDED.secret_enc, enabled = 0, last_counter = 0, created_at = EXCLUDED.created_at, enabled_at = NULL
     WHERE user_mfa.enabled = 0
   `).run(user.id, encryptSecret(secret), nowStr());
-  return { secret, uri: totp.otpauthUri({ issuer: ISSUER, account: user.email || user.username, secret }) };
+  return { secret, uri: totp.otpauthUri({ issuer: await branding.issuerName(), account: user.email || user.username, secret }) };
 }
 
 // The key of a setup in progress (so the page can show it again after a wrong code).
@@ -32,7 +32,7 @@ async function pendingSetup(user) {
   const row = await db.prepare('SELECT secret_enc FROM user_mfa WHERE user_id = ? AND enabled = 0').get(user.id);
   if (!row) return null;
   const secret = decryptSecret(row.secret_enc);
-  return { secret, uri: totp.otpauthUri({ issuer: ISSUER, account: user.email || user.username, secret }) };
+  return { secret, uri: totp.otpauthUri({ issuer: await branding.issuerName(), account: user.email || user.username, secret }) };
 }
 
 async function replaceRecoveryCodes(userId) {

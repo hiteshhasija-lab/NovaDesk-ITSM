@@ -460,3 +460,21 @@ test('0013: custom field definitions are checked by the database, values go with
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM custom_field_values WHERE field_id = ?`, [f])).rows[0].c), 0, 'deleting a field deletes the values it holds');
   });
 });
+
+test('0014: the one branding row starts at the built-in look, the logo is stored as bytes, and only one row can exist', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    assert.deepStrictEqual((await knex.raw('SELECT * FROM branding_settings')).rows, [{ id: 1, product_name: 'NovaDesk', accent_color: null, login_welcome: null, login_tagline: null, email_footer: null, logo: null, logo_mime: null, logo_version: null, login_background: 'builtin', background: null, background_mime: null, background_version: null, updated_at: null, updated_by: null }], 'nothing is set until an administrator sets it');
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255, 254]);
+    await knex.raw('UPDATE branding_settings SET logo = ?, logo_mime = ?', [bytes, 'image/png']);
+    const back = (await knex.raw('SELECT logo FROM branding_settings')).rows[0].logo;
+    assert.ok(Buffer.isBuffer(back) && back.equals(bytes), 'the picture comes back byte for byte');
+    await assert.rejects(() => knex.raw(`INSERT INTO branding_settings (id) VALUES (2)`), /check/i);
+    await assert.rejects(() => knex.raw(`UPDATE branding_settings SET login_background = 'neon'`), /check/i, 'only the three backgrounds exist');
+    for (const mode of ['plain', 'custom', 'builtin']) await knex.raw('UPDATE branding_settings SET login_background = ?', [mode]);
+    const admin = (await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('adm', 'x', 'A') RETURNING id`)).rows[0].id;
+    await knex.raw('UPDATE branding_settings SET updated_by = ?', [admin]);
+    await knex.raw('DELETE FROM users WHERE id = ?', [admin]);
+    assert.strictEqual((await knex.raw('SELECT updated_by FROM branding_settings')).rows[0].updated_by, null, 'deleting the administrator who saved it does not delete the branding');
+  });
+});

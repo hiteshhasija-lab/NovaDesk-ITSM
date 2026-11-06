@@ -1,10 +1,10 @@
 <%- include('partials/head') %>
-<div class="login-wrapper">
+<div class="login-wrapper<%= brand.loginClass %>"<%- brand.loginStyle %>>
   <div class="login-content">
     <div class="card login-card">
     <div class="card-body px-4 px-md-5 py-3">
       <div class="text-center mb-2">
-        <div class="login-logo-mark mx-auto"><img src="/img/novadesk-icon.png" alt=""></div>
+        <div class="login-logo-mark mx-auto<%= brand.logoUrl ? ' brand-logo-custom' : '' %>"><img src="<%= brand.iconUrl %>" alt=""></div>
         <div class="login-title">Two-step verification</div>
         <div class="login-tagline">Enter the 6-digit code from your authenticator app</div>
       </div>

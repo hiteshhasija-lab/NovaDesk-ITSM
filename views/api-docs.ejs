@@ -9,8 +9,8 @@
 %>
 <div class="container py-4" style="max-width: 980px;">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3 class="mb-0"><i class="bi bi-braces text-primary me-2"></i>NovaDesk API</h3>
-    <a href="/" class="btn btn-sm btn-outline-secondary">&larr; Back to NovaDesk</a>
+    <h3 class="mb-0"><i class="bi bi-braces text-primary me-2"></i><%= brand.name %> API</h3>
+    <a href="/" class="btn btn-sm btn-outline-secondary">&larr; Back to <%= brand.name %></a>
   </div>
   <p class="text-muted">Create and read incidents, service requests and configuration items from your own scripts and tools. JSON over HTTPS, one personal API key per integration. The machine-readable description is at <a href="<%= specPath %>"><%= specPath %></a> (OpenAPI 3).</p>
 
@@ -78,7 +78,7 @@ curl -X PATCH <%= base %>/incidents/42 \
 
   <h5 class="mt-5 mb-3" id="webhooks">Webhooks</h5>
   <div class="card mb-4"><div class="card-body">
-    <p>Instead of asking NovaDesk what changed, let NovaDesk tell you. An administrator adds a webhook under <em>Webhooks</em> in the user menu: an address, the events wanted, and NovaDesk makes a signing secret. From then on every matching event is sent to that address as an HTTP <code>POST</code> with a JSON body.</p>
+    <p>Instead of asking <%= brand.name %> what changed, let <%= brand.name %> tell you. An administrator adds a webhook under <em>Webhooks</em> in the user menu: an address, the events wanted, and <%= brand.name %> makes a signing secret. From then on every matching event is sent to that address as an HTTP <code>POST</code> with a JSON body.</p>
     <h6>Events</h6>
     <p class="small mb-2">For incidents, changes, problems, service requests, configuration items (<code>ci</code>) and knowledge articles: <code>&lt;record&gt;.created</code>, <code>&lt;record&gt;.updated</code> (any other change to the record; the SLA clock bookkeeping and article view counts do not count) and <code>&lt;record&gt;.status_changed</code> (with the previous status); for incidents, changes and problems also <code>&lt;record&gt;.commented</code>. Internal work notes on incidents are never sent. Events are recorded by the database itself, so changes made through the pages, the API, the integrations and the decommission automation all produce them. Moving a record to another status sends <code>status_changed</code> only, not also <code>updated</code>. A test button sends <code>ping</code>.</p>
     <h6>What you receive</h6>
@@ -127,6 +127,6 @@ def genuine(secret: str, header: str, raw_body: bytes) -> bool:
     </ul>
   </div></div>
 
-  <p class="small text-muted mt-4">Changes, approvals and the decommission workflow are read-only here: approving, rejecting and cancelling follow their own rules in the NovaDesk pages.</p>
+  <p class="small text-muted mt-4">Changes, approvals and the decommission workflow are read-only here: approving, rejecting and cancelling follow their own rules in the <%= brand.name %> pages.</p>
 </div>
 <%- include('partials/foot') %>

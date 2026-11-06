@@ -1,9 +1,9 @@
 <nav class="navbar navbar-expand-xxl navbar-dark app-navbar sticky-top">
   <div class="container-fluid px-3">
     <div class="navbar-brand fw-bold d-flex align-items-center">
-      <img src="/img/novadesk-icon.png" alt="" height="28" class="me-2">
+      <img src="<%= brand.iconUrl %>" alt="" height="28" class="me-2<%= brand.logoUrl ? ' brand-logo-custom' : '' %>">
       <div class="d-flex flex-column">
-        <span>NovaDesk</span>
+        <span><%= brand.name %></span>
         <span class="navbar-version"><%= h.appVersion() %></span>
       </div>
     </div>
@@ -77,6 +77,7 @@
             <li><a class="dropdown-item" href="/import"><i class="bi bi-upload me-2"></i>Import data</a></li>
             <li><a class="dropdown-item" href="/settings/sla"><i class="bi bi-clock-history me-2"></i>SLA settings</a></li>
             <li><a class="dropdown-item" href="/settings/fields"><i class="bi bi-input-cursor-text me-2"></i>Custom fields</a></li>
+            <li><a class="dropdown-item" href="/settings/branding"><i class="bi bi-palette me-2"></i>Branding</a></li>
             <li><a class="dropdown-item" href="/settings/webhooks"><i class="bi bi-broadcast me-2"></i>Webhooks</a></li>
             <li><a class="dropdown-item" href="/settings/inbound"><i class="bi bi-envelope-arrow-down me-2"></i>Inbound email</a></li>
             <li><a class="dropdown-item" href="/settings/scim"><i class="bi bi-people-fill me-2"></i>SCIM provisioning</a></li>
