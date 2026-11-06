@@ -369,7 +369,7 @@ jobs:
           docker compose up -d postgres
           for i in $(seq 1 40); do docker compose exec -T postgres pg_isready -U novadesk -d novadesk < /dev/null && break; sleep 3; done
           sleep 5
-          docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --exit-on-error < novadesk.dump
+          docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --no-privileges --exit-on-error < novadesk.dump
           docker compose run --rm --no-deps -T --entrypoint tar novadesk -C /app/data -xf - < appdata.tar
           docker compose up -d novadesk
           for i in $(seq 1 60); do curl -fsS http://localhost:8080/health && break; sleep 3; done

@@ -120,11 +120,37 @@ const db = { prepare, transaction, raw: (sql, params) => scopedRunner.raw(sql, p
 
 // The tables are built by the numbered SQL files in src/migrations/ (see src/migrate.js): each is applied
 // once, in order, at start-up. To change the schema, add a file; never edit one that has shipped.
+// The restricted role is part of the cluster, not of one database, so a database restored from a dump onto a new server does not
+// have it (and its grants, left out of the restore with --no-privileges). Every start makes sure it exists and may use every table.
+async function ensureRestrictedRole(admin) {
+  await admin.raw(`DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'novadesk_app') THEN
+        BEGIN
+          CREATE ROLE novadesk_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END;
+      END IF;
+      IF NOT pg_has_role(current_user, 'novadesk_app', 'MEMBER') THEN
+        EXECUTE format('GRANT novadesk_app TO %I', current_user);
+      END IF;
+      EXECUTE format('GRANT USAGE ON SCHEMA %I TO novadesk_app', current_schema());
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO novadesk_app', current_schema());
+      EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO novadesk_app', current_schema());
+      EXECUTE format('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA %I TO novadesk_app', current_schema());
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO novadesk_app', current_schema());
+      EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO novadesk_app', current_schema());
+    END $$`);
+}
+
 async function initSchema() {
   // Its own connection, as the login role itself (the restricted role cannot create tables or roles).
   const admin = require('knex')({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 2 } });
   let result;
-  try { result = await migrate(admin, { log: (m) => console.log(`[Database] ${m}`) }); } finally { await admin.destroy(); }
+  try {
+    result = await migrate(admin, { log: (m) => console.log(`[Database] ${m}`) });
+    await ensureRestrictedRole(admin);
+  } finally { await admin.destroy(); }
   if (result.unknown.length) {
     console.warn(`[Database] this database has migrations this version does not know (${result.unknown.join(', ')}): it was last started by a newer release. Continuing.`);
   }

@@ -281,7 +281,8 @@ async function variants(knex) {
 
   section = 'rules that depend on settings';
   const db = require('../src/db'); const { parseMessage } = require('../src/inbound/parse'); const { processMessage } = require('../src/inbound/process');
-  const handle = async (opts, env) => processMessage(await parseMessage(await raw(opts)), { source: 'http', env: { ...process.env, ...env } });
+  // (mail belongs to the default tenant, as it does in the application)
+  const handle = async (opts, env) => require('../src/tenancy').run(1, async () => processMessage(await parseMessage(await raw(opts)), { source: 'http', env: { ...process.env, ...env } }));
   const ign = await handle({ from: `new.${tag}@nowhere.test`, subject: `Unknown ignored ${tag}`, text: 'hello' }, { INBOUND_UNKNOWN_SENDERS: 'ignore' });
   check('INBOUND_UNKNOWN_SENDERS=ignore: a sender with no account is ignored and no account is made', ign.outcome === 'ignored' && !(await one('SELECT 1 FROM users WHERE LOWER(email) = ?', [`new.${tag}@nowhere.test`])), JSON.stringify(ign));
   const known = await handle({ from: 'jane.doe@corp.local', subject: `Known sender ${tag}`, text: 'hello' }, { INBOUND_UNKNOWN_SENDERS: 'ignore' });
@@ -299,7 +300,7 @@ async function variants(knex) {
   const off = await handle({ from: 'raj.patel@corp.local', subject: `Switched off ${tag}`, text: 'hello' }, {});
   await knex.raw("UPDATE users SET active = 1 WHERE id = ?", [inactive.id]);
   check('a sender whose account is switched off is rejected, and no second account is made for the address', off.outcome === 'rejected' && /switched off/.test(off.reason) && Number((await one('SELECT COUNT(*) AS c FROM users WHERE LOWER(email) = ?', ['raj.patel@corp.local'])).c) === 1, JSON.stringify(off));
-  await db.db.raw('SELECT 1');
+  await require('../src/tenancy').runPlatform(() => db.db.raw('SELECT 1'));
 }
 
 main().then(() => { console.log(failed ? `${failed} FAILED` : 'ALL PASS'); process.exit(failed ? 1 : 0); }).catch((e) => { console.error('ABORTED:', e.stack || e.message); process.exit(2); });

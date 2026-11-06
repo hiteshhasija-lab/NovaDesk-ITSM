@@ -165,10 +165,14 @@ starts, or it would see an empty database and create a new first admin that the 
 
 ```bash
 docker compose up -d postgres                  # the database only, empty; give it ~15 s to initialise
-docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --exit-on-error < novadesk.dump
+docker compose exec -T postgres pg_restore -U novadesk -d novadesk --no-owner --no-privileges --exit-on-error < novadesk.dump
 docker compose run --rm --no-deps -T --entrypoint tar novadesk -C /app/data -xf - < appdata.tar
 docker compose up -d novadesk
 ```
+
+`--no-privileges` matters: the dump names the database role the application switches to (`novadesk_app`, see *Several
+organisations on one installation*), which does not exist on a new server; NovaDesk creates it and grants what it needs
+when it starts.
 
 Sessions are part of the data volume, so people whose session was in the backup stay signed in and
 everyone else signs in again. With Podman, use `podman compose`.
