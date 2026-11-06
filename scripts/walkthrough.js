@@ -746,6 +746,10 @@ const has = (r, re) => re.test(r.text);
     // PUBLIC_URL equal to BASE_URL, OIDC_AUTO_CREATE=true and OIDC_ALLOWED_DOMAINS=corp.local,newco.example.
     const IDP = process.env.WALK_OIDC.replace(/\/+$/, '');
     const idp = (path, body) => fetch(IDP + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then((r) => r.json());
+    await step('single sign-on set up: the sign-in page has the working button, not the greyed-out placeholder', async () => {
+      const t = (await new Person('ssobtn').get('/login')).text;
+      return must(t.includes('href="/auth/oidc/start"') && t.includes('Sign in with Contoso') && !t.includes('ssoPlaceholder'), 'working SSO button missing or placeholder shown');
+    });
     const ssoAttempt = async (identity, person = new Person('sso')) => {
       await idp('/__next', identity);
       const start = await person.get('/auth/oidc/start');

@@ -38,6 +38,12 @@
       <a href="/auth/oidc/start" class="btn login-btn-sso w-100 py-2">
         <i class="bi bi-building me-2"></i><%= sso.label %>
       </a>
+      <% } else if (localLogin) { %>
+      <%# SSO is not set up here: the greyed-out button says so (it does nothing; it has been shown on this page since 0.0.82). %>
+      <div class="login-divider-row my-2">or</div>
+      <button type="button" class="btn login-btn-sso w-100 py-2" id="ssoPlaceholder" aria-disabled="true" tabindex="-1" title="SSO is not configured for this instance">
+        <i class="bi bi-building me-2"></i>Sign in with SSO
+      </button>
       <% } %>
 
       <% if (localLogin) { %><div class="login-signup-row">New here? <a href="/register">Create account</a></div><% } %>

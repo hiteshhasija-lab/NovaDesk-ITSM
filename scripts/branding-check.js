@@ -98,6 +98,7 @@ async function run(base, knex, app) {
   let login = await anon.get('/login');
   check('the sign-in page is the NovaDesk one', login.text.includes('<title>Log In · NovaDesk ITSM</title>') && login.text.includes('<div class="login-title">NovaDesk</div>') && login.text.includes('Welcome to') && login.text.includes('Sign in to your account'));
   check('with the built-in icon, and no colour override', login.text.includes('href="/img/novadesk-icon.png"') && login.text.includes('src="/img/novadesk-icon.png"') && !css(login.text) && !login.text.includes('brand-logo-custom'));
+  check('SSO is not set up on this copy, so the greyed-out SSO button is there and does nothing', login.text.includes('id="ssoPlaceholder"') && login.text.includes('aria-disabled="true"') && login.text.includes('Sign in with SSO') && login.text.includes('SSO is not configured for this instance') && !login.text.includes('/auth/oidc/start') && /<button type="button" class="btn login-btn-sso/.test(login.text));
   check('there is no logo to fetch', (await anon.get('/branding/logo')).status === 404);
   const home = await admin.get('/');
   check('the navigation bar says NovaDesk', />NovaDesk<\/span>/.test(home.text) && home.text.includes('/settings/branding'));
@@ -125,6 +126,7 @@ async function run(base, knex, app) {
   check('saving redirects back with a notice', ok1.status === 302 && ok1.loc === '/settings/branding' && (await admin.get('/settings/branding')).text.includes('Saved.'));
   login = await anon.get('/login');
   check('the sign-in page uses the name and the two lines', new RegExp(`<div class="login-title[^"]*">${NAME}</div>`).test(login.text) && login.text.includes('Welcome back to') && login.text.includes('Staff sign-in') && !login.text.includes('Sign in to your account'));
+  check('the placeholder stays with a branded sign-in page', login.text.includes('id="ssoPlaceholder"'));
   check('the browser tab says it too', login.text.includes(`<title>Log In · ${NAME}</title>`));
   const reg = await anon.get('/register');
   check('the sign-up page uses the name and keeps its own second line', reg.text.includes(`>${NAME}<`) && reg.text.includes('Create your account') && reg.text.includes('Welcome back to'));
