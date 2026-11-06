@@ -1,0 +1,14 @@
+<%- include('../partials/head') %>
+<nav class="navbar navbar-dark app-navbar">
+  <div class="container-fluid px-3">
+    <a class="navbar-brand fw-bold" href="/"><i class="bi bi-diagram-3 me-2"></i>Platform console <span class="navbar-version"><%= host %></span></a>
+    <% if (typeof operator !== 'undefined' && operator) { %>
+    <div class="d-flex align-items-center gap-3">
+      <a class="text-white-50 small text-decoration-none" href="/">Tenants</a>
+      <a class="text-white-50 small text-decoration-none" href="/audit">Audit log</a>
+      <span class="text-white small"><%= operator.full_name %></span>
+      <form method="POST" action="/logout" class="m-0"><input type="hidden" name="_csrf" value="<%= csrf %>"><button type="submit" class="btn btn-sm btn-outline-light">Sign out</button></form>
+    </div>
+    <% } %>
+  </div>
+</nav>

@@ -9,7 +9,8 @@ const { migrate } = require('../src/migrate');
 
 const skip = !process.env.PGHOST && 'PGHOST is not set (needs a Postgres)';
 const connection = { host: process.env.PGHOST, port: process.env.PGPORT || 5432, user: process.env.PGUSER, password: process.env.PGPASSWORD, database: process.env.PGDATABASE };
-const GLOBAL_TABLES = ['schema_migrations', 'tenants', 'tenant_hosts'];
+// Shared on purpose: the list of tenants and the platform console's operators and record (they belong to no tenant).
+const GLOBAL_TABLES = ['schema_migrations', 'tenants', 'tenant_hosts', 'platform_admins', 'platform_audit'];
 
 // A scratch schema, migrated; `admin` is the login role (sees everything), `app(tenant)` runs one statement as the restricted role for a tenant.
 async function withTenancy(fn) {

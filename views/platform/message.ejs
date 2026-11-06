@@ -1,0 +1,7 @@
+<%- include('_head') %>
+<div class="container py-5 text-center">
+  <h4><%= title %></h4>
+  <p class="text-muted"><%= message %></p>
+  <a href="<%= (typeof operator !== 'undefined' && operator) ? '/' : '/login' %>" class="btn btn-primary">Back</a>
+</div>
+<%- include('../partials/foot') %>

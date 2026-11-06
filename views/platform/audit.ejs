@@ -1,0 +1,8 @@
+<%- include('_head') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1200px;">
+  <h4 class="mb-3">Audit log</h4>
+  <div class="card"><div class="table-responsive"><table class="table table-sm small mb-0"><thead class="table-light"><tr><th>When (UTC)</th><th>Operator</th><th>Action</th><th>Tenant</th><th>Detail</th><th>Address</th></tr></thead><tbody>
+  <% entries.forEach(function (e) { %><tr><td class="text-nowrap"><%= e.created_at %></td><td><%= e.operator || '—' %></td><td><code><%= e.action %></code></td><td><%= e.tenant_slug || '—' %></td><td><%= e.detail || '' %></td><td><%= e.ip || '' %></td></tr><% }) %>
+  </tbody></table></div></div>
+</div>
+<%- include('../partials/foot') %>

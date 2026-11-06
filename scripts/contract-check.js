@@ -170,7 +170,9 @@ function buildRoutes(root) {
       const a = n.arguments;
       const prefix = a[0] && a[0].type === 'Literal' && typeof a[0].value === 'string' ? a[0].value : '/';
       const last = a[a.length - 1];
-      const mod = last.type === 'Identifier' ? requires.get(last.name) : modOf(last);
+      // a router, a router file's own export, or what a function of a router file returns: app.use(platformConsole.mount(env))
+      const baseOf = (x) => { let c = x; while (c && (c.type === 'CallExpression' || c.type === 'MemberExpression')) c = c.type === 'CallExpression' ? c.callee : c.object; return c && c.type === 'Identifier' ? requires.get(c.name) : null; };
+      const mod = last.type === 'Identifier' ? requires.get(last.name) : (modOf(last) || baseOf(last));
       if (!mod || !mod.startsWith('.')) return;
       const key = path.normalize(mod).replace(/\.js$/, '');
       if (!mounts.has(key)) mounts.set(key, []);

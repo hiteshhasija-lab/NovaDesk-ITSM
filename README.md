@@ -483,8 +483,18 @@ nothing changes for a single organisation.
 - **What is still one for the whole installation:** the mail server (`SMTP_*`), single sign-on (`OIDC_*`, which names one host in its
   redirect address), the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
   integration. Those belong to the **default tenant**; other tenants sign in with passwords or SCIM for now. Moving them into each
-  tenant's own settings is the next step, with a console for the people who run the installation to make and suspend tenants
-  (today `src/tenants.js` does it: `createTenant`, `createAdmin`, `setStatus`).
+  tenant's own settings is the next step. Making and suspending tenants is done in the platform console (next).
+- **The platform console:** set `PLATFORM_HOST` (for example `ops.helpdesk.example.com`) and that host name shows a console of its
+  own, for the people who run the installation (the *operators*, who belong to no tenant): the tenants with counts of their
+  people and records (never their content), **making a tenant** (name, short name, host names and its first administrator),
+  renaming, adding and removing host names, **suspending and reactivating**, and **a new password for a locked-out tenant
+  administrator** (it ends that person's sessions and is written in the tenant's own audit log as done by the platform).
+  Everything an operator does is in the platform's audit log. Without `PLATFORM_HOST` the console does not exist, not even
+  at that name. The first operator comes from `PLATFORM_ADMIN_USERNAME` and `PLATFORM_ADMIN_PASSWORD` (made once, when there
+  is none). `PLATFORM_ALLOWED_IPS` limits who may reach it (others get a plain 404). Sign-in is a password with a lock-out after five
+  wrong ones; the session is a signed cookie (HttpOnly, SameSite=Strict, two hours) and forms carry a page token. **There is no
+  two-step verification for operators yet**, so keep the console behind a VPN or the address list. Checked by
+  `node scripts/platform-check.js` (in CI).
 - **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
   as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
   reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a

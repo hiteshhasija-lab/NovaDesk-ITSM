@@ -145,6 +145,54 @@ async function createAdmin(tenantId, { username, password, fullName, email }) {
   });
 }
 
+const cleanName = (name) => {
+  const label = String(name || '').replace(/\s+/g, ' ').trim();
+  if (!label || [...label].length > 80) throw new TenantError('The name must be 1 to 80 characters.');
+  return label;
+};
+async function rename(id, name) {
+  const label = cleanName(name);
+  await tenancy.runPlatform(() => db.prepare('UPDATE tenants SET name = ? WHERE id = ?').run(label, Number(id)));
+  invalidate();
+  return label;
+}
+async function addHost(id, host) {
+  const h = checkHost(host);
+  await tenancy.runPlatform(async () => {
+    if (await db.prepare('SELECT 1 AS x FROM tenant_hosts WHERE host = ?').get(h)) throw new TenantError(`The host name ${h} already belongs to a tenant.`);
+    await db.prepare('INSERT INTO tenant_hosts (host, tenant_id) VALUES (?, ?)').run(h, Number(id));
+  });
+  invalidate();
+  return h;
+}
+async function removeHost(id, host) {
+  const h = String(host || '').trim().toLowerCase();
+  const done = await tenancy.runPlatform(() => db.prepare('DELETE FROM tenant_hosts WHERE host = ? AND tenant_id = ?').run(h, Number(id)));
+  invalidate();
+  return done.changes === 1;
+}
+// The administrators of a tenant (names only), for the console.
+const adminsOf = (id) => tenancy.run(id, () => db.prepare("SELECT username, full_name, email, active FROM users WHERE role = 'admin' ORDER BY id").all());
+
+// Support: a new password for one of a tenant's administrators who is locked out. It ends that person's sessions and clears a lock,
+// and the tenant's own audit log says that the platform did it.
+async function resetAdminPassword(tenantId, username, password, operatorName) {
+  const name = String(username || '').trim();
+  const weak = checkPassword(password || '', { username: name });
+  if (weak) throw new TenantError(weak);
+  return tenancy.run(tenantId, async () => {
+    const user = await db.prepare("SELECT id, username, full_name, email FROM users WHERE username = ? AND role = 'admin'").get(name);
+    if (!user) throw new TenantError(`This tenant has no administrator called "${name}".`);
+    const w = checkPassword(password, { username: user.username, email: user.email, fullName: user.full_name });
+    if (w) throw new TenantError(w);
+    await db.prepare('UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL WHERE id = ?').run(bcrypt.hashSync(password, 10), user.id);
+    const ended = (await db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id)).changes;
+    await db.prepare("INSERT INTO audit_log (actor_id, actor_name, action, target_type, target_id, target_name, detail) VALUES (NULL, ?, 'platform.password_reset', 'user', ?, ?, ?)")
+      .run(`Platform operator ${operatorName || ''}`.trim(), user.id, user.username, `password set by the people who run this installation; ${ended} open session${ended === 1 ? '' : 's'} ended`);
+    return user;
+  });
+}
+
 async function setStatus(id, status) {
   if (Number(id) === DEFAULT_ID && status !== 'active') throw new TenantError('The default tenant cannot be suspended.');
   if (!['active', 'suspended'].includes(status)) throw new TenantError('Status must be active or suspended.');
@@ -154,5 +202,5 @@ async function setStatus(id, status) {
 
 module.exports = {
   DEFAULT_ID, TenantError, unknownPolicy, baseDomain, list, get, forHost, scope, pinned, enterRequestTenant, isActive,
-  forEachTenant, createTenant, createAdmin, setStatus, checkSlug, checkHost, invalidate, hostOf,
+  forEachTenant, createTenant, createAdmin, setStatus, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
 };

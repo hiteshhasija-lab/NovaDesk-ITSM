@@ -1,0 +1,46 @@
+<%- include('_head') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1000px;">
+  <p class="small"><a href="/">&larr; Tenants</a></p>
+  <h4 class="mb-1"><%= tenant.name %> <span class="badge bg-<%= tenant.status === 'active' ? 'success' : 'warning text-dark' %>"><%= tenant.status %></span></h4>
+  <p class="text-muted small"><code><%= tenant.slug %></code> · made <%= tenant.created_at %> · <%= tenant.active_users %> of <%= tenant.users %> people active · <%= tenant.incidents %> incidents · <%= tenant.requests %> requests · <%= tenant.changes %> changes</p>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% if (typeof flash !== 'undefined' && flash) { %><div class="alert alert-success py-2 small"><%= flash %></div><% } %>
+
+  <div class="card mb-3"><div class="card-body"><h6 class="section-title">Name</h6>
+    <form method="POST" action="/tenants/<%= tenant.id %>/rename" class="d-flex gap-2"><input type="hidden" name="_csrf" value="<%= csrf %>"><input class="form-control" name="name" maxlength="80" value="<%= tenant.name %>" required><button class="btn btn-outline-primary" type="submit">Rename</button></form>
+  </div></div>
+
+  <div class="card mb-3"><div class="card-body"><h6 class="section-title">Host names</h6>
+    <% if (!tenant.hosts.length) { %><p class="small text-muted">None. Only <code><%= tenant.slug %></code> under the base domain, if one is set, reaches this tenant.</p><% } %>
+    <% tenant.hosts.forEach(function (h) { %>
+      <form method="POST" action="/tenants/<%= tenant.id %>/hosts/remove" class="d-flex align-items-center gap-2 mb-1"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="host" value="<%= h %>"><code><%= h %></code><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+    <% }) %>
+    <form method="POST" action="/tenants/<%= tenant.id %>/hosts" class="d-flex gap-2 mt-2"><input type="hidden" name="_csrf" value="<%= csrf %>"><input class="form-control" name="host" placeholder="help.acme.example" required><button class="btn btn-outline-primary" type="submit">Add</button></form>
+  </div></div>
+
+  <div class="card mb-3"><div class="card-body"><h6 class="section-title">Status</h6>
+    <% if (isDefault) { %><p class="small text-muted mb-0">The default tenant cannot be suspended.</p><% } else { %>
+    <p class="small text-muted">A suspended tenant's pages answer 503 and its API keys and SCIM tokens are refused. Its data is kept.</p>
+    <form method="POST" action="/tenants/<%= tenant.id %>/status"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="status" value="<%= tenant.status === 'active' ? 'suspended' : 'active' %>">
+      <button class="btn btn-<%= tenant.status === 'active' ? 'outline-warning' : 'outline-success' %>" type="submit"><%= tenant.status === 'active' ? 'Suspend this tenant' : 'Reactivate this tenant' %></button></form>
+    <% } %>
+  </div></div>
+
+  <div class="card mb-3"><div class="card-body"><h6 class="section-title">Administrators</h6>
+    <table class="table table-sm"><thead class="table-light"><tr><th>Username</th><th>Name</th><th>Email</th><th>Active</th></tr></thead><tbody>
+    <% admins.forEach(function (a) { %><tr><td><code><%= a.username %></code></td><td><%= a.full_name %></td><td><%= a.email || '—' %></td><td><%= a.active ? 'yes' : 'no' %></td></tr><% }) %>
+    </tbody></table>
+    <p class="small text-muted">Locked out? Set a new password for one of them. It ends their open sessions and is written in the tenant's own audit log as done by the platform.</p>
+    <form method="POST" action="/tenants/<%= tenant.id %>/reset-admin" class="row g-2" autocomplete="off"><input type="hidden" name="_csrf" value="<%= csrf %>">
+      <div class="col-md-4"><input class="form-control" name="username" placeholder="administrator's username" required></div>
+      <div class="col-md-5"><input class="form-control" type="password" name="password" placeholder="new password" autocomplete="new-password" required></div>
+      <div class="col-md-3"><button class="btn btn-outline-danger w-100" type="submit">Set the password</button></div>
+    </form>
+  </div></div>
+
+  <div class="card"><div class="card-body"><h6 class="section-title">What the platform did here</h6>
+    <% if (!history.length) { %><p class="small text-muted mb-0">Nothing yet.</p><% } else { %>
+    <table class="table table-sm small"><tbody><% history.forEach(function (e) { %><tr><td class="text-nowrap"><%= e.created_at %></td><td><%= e.operator || '—' %></td><td><code><%= e.action %></code></td><td><%= e.detail || '' %></td></tr><% }) %></tbody></table><% } %>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

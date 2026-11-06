@@ -1,0 +1,39 @@
+<%- include('_head') %>
+<div class="container-fluid px-4 py-4" style="max-width: 1200px;">
+  <h4 class="mb-1">Tenants</h4>
+  <p class="text-muted small">Counts only: this console never shows what is inside a tenant. A tenant is reached at its host names<%= base ? ` or <short name>.${base}` : '' %>; any other host name is <%= policy === 'reject' ? 'refused (404)' : 'the default tenant\'s' %>. A new or changed tenant reaches a running server within five seconds.</p>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <div class="card mb-4"><div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead class="table-light"><tr><th>Name</th><th>Short name</th><th>Status</th><th>Host names</th><th class="text-end">People</th><th class="text-end">Incidents</th><th class="text-end">Requests</th><th class="text-end">Changes</th><th>Last active</th></tr></thead>
+    <tbody>
+    <% tenants.forEach(function (t) { %>
+      <tr class="<%= t.status === 'active' ? '' : 'text-muted' %>">
+        <td><a href="/tenants/<%= t.id %>"><%= t.name %></a><% if (t.id === 1) { %> <span class="badge bg-secondary">default</span><% } %></td>
+        <td><code><%= t.slug %></code></td>
+        <td><span class="badge bg-<%= t.status === 'active' ? 'success' : 'warning text-dark' %>"><%= t.status %></span></td>
+        <td class="small"><%= t.hosts.length ? t.hosts.join(', ') : '—' %></td>
+        <td class="text-end"><%= t.active_users %> / <%= t.users %></td><td class="text-end"><%= t.incidents %></td><td class="text-end"><%= t.requests %></td><td class="text-end"><%= t.changes %></td>
+        <td class="small"><%= t.last_seen || '—' %></td>
+      </tr>
+    <% }) %>
+    </tbody></table></div></div>
+
+  <div class="card"><div class="card-body">
+    <h6 class="section-title">Make a tenant</h6>
+    <form method="POST" action="/tenants" autocomplete="off">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <div class="row g-3">
+        <div class="col-md-4"><label class="form-label" for="name">Name</label><input class="form-control" id="name" name="name" maxlength="80" value="<%= form.name || '' %>" required></div>
+        <div class="col-md-3"><label class="form-label" for="slug">Short name</label><input class="form-control" id="slug" name="slug" maxlength="40" value="<%= form.slug || '' %>" placeholder="acme" required><div class="form-text">Letters, digits, hyphens.</div></div>
+        <div class="col-md-5"><label class="form-label" for="host">Host names</label><input class="form-control" id="host" name="host" value="<%= form.host || '' %>" placeholder="help.acme.example, ..."><div class="form-text">The addresses people type, separated by commas. Optional<%= base ? ' (the short name already works under ' + base + ')' : '' %>.</div></div>
+        <div class="col-12"><hr class="my-1"><div class="small text-muted">First administrator of the tenant</div></div>
+        <div class="col-md-3"><label class="form-label" for="admin_username">Username</label><input class="form-control" id="admin_username" name="admin_username" value="<%= form.admin_username || '' %>" required></div>
+        <div class="col-md-3"><label class="form-label" for="admin_name">Full name</label><input class="form-control" id="admin_name" name="admin_name" value="<%= form.admin_name || '' %>"></div>
+        <div class="col-md-3"><label class="form-label" for="admin_email">Email</label><input class="form-control" id="admin_email" name="admin_email" type="email" value="<%= form.admin_email || '' %>"></div>
+        <div class="col-md-3"><label class="form-label" for="admin_password">Password</label><input class="form-control" id="admin_password" name="admin_password" type="password" autocomplete="new-password" required><div class="form-text">Given to them to change; follows the usual password rules.</div></div>
+      </div>
+      <button class="btn btn-primary mt-3" type="submit">Make the tenant</button>
+    </form>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

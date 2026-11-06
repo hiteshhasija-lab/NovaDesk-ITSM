@@ -50,6 +50,7 @@ const brandingRoutes = require('./routes/branding');
 const branding = require('./branding');
 const tenancy = require('./tenancy');
 const tenants = require('./tenants');
+const platformConsole = require('./routes/platform');
 const scimRouter = require('./scim/router');
 
 const app = express();
@@ -121,6 +122,8 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Which tenant (organisation) this request is for (src/tenants.js): from here on every database call is limited to its rows.
 // The NovaConnect integration and mail handed over by HTTP belong to the default tenant alone.
+// The platform console answers on its own host name (PLATFORM_HOST) and belongs to no tenant; without that setting it does not exist.
+app.use(platformConsole.mount(process.env));
 app.use('/api/integrations', tenants.pinned());
 app.use(tenants.scope(process.env));
 app.use(branding.middleware);
@@ -223,6 +226,7 @@ initDb()
       console.log(`No TLS certificate found at ${TLS_CERT_PATH} — HTTPS not started.`);
     }
 
+    require('./platform').bootstrap(require('./platform').config(process.env)).catch((err) => console.warn(`[Platform] ${err.message}`));
     startScheduler();
     startSessionCleanup();
     inboundPoller.start(process.env);
