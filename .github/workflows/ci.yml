@@ -65,7 +65,7 @@ jobs:
       - name: Migration tests against a real Postgres (fresh, existing, failing, edited, concurrent)
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
-          node --test test/migrate.db.test.js
+          node --test test/migrate.db.test.js test/tenancy.db.test.js
       - name: Start NovaDesk on an empty database
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
@@ -159,6 +159,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/branding-check.js
+      - name: Multi-tenancy (two more tenants on one app: sign-in, sessions, every record by id, writes, keys, SCIM, webhooks, settings, suspension, host names)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/tenancy-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

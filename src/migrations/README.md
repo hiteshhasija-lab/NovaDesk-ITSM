@@ -18,6 +18,20 @@ docker compose exec novadesk node src/migrate.js up        # apply what is waiti
    Remove or rename in two steps: one release stops using it, a later release drops it.
 4. Run `node --test test/` (the database tests run when `PGHOST` points at a scratch Postgres).
 
+## Tables that hold an organisation's data
+
+NovaDesk serves several organisations (tenants) from one database (migration 0015). A new table that holds an
+organisation's data must be put under the same rules, right after it is created:
+
+```sql
+CREATE TABLE widgets (id SERIAL PRIMARY KEY, label TEXT NOT NULL);
+SELECT nd_tenant_scope('widgets');   -- adds tenant_id (defaulting to the statement's tenant), an index and row level security
+```
+
+Make a name that must be unique unique *within a tenant*: `UNIQUE (tenant_id, label)`, and name the columns in
+`ON CONFLICT (tenant_id, label)`. `test/tenancy.db.test.js` fails, naming the table, if one is missing. A table that really
+is shared (a list of tenants, say) is the exception and is named in that test.
+
 ## Rules
 
 - **Never edit a file that has been released.** Its checksum is stored; an edited file stops NovaDesk from starting

@@ -206,6 +206,7 @@ everyone else signs in again. With Podman, use `podman compose`.
 - **Privacy** — download everything held about a person, anonymise a person who has left, and set how long logs and messages are kept (see *Privacy tools*).
 - **SCIM** — an identity provider creates, changes and switches off people by itself (see *SCIM provisioning*).
 - **Custom fields** — the extra fields an organisation wants on incidents, requests, changes, problems and configuration items (see *Custom fields*).
+- **Tenants** — several organisations on one installation, kept apart by the database (see *Several organisations on one installation*).
 - **Branding** — your own product name, logo, colour, sign-in picture and wording, instead of NovaDesk's (see *Branding*).
 
 ## Inbound email
@@ -450,6 +451,46 @@ Checked by `node scripts/branding-check.js` (runs in CI): who may change it, the
 kind of page, every refusal (empty or long text, a colour too light to read, markup in a name, an SVG or a disguised file as
 a logo or background, a picture over its limit), the address the pictures are served from, the email frame, the
 authenticator label, the audit log, and putting everything back.
+
+## Several organisations on one installation (tenants)
+
+One NovaDesk and one database can serve several organisations that must not see each other: an IT provider with
+customers, or a product sold as a service. Everything that exists on an installation today is the **default tenant**, and
+nothing changes for a single organisation.
+
+- **What is separate:** everything an organisation owns: people, sessions, incidents, requests, changes, problems,
+  configuration items, knowledge articles, comments, files, notifications, the audit log, API keys, SCIM tokens, webhooks,
+  custom fields, SLA targets and calendar, branding, retention limits and ticket numbers (each tenant's first incident is
+  INC0000001). The same username can exist in two tenants as two different people.
+- **How it is kept apart:** by the database, not only by the pages. Each table has a `tenant_id` and a row level security policy
+  (migration 0015); the application connects as the restricted role `novadesk_app` (it switches to it on every connection, even
+  when the login role is a superuser), and every statement names the tenant of the request. A query that forgets to filter still
+  sees only its own tenant's rows, and a write naming another tenant is refused. A database call made outside any tenant fails
+  instead of guessing. The few places that look across tenants (finding which tenant an API key belongs to, the background
+  jobs, expired-session clean-up) say so explicitly in `src/tenancy.js`.
+- **Which tenant a request is for:** the host name in the address bar: a name listed for a tenant (`tenant_hosts`), else
+  `<short name>.TENANT_BASE_DOMAIN`. Any other host is the default tenant's (`TENANT_UNKNOWN_HOST=default`) or refused with a 404
+  (`reject`, the setting for an installation that serves several organisations). An API key or SCIM token belongs to a tenant
+  itself and needs no host name. A session cookie made for one tenant is nothing at another's address.
+- **Suspending:** a suspended tenant's pages answer 503 and its API keys and SCIM tokens are refused (403); its data is kept.
+  A running server learns of a new or suspended tenant within five seconds. The default tenant cannot be suspended.
+- **Background work** (webhook delivery, SLA warnings and breaches, retention, the decommission jobs) runs for each tenant in
+  turn; one tenant failing never stops the rest.
+- **What is still one for the whole installation:** the mail server (`SMTP_*`), single sign-on (`OIDC_*`, which names one host in its
+  redirect address), the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
+  integration. Those belong to the **default tenant**; other tenants sign in with passwords or SCIM for now. Moving them into each
+  tenant's own settings is the next step, with a console for the people who run the installation to make and suspend tenants
+  (today `src/tenants.js` does it: `createTenant`, `createAdmin`, `setStatus`).
+- **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
+  as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
+  reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a
+  form by hand) is possible as a bare number, but nothing of that row is ever shown.
+
+Checked by `test/tenancy.db.test.js` (at the database, as the restricted role: every table is protected, rows are invisible and
+unwritable across tenants, names are unique per tenant, platform mode, the guard that fails when a new table is not under the
+rules) and `node scripts/tenancy-check.js` (runs in CI, through the whole application, with two more tenants and two servers):
+sign-in and sessions, every kind of record by its id, writes aimed at another tenant, ticket numbers, API keys, SCIM, webhooks,
+settings, suspension and host names.
 
 ## Security
 
