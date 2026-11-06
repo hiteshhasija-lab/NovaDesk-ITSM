@@ -65,7 +65,7 @@ async function save(submitted, { actor, req }) {
     for (const t of TARGETS) {
       const before = was[t.id] || null;
       if (before === wanted[t.id]) continue;
-      await tx.prepare(`INSERT INTO retention_rules (target, keep_days) VALUES (?, ?) ON CONFLICT (target) DO UPDATE SET keep_days = EXCLUDED.keep_days`).run(t.id, wanted[t.id]);
+      await tx.prepare(`INSERT INTO retention_rules (target, keep_days) VALUES (?, ?) ON CONFLICT (tenant_id, target) DO UPDATE SET keep_days = EXCLUDED.keep_days`).run(t.id, wanted[t.id]);
       changed.push(`${t.label}: ${before ? before + ' days' : 'kept for ever'} to ${wanted[t.id] ? wanted[t.id] + ' days' : 'kept for ever'}`);
     }
   });

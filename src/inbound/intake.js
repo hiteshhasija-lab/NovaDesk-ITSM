@@ -25,6 +25,8 @@ function handler(env = process.env) {
       next();
     },
     raw,
+    // The address is set up for the whole installation (INBOUND_SECRET), so what arrives belongs to the default tenant.
+    require('../tenants').pinned(),
     async (req, res) => {
       const body = req.body;
       if (!Buffer.isBuffer(body) || !body.length) return res.status(400).json({ error: 'Send the raw email as the request body (Content-Type: message/rfc822).' });

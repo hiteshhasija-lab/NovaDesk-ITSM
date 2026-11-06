@@ -6,6 +6,7 @@ const express = require('express');
 const { createWindowCounter } = require('../rateLimit');
 const { rateLimits } = require('../settings');
 const tokens = require('./tokens');
+const tenants = require('../tenants');
 const service = require('./service');
 const discovery = require('./discovery');
 const R = require('./resource');
@@ -38,7 +39,9 @@ function createScimRouter(env = process.env) {
         if (!r.allowed) { res.set('Retry-After', String(r.resetSeconds)); return fail(res, new E.ScimError(429, null, 'Too many failed attempts from this address. Try again later.')); }
         return fail(res, new E.ScimError(401, null, 'Send a SCIM token as "Authorization: Bearer nds_...". Make one under Settings > SCIM provisioning.'));
       }
+      if (!(await tenants.isActive(auth.tenantId))) return fail(res, new E.ScimError(403, null, 'This workspace is suspended.'));
       req.scimToken = auth.token;
+      req.tenantId = auth.tenantId;
       const w = perToken.hit(auth.token.id);
       if (!w.allowed) { res.set('Retry-After', String(w.resetSeconds)); return fail(res, new E.ScimError(429, null, `Too many requests for this token. Try again in ${w.resetSeconds} seconds.`)); }
       next();
@@ -47,6 +50,8 @@ function createScimRouter(env = process.env) {
 
   // A JSON body, whatever its content type says (providers send application/scim+json, application/json or both).
   router.use(express.json({ type: (req) => /json/i.test(req.get('content-type') || ''), limit: '256kb' }));
+  // The token says which tenant this is; from here on (after the body parser) everything is that tenant's.
+  router.use(tenants.enterRequestTenant());
 
   const handle = (fn) => async (req, res) => {
     try { await fn(req, res); } catch (err) {

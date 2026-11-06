@@ -4,6 +4,7 @@ const { resumeInterruptedDecoms } = require('./decomAutomation');
 const { sweep: sweepSla } = require('./slaService');
 const webhooks = require('./webhooks');
 const retention = require('./privacy/retention');
+const tenants = require('./tenants');
 
 const POLL_INTERVAL_MS = 30 * 1000;
 // How often the card ledger is retried (cardSync.js); only the test rig changes this.
@@ -81,25 +82,36 @@ async function processDueAction(action) {
   }
 }
 
+// Every job below looks at one tenant at a time (tenants.forEachTenant): the rows it finds are that tenant's, and one tenant's
+// trouble never holds up the others. (The decommission connection to NovaConnect and ESXi is set up for the whole
+// installation, so in practice only the tenant that uses it has anything for those jobs to do.)
+const each = (fn, label) => () => tenants.forEachTenant(fn, label);
+
 function startScheduler() {
-  setInterval(() => { pollScheduledActions().catch((e) => console.error('Scheduler poll failed:', e.message)); }, POLL_INTERVAL_MS);
+  const poll = each(pollScheduledActions, 'Scheduler poll');
+  setInterval(() => { poll().catch((e) => console.error('Scheduler poll failed:', e.message)); }, POLL_INTERVAL_MS);
   // Separate loop from the timers: a slow or unreachable NovaConnect can hold the card retries for
   // minutes, and that must never delay a destroy timer.
-  setInterval(() => { reconcileCards().catch((e) => console.error('Card reconcile failed:', e.message)); }, CARD_SYNC_POLL_MS);
+  const cards = each(reconcileCards, 'Card reconcile');
+  setInterval(() => { cards().catch((e) => console.error('Card reconcile failed:', e.message)); }, CARD_SYNC_POLL_MS);
   // Picks interrupted decommission steps back up after a crash or restart (see decomAutomation).
   // The first pass waits past the quiet period so a step that was mid-flight is not raced.
-  const resume = () => resumeInterruptedDecoms().catch((e) => console.error('Decommission resume failed:', e.message));
+  const resumeAll = each(resumeInterruptedDecoms, 'Decommission resume');
+  const resume = () => resumeAll().catch((e) => console.error('Decommission resume failed:', e.message));
   setInterval(resume, RESUME_POLL_MS);
   setTimeout(resume, 50 * 1000);
   // Webhooks: events recorded by the database triggers go to the receivers, and what failed is tried again.
-  const hooks = () => webhooks.dispatchOutbox().then(() => webhooks.deliverDue()).catch((e) => console.error('Webhook delivery failed:', e.message));
+  const hookAll = each(async () => { await webhooks.dispatchOutbox(); await webhooks.deliverDue(); }, 'Webhook delivery');
+  const hooks = () => hookAll().catch((e) => console.error('Webhook delivery failed:', e.message));
   setInterval(hooks, WEBHOOK_POLL_MS);
   // SLA warning and breach emails.
-  const slaSweep = () => sweepSla().catch((e) => console.error('SLA sweep failed:', e.message));
+  const slaAll = each(sweepSla, 'SLA sweep');
+  const slaSweep = () => slaAll().catch((e) => console.error('SLA sweep failed:', e.message));
   setInterval(slaSweep, SLA_SWEEP_MS);
   setTimeout(slaSweep, Math.min(20 * 1000, SLA_SWEEP_MS));
   // Retention: logs and messages older than the administrator's limits are removed (src/privacy/retention.js).
-  const keep = () => retention.sweep().catch((e) => console.error('Retention sweep failed:', e.message));
+  const keepAll = each(retention.sweep, 'Retention sweep');
+  const keep = () => keepAll().catch((e) => console.error('Retention sweep failed:', e.message));
   setInterval(keep, RETENTION_SWEEP_MS);
   setTimeout(keep, Math.min(5 * 60 * 1000, RETENTION_SWEEP_MS));
 }

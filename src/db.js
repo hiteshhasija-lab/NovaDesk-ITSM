@@ -11,10 +11,20 @@ const { types: pgTypes } = require('pg');
 pgTypes.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10))); // int8/bigint
 pgTypes.setTypeParser(1700, (val) => (val === null ? null : parseFloat(val))); // numeric
 
+const tenancy = require('./tenancy');
+
+// The application's connections switch to the restricted role novadesk_app (migration 0015) as soon as they are opened. That
+// role is subject to row level security, so every statement sees only the rows of the tenant it runs for, even when the login
+// role is a superuser. Migrations use a connection of their own that does not switch (see initSchema).
+const RESTRICTED_ROLE = 'novadesk_app';
 const knexInstance = require('knex')({
   client: 'pg',
   connection: dbConfig(process.env),
-  pool: { min: 0, max: 10 }
+  pool: {
+    min: 0,
+    max: 10,
+    afterCreate: (conn, done) => conn.query(`SET ROLE ${RESTRICTED_ROLE}`, (err) => done(err, conn)),
+  },
 });
 
 // Every timestamp column is TEXT (not native TIMESTAMP), storing naive UTC strings
@@ -63,21 +73,43 @@ function prepareOn(runner) {
     };
   };
 }
-const prepare = prepareOn(knexInstance);
+
+// Tells Postgres which tenant the statements of this transaction are for (the row level security policies read it).
+// SET LOCAL semantics: it ends with the transaction, so a pooled connection never carries a tenant to the next user.
+async function setTenant(trx, ctx) {
+  await trx.raw("SELECT set_config('app.tenant_id', ?, true), set_config('app.platform', ?, true)", [ctx.platform ? '' : String(ctx.tenantId), ctx.platform ? 'on' : '']);
+}
+function needContext(sql) {
+  const ctx = tenancy.context();
+  if (!ctx) throw new tenancy.NoTenantError(sql);
+  return ctx;
+}
+// One statement, in a short transaction of its own that starts with the tenant setting.
+const scopedRunner = {
+  raw: async (sql, bindings) => {
+    const ctx = needContext(sql);
+    return knexInstance.transaction(async (trx) => { await setTenant(trx, ctx); return trx.raw(sql, bindings); });
+  },
+};
+const prepare = prepareOn(scopedRunner);
 
 // Everything done through `tx` inside fn happens in one database transaction: all of it is kept when fn returns, none of
 // it when fn throws. tx has the same prepare(sql).get/all/run shape as db. Use it where a half-finished change would be
 // worse than none (anonymising a person); the rest of the app writes one statement at a time.
 function transaction(fn) {
-  return knexInstance.transaction((trx) => fn({ prepare: prepareOn(trx) }));
+  const ctx = needContext('(transaction)');
+  return knexInstance.transaction(async (trx) => { await setTenant(trx, ctx); return fn({ prepare: prepareOn(trx) }); });
 }
 
-const db = { prepare, transaction, raw: (sql, params) => knexInstance.raw(sql, params) };
+const db = { prepare, transaction, raw: (sql, params) => scopedRunner.raw(sql, params) };
 
 // The tables are built by the numbered SQL files in src/migrations/ (see src/migrate.js): each is applied
 // once, in order, at start-up. To change the schema, add a file; never edit one that has shipped.
 async function initSchema() {
-  const result = await migrate(knexInstance, { log: (m) => console.log(`[Database] ${m}`) });
+  // Its own connection, as the login role itself (the restricted role cannot create tables or roles).
+  const admin = require('knex')({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 2 } });
+  let result;
+  try { result = await migrate(admin, { log: (m) => console.log(`[Database] ${m}`) }); } finally { await admin.destroy(); }
   if (result.unknown.length) {
     console.warn(`[Database] this database has migrations this version does not know (${result.unknown.join(', ')}): it was last started by a newer release. Continuing.`);
   }
@@ -452,8 +484,11 @@ async function seedDecomGroup() {
 
 async function initDb() {
   await initSchema();
-  await seedIfEmpty();
-  await seedDecomGroup();
+  // What exists on a fresh installation (the first administrator, or the demonstration workspace) belongs to the default tenant.
+  await tenancy.run(1, async () => {
+    await seedIfEmpty();
+    await seedDecomGroup();
+  });
 }
 
 // The administrator that decommission requests are assigned to and that stands in for people without a

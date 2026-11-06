@@ -7,6 +7,7 @@
 const session = require('express-session');
 const crypto = require('crypto');
 const { db } = require('./db');
+const tenancy = require('./tenancy');
 
 const nowStr = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 const TOUCH_EVERY_MS = 60 * 1000;               // a session's "last active" is written at most once a minute
@@ -77,7 +78,8 @@ async function revokeOne(userId, id) {
   return true;
 }
 async function cleanup() {
-  return (await db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(nowStr())).changes || 0;
+  // Every tenant's expired sessions, whatever tenant the timer runs for (it runs for none).
+  return (await tenancy.runPlatform(() => db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(nowStr()))).changes || 0;
 }
 function startCleanup(everyMs = 10 * 60 * 1000) {
   const timer = setInterval(() => cleanup().catch((err) => console.error(`[Sessions] cleanup failed: ${err.message}`)), everyMs);

@@ -152,7 +152,7 @@ async function resolveUser(claims) {
   if (matches.length === 1) {
     const user = matches[0];
     if (!user.active) throw new SsoError('Your NovaDesk account is turned off. Ask an administrator.');
-    await db.prepare('INSERT INTO user_identities (user_id, issuer, subject, email, last_login_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (issuer, subject) DO NOTHING').run(user.id, issuer, claims.sub, email, nowStr());
+    await db.prepare('INSERT INTO user_identities (user_id, issuer, subject, email, last_login_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (tenant_id, issuer, subject) DO NOTHING').run(user.id, issuer, claims.sub, email, nowStr());
     console.log(`[SSO] linked ${user.username} to ${issuer} (matched by email)`);
     return { user, linked: true };
   }

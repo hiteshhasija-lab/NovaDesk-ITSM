@@ -213,9 +213,15 @@ function formatMinutes(min) {
 
 // The calendar the pages use to read business-clock incidents. slaService.js sets it when the settings load;
 // until then (and in tests) it is Monday to Friday 09:00-17:00 UTC.
-let activeCalendar = null;
-const setActiveCalendar = (cal) => { activeCalendar = cal; };
-const getActiveCalendar = () => activeCalendar || (activeCalendar = makeCalendar({}, []));
+// One for each tenant (the installation's tenants have their own working hours); key 0 is "no tenant" (tests, scripts).
+const activeCalendars = new Map();
+const calendarKey = () => require('./tenancy').currentId() || 0;
+const setActiveCalendar = (cal) => { activeCalendars.set(calendarKey(), cal); };
+const getActiveCalendar = () => {
+  const key = calendarKey();
+  if (!activeCalendars.has(key)) activeCalendars.set(key, makeCalendar({}, []));
+  return activeCalendars.get(key);
+};
 
 // ---------------------------------------------------------------- state shown to people
 // { key, label, badge, remainingMinutes } for one incident. key: none, paused, met, breached, closed,

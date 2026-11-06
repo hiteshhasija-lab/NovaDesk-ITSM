@@ -2,6 +2,7 @@
 // intake (process.js) and marks it read only once it has been dealt with. A message that could not be dealt with
 // because something was down (the database, say) stays unread and is tried again at the next look.
 'use strict';
+const tenancy = require('../tenancy');
 const { ImapFlow } = require('imapflow');
 const { inboundConfig } = require('../settings');
 const parse = require('./parse');
@@ -79,7 +80,9 @@ async function lookOnce() {
   return handled;
 }
 
-async function poll() {
+// The mailbox is set up for the whole installation (INBOUND_IMAP_*), so what it receives belongs to the default tenant.
+const poll = () => tenancy.run(1, pollMailbox);
+async function pollMailbox() {
   if (state.running || !cfg || !cfg.imap) return;
   state.running = true; state.lastStartedAt = new Date().toISOString();
   let timeout;

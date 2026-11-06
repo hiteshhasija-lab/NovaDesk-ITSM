@@ -37,7 +37,7 @@ async function finish(claimId, { outcome, reason = null, record = null, userId =
 // A new row for this message, or null when it was handled before. A claim left unfinished long ago is taken over.
 async function claim(msg, source) {
   const row = await db.prepare(`INSERT INTO inbound_emails (message_id, source, from_address, from_name, subject, size, outcome) VALUES (?, ?, ?, ?, ?, ?, 'processing')
-    ON CONFLICT (message_id) DO NOTHING RETURNING id`)
+    ON CONFLICT (tenant_id, message_id) DO NOTHING RETURNING id`)
     .get(msg.messageId, source, (msg.fromAddress || '').slice(0, 320), String(msg.fromName || '').slice(0, 200), String(msg.subject || '').slice(0, 300), msg.size || 0);
   if (row) return row.id;
   const old = await db.prepare("SELECT id, received_at FROM inbound_emails WHERE message_id = ? AND outcome = 'processing'").get(msg.messageId);
@@ -60,7 +60,7 @@ async function createContact(msg) {
   for (let n = 0; n < 50; n++) {
     const username = n ? `${base}.${n + 1}` : base;
     const row = await db.prepare(`INSERT INTO users (username, password_hash, full_name, email, role, active, created_from_email)
-      VALUES (?, ?, ?, ?, 'user', 1, 1) ON CONFLICT (username) DO NOTHING RETURNING id`).get(username, unusable, rules.contactName(msg.fromName, msg.fromAddress), msg.fromAddress);
+      VALUES (?, ?, ?, ?, 'user', 1, 1) ON CONFLICT (tenant_id, username) DO NOTHING RETURNING id`).get(username, unusable, rules.contactName(msg.fromName, msg.fromAddress), msg.fromAddress);
     if (row) {
       await audit(null, null, 'user.created', { targetType: 'user', targetId: row.id, targetName: username, detail: 'contact created from an email sent to the help desk' });
       return db.prepare('SELECT * FROM users WHERE id = ?').get(row.id);
@@ -185,7 +185,7 @@ module.exports = { processMessage };
 
 // A message that could not even be read (not valid mail, too large): recorded, so it is not looked at again.
 async function recordUnreadable({ messageId, source, size = 0, reason, outcome = 'failed' }) {
-  await db.prepare(`INSERT INTO inbound_emails (message_id, source, size, outcome, reason) VALUES (?, ?, ?, ?, ?) ON CONFLICT (message_id) DO NOTHING`)
+  await db.prepare(`INSERT INTO inbound_emails (message_id, source, size, outcome, reason) VALUES (?, ?, ?, ?, ?) ON CONFLICT (tenant_id, message_id) DO NOTHING`)
     .run(String(messageId).slice(0, 300), source, size, outcome, String(reason).slice(0, 500));
 }
 
@@ -199,8 +199,9 @@ async function prune(env = process.env) {
   return (await db.prepare("DELETE FROM inbound_emails WHERE received_at < ? AND outcome <> 'processing'").run(cutoff)).changes || 0;
 }
 function startPruning(env = process.env) {
-  prune(env).catch((err) => console.error(`[Inbound] could not prune the message list: ${err.message}`));
-  const timer = setInterval(() => prune(env).catch((err) => console.error(`[Inbound] could not prune the message list: ${err.message}`)), 24 * 3600 * 1000);
+  const all = () => require('../tenants').forEachTenant(() => prune(env), 'Inbound message-list prune');
+  all().catch((err) => console.error(`[Inbound] could not prune the message list: ${err.message}`));
+  const timer = setInterval(() => all().catch((err) => console.error(`[Inbound] could not prune the message list: ${err.message}`)), 24 * 3600 * 1000);
   timer.unref();
   return timer;
 }

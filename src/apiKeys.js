@@ -3,6 +3,7 @@
 // lookup is a single indexed read). The key itself is shown once, when it is made.
 'use strict';
 const crypto = require('crypto');
+const tenancy = require('./tenancy');
 const { db, nowStr } = require('./db');
 
 const MAX_KEYS_PER_USER = 10;
@@ -36,20 +37,22 @@ async function revokeAllKeys(userId) {
 }
 
 // Resolves { key, user } for a token, or { error } with a reason for the log (the caller says only "invalid").
+// Runs across tenants (the key is how the request finds its tenant), so it looks at the key and its owner only.
 async function authenticate(token, now = Date.now()) {
   if (!looksLikeToken(token)) return { error: 'malformed' };
-  const row = await db.prepare(`
-    SELECT k.id AS key_id, k.user_id, k.name, k.scope, k.expires_at, k.revoked_at, k.last_used_at,
+  const row = await tenancy.runPlatform(() => db.prepare(`
+    SELECT k.id AS key_id, k.tenant_id, k.user_id, k.name, k.scope, k.expires_at, k.revoked_at, k.last_used_at,
            u.username, u.full_name, u.email, u.role, u.active
     FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.token_hash = ?
-  `).get(hashToken(token));
+  `).get(hashToken(token)));
   if (!row) return { error: 'unknown' };
   if (row.revoked_at) return { error: 'revoked' };
   if (row.expires_at && new Date(row.expires_at.replace(' ', 'T') + 'Z').getTime() <= now) return { error: 'expired' };
   if (!row.active) return { error: 'user_inactive' };
   const last = row.last_used_at ? new Date(row.last_used_at.replace(' ', 'T') + 'Z').getTime() : 0;
-  if (now - last > TOUCH_AFTER_MS) await db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(nowStr(), row.key_id).catch(() => {});
+  if (now - last > TOUCH_AFTER_MS) await tenancy.runPlatform(() => db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(nowStr(), row.key_id)).catch(() => {});
   return {
+    tenantId: row.tenant_id,
     key: { id: row.key_id, name: row.name, scope: row.scope },
     user: { id: row.user_id, username: row.username, full_name: row.full_name, email: row.email, role: row.role },
   };

@@ -3,6 +3,7 @@
 // person's API key: it can only provision people, never read or change tickets.
 'use strict';
 const crypto = require('crypto');
+const tenancy = require('../tenancy');
 const { db, nowStr } = require('../db');
 
 const MAX_ACTIVE = 5;
@@ -30,13 +31,13 @@ async function revokeToken(id) {
 // Resolves { token: { id, name } } or { error } (a reason for the log; the caller only ever says "invalid").
 async function authenticate(token, now = Date.now()) {
   if (!looksLikeToken(token)) return { error: 'malformed' };
-  const row = await db.prepare('SELECT id, name, expires_at, revoked_at, last_used_at FROM scim_tokens WHERE token_hash = ?').get(hashToken(token));
+  const row = await tenancy.runPlatform(() => db.prepare('SELECT id, tenant_id, name, expires_at, revoked_at, last_used_at FROM scim_tokens WHERE token_hash = ?').get(hashToken(token)));
   if (!row) return { error: 'unknown' };
   if (row.revoked_at) return { error: 'revoked' };
   if (row.expires_at && new Date(row.expires_at.replace(' ', 'T') + 'Z').getTime() <= now) return { error: 'expired' };
   const last = row.last_used_at ? new Date(row.last_used_at.replace(' ', 'T') + 'Z').getTime() : 0;
-  if (now - last > TOUCH_AFTER_MS) await db.prepare('UPDATE scim_tokens SET last_used_at = ? WHERE id = ?').run(nowStr(), row.id).catch(() => {});
-  return { token: { id: row.id, name: row.name } };
+  if (now - last > TOUCH_AFTER_MS) await tenancy.runPlatform(() => db.prepare('UPDATE scim_tokens SET last_used_at = ? WHERE id = ?').run(nowStr(), row.id)).catch(() => {});
+  return { tenantId: row.tenant_id, token: { id: row.id, name: row.name } };
 }
 
 module.exports = { createToken, listTokens, revokeToken, authenticate, hashToken, newToken, looksLikeToken, expiryFrom, MAX_ACTIVE };

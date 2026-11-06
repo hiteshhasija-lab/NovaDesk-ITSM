@@ -17,7 +17,9 @@ async function withSchema(fn) {
   const schema = `mig_${crypto.randomBytes(5).toString('hex')}`;
   const admin = require('knex')({ client: 'pg', connection, pool: { min: 0, max: 1 } });
   await admin.raw(`CREATE SCHEMA ${schema}`);
-  const knex = require('knex')({ client: 'pg', connection, searchPath: [schema], pool: { min: 0, max: 5 } });
+  // Rows made by these tests belong to the default tenant (as the application's own statements would say); the tests connect as
+  // the login role, which row level security does not apply to. test/tenancy.db.test.js covers the restricted role.
+  const knex = require('knex')({ client: 'pg', connection, searchPath: [schema], pool: { min: 0, max: 5, afterCreate: (conn, done) => conn.query("SELECT set_config('app.tenant_id', '1', false)", (err) => done(err, conn)) } });
   try { await fn(knex, schema); } finally { await knex.destroy(); await admin.raw(`DROP SCHEMA ${schema} CASCADE`); await admin.destroy(); }
 }
 const dirWith = (files) => {
@@ -338,7 +340,7 @@ test('0007: accounts get a failed-sign-in counter and a lock time, and the audit
 test('0008: sessions are rows that can be found by person and expire by time', { skip }, async () => {
   await withSchema(async (knex) => {
     await migrate(knex);
-    assert.deepStrictEqual((await columns(knex, 'sessions')).sort(), ['created_at', 'data', 'expires_at', 'ip', 'last_seen_at', 'sid', 'user_agent', 'user_id']);
+    assert.deepStrictEqual((await columns(knex, 'sessions')).sort(), ['created_at', 'data', 'expires_at', 'ip', 'last_seen_at', 'sid', 'tenant_id', 'user_agent', 'user_id']);
     const ins = (sid, uid, exp) => knex.raw(`INSERT INTO sessions (sid, user_id, data, created_at, last_seen_at, expires_at) VALUES (?, ?, '{}', '2026-01-01 00:00:00', '2026-01-01 00:00:00', ?)`, [sid, uid, exp]);
     await ins('a', 1, '2999-01-01 00:00:00'); await ins('b', 1, '2999-01-01 00:00:00'); await ins('c', 2, '2020-01-01 00:00:00');
     assert.strictEqual(Number((await knex.raw(`SELECT count(*) AS c FROM sessions WHERE user_id = 1`)).rows[0].c), 2);
@@ -354,7 +356,7 @@ test('0009: every message looked at is one row that cannot be made twice, notice
     const ins = (id, extra = '') => knex.raw(`INSERT INTO inbound_emails (message_id, source, from_address, subject, outcome${extra ? ', ' + extra.split('=')[0] : ''}) VALUES (?, 'imap', 'p@c.test', 's', 'ticket'${extra ? ', ' + extra.split('=')[1] : ''})`, [id]);
     await ins('a@c.test');
     await assert.rejects(ins('a@c.test'), /duplicate key|unique/i, 'the same Message-ID twice');
-    const claim = (await knex.raw(`INSERT INTO inbound_emails (message_id, source, outcome) VALUES ('a@c.test', 'http', 'processing') ON CONFLICT (message_id) DO NOTHING RETURNING id`)).rows;
+    const claim = (await knex.raw(`INSERT INTO inbound_emails (message_id, source, outcome) VALUES ('a@c.test', 'http', 'processing') ON CONFLICT (tenant_id, message_id) DO NOTHING RETURNING id`)).rows;
     assert.deepStrictEqual(claim, [], 'a claim on a message already handled gets nothing');
     const row = (await knex.raw('SELECT * FROM inbound_emails')).rows[0];
     assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(row.received_at));
@@ -410,9 +412,9 @@ test('0012: SCIM columns start empty, tokens are unique by hash, and the one set
     assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM scim_tokens')).rows[0].c), 0, 'no token until an administrator makes one');
     await knex.raw(`INSERT INTO scim_tokens (name, prefix, token_hash) VALUES ('a', 'nds_abcd', 'h1')`);
     await assert.rejects(() => knex.raw(`INSERT INTO scim_tokens (name, prefix, token_hash) VALUES ('b', 'nds_abcd', 'h1')`), /duplicate|unique/i);
-    assert.deepStrictEqual((await knex.raw('SELECT * FROM scim_settings')).rows, [{ id: 1, allow_admin: 0, allow_groups: 0, default_role: 'user' }]);
+    assert.deepStrictEqual((await knex.raw('SELECT * FROM scim_settings')).rows, [{ id: 1, allow_admin: 0, allow_groups: 0, default_role: 'user', tenant_id: 1 }]);
     await assert.rejects(() => knex.raw(`UPDATE scim_settings SET default_role = 'admin'`), /check/i);
-    await assert.rejects(() => knex.raw(`INSERT INTO scim_settings (id) VALUES (2)`), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO scim_settings (id) VALUES (2)`), /duplicate|unique/i, 'one row of settings for each tenant');
     const admin = (await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('adm', 'x', 'A') RETURNING id`)).rows[0].id;
     await knex.raw(`UPDATE scim_tokens SET created_by = ?`, [admin]);
     await knex.raw('DELETE FROM users WHERE id = ?', [admin]);
@@ -464,12 +466,12 @@ test('0013: custom field definitions are checked by the database, values go with
 test('0014: the one branding row starts at the built-in look, the logo is stored as bytes, and only one row can exist', { skip }, async () => {
   await withSchema(async (knex) => {
     await migrate(knex);
-    assert.deepStrictEqual((await knex.raw('SELECT * FROM branding_settings')).rows, [{ id: 1, product_name: 'NovaDesk', accent_color: null, login_welcome: null, login_tagline: null, email_footer: null, logo: null, logo_mime: null, logo_version: null, login_background: 'builtin', background: null, background_mime: null, background_version: null, updated_at: null, updated_by: null }], 'nothing is set until an administrator sets it');
+    assert.deepStrictEqual((await knex.raw('SELECT * FROM branding_settings')).rows, [{ id: 1, product_name: 'NovaDesk', accent_color: null, login_welcome: null, login_tagline: null, email_footer: null, logo: null, logo_mime: null, logo_version: null, login_background: 'builtin', background: null, background_mime: null, background_version: null, updated_at: null, updated_by: null, tenant_id: 1 }], 'nothing is set until an administrator sets it');
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255, 254]);
     await knex.raw('UPDATE branding_settings SET logo = ?, logo_mime = ?', [bytes, 'image/png']);
     const back = (await knex.raw('SELECT logo FROM branding_settings')).rows[0].logo;
     assert.ok(Buffer.isBuffer(back) && back.equals(bytes), 'the picture comes back byte for byte');
-    await assert.rejects(() => knex.raw(`INSERT INTO branding_settings (id) VALUES (2)`), /check/i);
+    await assert.rejects(() => knex.raw(`INSERT INTO branding_settings (id) VALUES (2)`), /duplicate|unique/i, 'one row of settings for each tenant');
     await assert.rejects(() => knex.raw(`UPDATE branding_settings SET login_background = 'neon'`), /check/i, 'only the three backgrounds exist');
     for (const mode of ['plain', 'custom', 'builtin']) await knex.raw('UPDATE branding_settings SET login_background = ?', [mode]);
     const admin = (await knex.raw(`INSERT INTO users (username, password_hash, full_name) VALUES ('adm', 'x', 'A') RETURNING id`)).rows[0].id;

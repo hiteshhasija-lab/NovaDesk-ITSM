@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { db, nowStr } = require('../db');
 const apiKeys = require('../apiKeys');
+const tenants = require('../tenants');
 const { createWindowCounter } = require('../rateLimit');
 const { rateLimits } = require('../settings');
 
@@ -124,7 +125,9 @@ function createApi() {
         res.set('WWW-Authenticate', 'Bearer realm="NovaDesk", error="invalid_token"');
         throw new ApiError(401, 'invalid_token', 'The API key is not valid. It may be mistyped, revoked or expired.');
       }
+      if (!(await tenants.isActive(auth.tenantId))) throw new ApiError(403, 'tenant_suspended', 'This workspace is suspended.');
       req.api = auth;
+      req.tenantId = auth.tenantId;
       next();
     } catch (err) { next(err); }
   });
@@ -145,6 +148,8 @@ function createApi() {
   });
 
   router.use(express.json({ limit: '256kb', strict: true, type: ['application/json', 'application/*+json'] }));
+  // The key says which tenant this is; from here on (after the body parser, which would lose it) everything is that tenant's.
+  router.use(tenants.enterRequestTenant());
 
   // ---- idempotent POST: the same Idempotency-Key replays the first answer
   router.use(async (req, res, next) => {

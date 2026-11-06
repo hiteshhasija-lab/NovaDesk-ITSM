@@ -48,6 +48,8 @@ const scimAdminRoutes = require('./routes/scimAdmin');
 const customFieldRoutes = require('./routes/customFields');
 const brandingRoutes = require('./routes/branding');
 const branding = require('./branding');
+const tenancy = require('./tenancy');
+const tenants = require('./tenants');
 const scimRouter = require('./scim/router');
 
 const app = express();
@@ -65,7 +67,7 @@ app.set('views', path.join(__dirname, '..', 'views'));
 
 app.get('/health', async (req, res) => {
   try {
-    await db.raw('SELECT 1');
+    await tenancy.runPlatform(() => db.raw('SELECT 1'));
     res.json({ status: 'healthy', database: 'connected' });
   } catch (err) {
     res.status(503).json({ status: 'unhealthy', database: 'disconnected', error: err.message });
@@ -77,7 +79,7 @@ app.get('/health', async (req, res) => {
 app.use((req, res, next) => {
   res.locals.h = helpers;
   res.locals.path = req.path;
-  res.locals.brand = branding.viewModel(null);   // the built-in look; replaced below once the settings are read
+  res.locals.brand = branding.viewModel(null);   // the built-in look; replaced below, once the tenant is known, by the tenant's own
   next();
 });
 
@@ -109,14 +111,19 @@ app.use('/scim/v2', scimRouter);
 app.post('/api/inbound/email', ...inboundIntake.handler(process.env));
 
 // The organisation's own name, logo and colour (src/branding.js): every page gets `brand`. The logo itself is public (the sign-in page shows it).
-app.get('/branding/logo', branding.serveLogo);
-app.get('/branding/background', branding.serveBackground);
-app.use(branding.middleware);
+app.get('/branding/logo', tenants.scope(), branding.serveLogo);
+app.get('/branding/background', tenants.scope(), branding.serveBackground);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(methodOverride('_method'));
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Which tenant (organisation) this request is for (src/tenants.js): from here on every database call is limited to its rows.
+// The NovaConnect integration and mail handed over by HTTP belong to the default tenant alone.
+app.use('/api/integrations', tenants.pinned());
+app.use(tenants.scope(process.env));
+app.use(branding.middleware);
 
 app.use(session({
   store: new PgSessionStore(),

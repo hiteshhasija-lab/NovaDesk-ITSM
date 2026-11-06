@@ -1,6 +1,7 @@
 // SLA settings from the database, the clock changes written back to incidents, and the sweep that emails
 // warnings and breaches. The rules themselves are in sla.js.
 'use strict';
+const tenancy = require('./tenancy');
 const { db, logActivity } = require('./db');
 const sla = require('./sla');
 const { sendNotification } = require('./mailer');
@@ -9,8 +10,8 @@ const { isDecomChange, DECOM_GROUP } = require('./approvalAccess');
 
 // ---------------------------------------------------------------- settings
 const CACHE_MS = 15000;
-let cache = null;
-let cacheAt = 0;
+// One entry for each tenant: their settings are their own.
+const caches = new Map();
 
 const fallbackPolicy = (priority) => ({ applies_to: 'incident', priority, target_minutes: (sla.LEGACY_SLA_HOURS[priority] || sla.LEGACY_SLA_HOURS[4]) * 60, clock: 'calendar', warn_percent: 75 });
 
@@ -36,14 +37,15 @@ async function loadConfig() {
 }
 
 async function getConfig() {
-  if (!cache || Date.now() - cacheAt > CACHE_MS) {
-    cache = await loadConfig();
-    cacheAt = Date.now();
-    sla.setActiveCalendar(cache.calendar);
-  }
-  return cache;
+  const key = tenancy.currentId() || 0;
+  const hit = caches.get(key);
+  if (hit && Date.now() - hit.at <= CACHE_MS) { sla.setActiveCalendar(hit.config.calendar); return hit.config; }
+  const config = await loadConfig();
+  caches.set(key, { at: Date.now(), config });
+  sla.setActiveCalendar(config.calendar);
+  return config;
 }
-function invalidateConfig() { cache = null; cacheAt = 0; }
+function invalidateConfig() { caches.delete(tenancy.currentId() || 0); }
 
 // ---------------------------------------------------------------- incidents
 // The clock columns for a new incident.

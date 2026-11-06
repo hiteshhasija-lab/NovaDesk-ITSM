@@ -13,6 +13,7 @@
 'use strict';
 const crypto = require('crypto');
 const { db, nowStr } = require('./db');
+const tenancy = require('./tenancy');
 
 const DEFAULTS = { name: 'NovaDesk', welcome: 'Welcome to', tagline: 'Sign in to your account' };
 const LIMITS = { name: 40, welcome: 60, tagline: 120, footer: 300, logoBytes: 512 * 1024, backgroundBytes: 2 * 1024 * 1024 };
@@ -172,9 +173,11 @@ function validate(body, files, { hadBackground = false } = {}) {
 }
 
 // ---- reading
-let cache = null;
+// One entry for each tenant.
+const caches = new Map();
 const TTL_MS = 5000;
-const invalidate = () => { cache = null; };
+const tenantKey = () => tenancy.currentId() || 0;
+const invalidate = () => { caches.delete(tenantKey()); };
 
 function viewModel(row) {
   const r = row || {};
@@ -204,17 +207,20 @@ function viewModel(row) {
 }
 
 async function get() {
-  if (cache && Date.now() - cache.at < TTL_MS) return cache.value;
+  const key = tenantKey();
+  const hit = caches.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
   let value;
   try {
-    const row = await db.prepare('SELECT product_name, accent_color, login_welcome, login_tagline, email_footer, logo_version, login_background, background_version, updated_at FROM branding_settings WHERE id = 1').get();
+    const row = await db.prepare('SELECT product_name, accent_color, login_welcome, login_tagline, email_footer, logo_version, login_background, background_version, updated_at FROM branding_settings WHERE tenant_id = nd_tenant()').get();
     value = viewModel(row);
   } catch (err) {
     // The database being down must not take the error pages with it: show the built-in look (and do not ask again for a second).
-    cache = { at: Date.now() - TTL_MS + 1000, value: viewModel(null) };
-    return cache.value;
+    const fallback = { at: Date.now() - TTL_MS + 1000, value: viewModel(null) };
+    caches.set(key, fallback);
+    return fallback.value;
   }
-  cache = { at: Date.now(), value };
+  caches.set(key, { at: Date.now(), value });
   return value;
 }
 
@@ -222,7 +228,7 @@ async function get() {
 const PICTURES = { logo: ['logo', 'logo_mime', 'logo_version'], background: ['background', 'background_mime', 'background_version'] };
 async function picture(kind) {
   const [data, mime, version] = PICTURES[kind];
-  const row = await db.prepare(`SELECT ${data} AS data, ${mime} AS mime, ${version} AS version FROM branding_settings WHERE id = 1`).get();
+  const row = await db.prepare(`SELECT ${data} AS data, ${mime} AS mime, ${version} AS version FROM branding_settings WHERE tenant_id = nd_tenant()`).get();
   if (!row || !row.data || !row.mime) return null;
   return { buffer: Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data), mime: row.mime, version: row.version };
 }
@@ -246,17 +252,17 @@ async function save(values, actor) {
   const before = await get();
   const changes = [];
   await db.transaction(async (tx) => {
-    await tx.prepare('UPDATE branding_settings SET product_name = ?, accent_color = ?, login_welcome = ?, login_tagline = ?, email_footer = ?, login_background = ?, updated_at = ?, updated_by = ? WHERE id = 1')
+    await tx.prepare('UPDATE branding_settings SET product_name = ?, accent_color = ?, login_welcome = ?, login_tagline = ?, email_footer = ?, login_background = ?, updated_at = ?, updated_by = ? WHERE tenant_id = nd_tenant()')
       .run(values.product_name, values.accent_color, values.login_welcome, values.login_tagline, values.email_footer, values.login_background, nowStr(), actor ? actor.id : null);
     if (values.logo) {
-      await tx.prepare('UPDATE branding_settings SET logo = ?, logo_mime = ?, logo_version = ? WHERE id = 1').run(values.logo.buffer, values.logo.mime, values.logo.version);
+      await tx.prepare('UPDATE branding_settings SET logo = ?, logo_mime = ?, logo_version = ? WHERE tenant_id = nd_tenant()').run(values.logo.buffer, values.logo.mime, values.logo.version);
       changes.push(`logo replaced (${values.logo.mime}, ${Math.ceil(values.logo.buffer.length / 1024)} KB)`);
     } else if (values.removeLogo) {
-      await tx.prepare('UPDATE branding_settings SET logo = NULL, logo_mime = NULL, logo_version = NULL WHERE id = 1').run();
+      await tx.prepare('UPDATE branding_settings SET logo = NULL, logo_mime = NULL, logo_version = NULL WHERE tenant_id = nd_tenant()').run();
       changes.push('logo removed');
     }
     if (values.background) {
-      await tx.prepare('UPDATE branding_settings SET background = ?, background_mime = ?, background_version = ? WHERE id = 1').run(values.background.buffer, values.background.mime, values.background.version);
+      await tx.prepare('UPDATE branding_settings SET background = ?, background_mime = ?, background_version = ? WHERE tenant_id = nd_tenant()').run(values.background.buffer, values.background.mime, values.background.version);
       changes.push(`sign-in picture replaced (${values.background.mime}, ${Math.ceil(values.background.buffer.length / 1024)} KB)`);
     }
   });
@@ -265,7 +271,7 @@ async function save(values, actor) {
 }
 
 async function reset(actor) {
-  await db.prepare("UPDATE branding_settings SET product_name = ?, accent_color = NULL, login_welcome = NULL, login_tagline = NULL, email_footer = NULL, logo = NULL, logo_mime = NULL, logo_version = NULL, login_background = 'builtin', background = NULL, background_mime = NULL, background_version = NULL, updated_at = ?, updated_by = ? WHERE id = 1")
+  await db.prepare("UPDATE branding_settings SET product_name = ?, accent_color = NULL, login_welcome = NULL, login_tagline = NULL, email_footer = NULL, logo = NULL, logo_mime = NULL, logo_version = NULL, login_background = 'builtin', background = NULL, background_mime = NULL, background_version = NULL, updated_at = ?, updated_by = ? WHERE tenant_id = nd_tenant()")
     .run(DEFAULTS.name, nowStr(), actor ? actor.id : null);
   invalidate();
 }
