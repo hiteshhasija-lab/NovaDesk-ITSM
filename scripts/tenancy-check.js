@@ -229,6 +229,9 @@ async function run({ p1, p2 }, knex, apps) {
   check('a person of A\'s cannot be read through B\'s token by id', (await new Browser(p1, HOST_A).scim('GET', `/Users/${aUser}`, tokB)).status === 404);
 
   // webhooks: a receiver on this machine for each tenant
+  // (other scripts leave webhooks of their own behind, each with its retries queued; a delivery goes out behind them at 20 a second, so they are cleared first)
+  await q('DELETE FROM webhooks WHERE tenant_id = 1');
+  await q('UPDATE event_outbox SET processed_at = ? WHERE tenant_id = 1 AND processed_at IS NULL', ['2000-01-01 00:00:00']);
   const got = { a: [], b: [] };
   const recv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { try { got[req.url === '/a' ? 'a' : 'b'].push(JSON.parse(b)); } catch { /* ping */ } res.end('ok'); }); });
   await new Promise((r) => recv.listen(0, '127.0.0.1', r));

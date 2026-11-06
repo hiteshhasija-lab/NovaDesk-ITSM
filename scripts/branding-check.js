@@ -59,7 +59,8 @@ async function healthy(port, srv) { for (let i = 0; i < 60; i++) { try { if ((aw
 async function main() {
   const port = 18320; const base = `http://127.0.0.1:${port}`;
   const app = start(port, { PUBLIC_URL: base });
-  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3 } });
+  // Rows this script makes directly belong to the default tenant (as the application's own statements for it would say).
+  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3, afterCreate: (c, done) => c.query("SELECT set_config('app.tenant_id', '1', false)", (e) => done(e, c)) } });
   try {
     if (!(await healthy(port, app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-400)}`);
     await run(base, knex, app);

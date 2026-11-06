@@ -84,11 +84,26 @@ function needContext(sql) {
   if (!ctx) throw new tenancy.NoTenantError(sql);
   return ctx;
 }
-// One statement, in a short transaction of its own that starts with the tenant setting.
+// One statement on a pooled connection that has been told which tenant it is working for. The setting is made only when this
+// connection last worked for another tenant (or for none), so a request that runs many statements pays for it once; and every
+// statement checks it first, so a connection never carries one tenant's setting into another tenant's statement.
+const TENANT_OF = Symbol('tenant');
 const scopedRunner = {
   raw: async (sql, bindings) => {
     const ctx = needContext(sql);
-    return knexInstance.transaction(async (trx) => { await setTenant(trx, ctx); return trx.raw(sql, bindings); });
+    const want = ctx.platform ? 'platform' : String(ctx.tenantId);
+    const native = knexInstance.raw(sql, bindings).toSQL().toNative();
+    const conn = await knexInstance.client.acquireConnection();
+    try {
+      if (conn[TENANT_OF] !== want) {
+        conn[TENANT_OF] = null;
+        await conn.query("SELECT set_config('app.tenant_id', $1, false), set_config('app.platform', $2, false)", [ctx.platform ? '' : want, ctx.platform ? 'on' : '']);
+        conn[TENANT_OF] = want;
+      }
+      return await conn.query(native.sql, native.bindings);
+    } finally {
+      knexInstance.client.releaseConnection(conn);
+    }
   },
 };
 const prepare = prepareOn(scopedRunner);

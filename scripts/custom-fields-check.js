@@ -46,7 +46,8 @@ async function healthy(port, srv) { for (let i = 0; i < 60; i++) { try { if ((aw
 async function main() {
   const port = 18310; const base = `http://127.0.0.1:${port}`;
   const app = start(port, { PUBLIC_URL: base });
-  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3 } });
+  // Rows this script makes directly belong to the default tenant (as the application's own statements for it would say).
+  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3, afterCreate: (c, done) => c.query("SELECT set_config('app.tenant_id', '1', false)", (e) => done(e, c)) } });
   try {
     if (!(await healthy(port, app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-400)}`);
     await run(base, knex, app);
@@ -441,16 +442,16 @@ async function run(base, knex, app) {
   // ------------------------------------------------------------------------------------------------------ webhooks
   section = 'webhooks';
   const webhooks = require('../src/webhooks');
-  const built = await webhooks.buildPayload({ entity: 'incident', entity_id: incId, op: 'updated', created_at: '2026-10-30 12:00:00', snapshot: null }, 'evt_check');
+  const built = await require('../src/tenancy').run(1, () => webhooks.buildPayload({ entity: 'incident', entity_id: incId, op: 'updated', created_at: '2026-10-30 12:00:00', snapshot: null }, 'evt_check'));
   const wf = built && built.payload.data.incident.custom_fields;
   check('an event for an incident carries every active custom field (a receiver is an integration, so staff-only ones too), typed as in the API', wf && wf[costCentre.key] === '=SUM(A1)' && wf[qty.key] === 7 && wf[flag.key] === true && wf[staffOnly.key] === 'a, "quoted"\nline two' && wf[due.key] === null);
-  const builtCi = await webhooks.buildPayload({ entity: 'ci', entity_id: ciId, op: 'created', created_at: '2026-10-30 12:00:00', snapshot: null }, 'evt_check2');
+  const builtCi = await require('../src/tenancy').run(1, () => webhooks.buildPayload({ entity: 'ci', entity_id: ciId, op: 'created', created_at: '2026-10-30 12:00:00', snapshot: null }, 'evt_check2'));
   check('and so does an event for a configuration item', builtCi && builtCi.payload.data.ci.custom_fields[ciField.key] === 'GOLD-24x7' && builtCi.payload.data.ci.custom_fields[ciNum.key] === 999);
 
   // ---------------------------------------------------------------------------------------- automated record creation
   section = 'automated creation';
   const actions = require('../src/incidentActions');
-  const auto1 = await actions.createIncident({ actor: { id: adminId, full_name: 'x' }, fields: { short_description: `By a mail ${tag}`, caller_id: mariaId } });
+  const auto1 = await require('../src/tenancy').run(1, () => actions.createIncident({ actor: { id: adminId, full_name: 'x' }, fields: { short_description: `By a mail ${tag}`, caller_id: mariaId } }));
   check('a record made by something that is not a form (inbound email, decommissioning) is not held up by required fields, and has no values', auto1.id > 0 && await count('SELECT count(*) AS c FROM custom_field_values WHERE entity_type = ? AND entity_id = ?', ['incident', auto1.id]) === 0);
   check('and it can be completed later in the page: the required field is asked for on the next save', (await upd({}, admin, auto1.id)).status === 400 && (await upd({ [`cf_${costCentre.key}`]: 'CC-LATE' }, admin, auto1.id)).status === 302);
   void actions;

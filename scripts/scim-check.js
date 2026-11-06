@@ -50,7 +50,8 @@ async function main() {
   const idp = spawn(process.execPath, ['scripts/mock-oidc.js', String(idpPort)], { cwd: ROOT, stdio: 'ignore' });
   const base = `http://127.0.0.1:${port}`;
   const app = start(port, { PUBLIC_URL: base, OIDC_ISSUER: `http://127.0.0.1:${idpPort}`, OIDC_CLIENT_ID: 'novadesk-test', OIDC_CLIENT_SECRET: 'test-secret', OIDC_JWKS_MIN_REFETCH_S: '1', WEBHOOK_ALLOW_PRIVATE: 'true' });
-  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3 } });
+  // Rows this script makes directly belong to the default tenant (as the application's own statements for it would say).
+  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3, afterCreate: (c, done) => c.query("SELECT set_config('app.tenant_id', '1', false)", (e) => done(e, c)) } });
   try {
     await sleep(500);
     if (!(await healthy(port, app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-400)}`);
@@ -320,7 +321,7 @@ async function run(base, IDP, knex, app) {
   const ghost = (await scim('POST', '/Users', userBody('ghost', { externalId: `ext-ghost-${tag}` }))).json;
   const privacy = require('../src/privacy/anonymise');
   const adminForPrivacy = await one("SELECT * FROM users WHERE username = 'admin'");
-  await privacy.anonymise(Number(ghost.id), { actor: adminForPrivacy });
+  await require('../src/tenancy').run(1, () => privacy.anonymise(Number(ghost.id), { actor: adminForPrivacy }));
   const gRow = await dbUser(ghost.id);
   check('anonymising a SCIM person clears the provider\'s id and the managed mark (the privacy tools know about SCIM)', gRow.anonymised_at !== null && gRow.scim_external_id === null && gRow.scim_managed === 0 && gRow.email === null);
   check('SCIM can no longer see them: read, list, filter, replace, patch, delete are all 404 or empty', isError(await scim('GET', `/Users/${ghost.id}`), 404, null) && isError(await scim('PUT', `/Users/${ghost.id}`, userBody('ghost')), 404, null) && isError(await scim('PATCH', `/Users/${ghost.id}`, patchOps([{ op: 'replace', path: 'active', value: true }])), 404, null) && isError(await scim('DELETE', `/Users/${ghost.id}`), 404, null)
@@ -412,8 +413,8 @@ async function run(base, IDP, knex, app) {
   const secondary = start(18272, { PUBLIC_URL: `http://127.0.0.1:18272`, RATE_LIMIT_SCIM_PER_MIN: '8', RATE_LIMIT_IP_PER_MIN: '60' });
   try {
     if (!(await healthy(18272, secondary))) throw new Error('the second NovaDesk did not start');
-    const t2 = await tokens.createToken({ name: `limit ${tag}`, expiresInDays: 90, createdBy: null });
-    const t3 = await tokens.createToken({ name: `other ${tag}`, expiresInDays: 90, createdBy: null });
+    const t2 = await require('../src/tenancy').run(1, () => tokens.createToken({ name: `limit ${tag}`, expiresInDays: 90, createdBy: null }));
+    const t3 = await require('../src/tenancy').run(1, () => tokens.createToken({ name: `other ${tag}`, expiresInDays: 90, createdBy: null }));
     const hit = (t) => fetch('http://127.0.0.1:18272/scim/v2/ServiceProviderConfig', { headers: { Authorization: `Bearer ${t}` } });
     const results = []; for (let i = 0; i < 10; i++) results.push(await hit(t2.token));
     check('a token over its allowance (8 a minute here) is told to wait, in SCIM\'s shape, with Retry-After', results.slice(0, 8).every((r) => r.status === 200) && results[8].status === 429 && Number(results[8].headers.get('retry-after')) > 0 && JSON.parse(await results[8].text()).status === '429');

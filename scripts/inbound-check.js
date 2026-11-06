@@ -73,7 +73,8 @@ async function readMailbox(user, pass, wanted, tries = 20) {
 }
 
 async function main() {
-  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3 } });
+  // Rows this script makes directly belong to the default tenant (as the application's own statements for it would say).
+  const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3, afterCreate: (c, done) => c.query("SELECT set_config('app.tenant_id', '1', false)", (e) => done(e, c)) } });
   const app = startApp(ENV);
   try {
     if (!(await healthy(app))) throw new Error(`NovaDesk did not start: ${app.text().slice(-500)}`);
