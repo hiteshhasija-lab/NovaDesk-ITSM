@@ -276,6 +276,8 @@ async function run({ p1, p2 }, knex, apps) {
   check('the audit log of each tenant holds its own entries', (await B.get('/settings/audit')).text.includes('branding.changed') && (await q('SELECT DISTINCT tenant_id FROM audit_log WHERE detail LIKE ?', [`%${tag}%`])).length >= 2);
   const auditB = (await B.get('/settings/audit')).text;
   check('A\'s audit entries (its people, its sign-ins) do not appear in B\'s', !auditB.includes('Alex Admin') && !auditB.includes('jdoe'));
+  // (a notice is recorded once the mail attempt has finished, which can take a few seconds)
+  for (let i = 0; i < 60 && (await q('SELECT DISTINCT tenant_id FROM notifications WHERE subject LIKE ?', [`%${tag}%`])).length < 2; i++) await sleep(500);
   check('notifications are listed per tenant', (await A.get('/notifications')).text.includes(`Secret of A ${tag}`) && !(await B.get('/notifications')).text.includes(`Secret of A ${tag}`) && (await q('SELECT DISTINCT tenant_id FROM notifications WHERE subject LIKE ?', [`%${tag}%`])).length >= 2);
   const retB = await B.post('/privacy/retention', { days_audit_log: '', days_notifications: '90', days_inbound_emails: '', days_webhook_deliveries: '' });
   check('retention limits are per tenant: B sets one, A has none', [200, 302].includes(retB.status) && Number((await one('SELECT count(*) AS c FROM retention_rules WHERE tenant_id = ? AND keep_days = 90', [tenantB.id])).c) === 1 && Number((await one('SELECT count(*) AS c FROM retention_rules WHERE tenant_id = 1 AND keep_days = 90')).c) === 0, `${retB.status}`);
