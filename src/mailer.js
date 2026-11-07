@@ -11,48 +11,58 @@ const config = mailConfig(process.env);   // throws at start-up when the setting
 const inbound = inboundConfig(process.env);
 
 const branding = require('./branding');
-let transporterPromise = null;
+// The mail settings that apply to this tenant (src/mailSettings.js), else the server's (SMTP_*).
+const mailSettings = require('./mailSettings');
+const tenancy = require('./tenancy');
+async function effectiveConfig() { return (await mailSettings.forTenant()) || config; }
 
-function getTransporter() {
-  if (!transporterPromise) {
-    if (config.mode === 'smtp') {
-      transporterPromise = Promise.resolve(createSmtpTransport(config));
-    } else {
-      transporterPromise = nodemailer.createTestAccount()
-        .then(account => nodemailer.createTransport({
-          host: account.smtp.host,
-          port: account.smtp.port,
-          secure: account.smtp.secure,
-          auth: { user: account.user, pass: account.pass }
-        }))
-        .catch(err => {
-          console.error('Notifications: could not create test mailbox (offline?):', err.message);
-          transporterPromise = null; // don't cache the failure — retry on the next notification attempt
-          return null;
-        });
-    }
+// One transport for the sandbox mailbox, and one for each distinct set of SMTP settings (a tenant's own, or the server's).
+let sandboxPromise = null;
+const smtpTransports = new Map();   // key -> promise
+const sig = (c) => `${c.host}|${c.port}|${c.user}|${c.pass}|${c.secure}|${c.tlsVerify}`;
+function getTransporter(cfg = config) {
+  if (cfg.mode === 'smtp') {
+    const key = `${cfg.source === 'tenant' ? tenancy.currentId() : 'server'}|${sig(cfg)}`;
+    if (!smtpTransports.has(key)) smtpTransports.set(key, Promise.resolve(createSmtpTransport(cfg)));
+    return smtpTransports.get(key);
   }
-  return transporterPromise;
+  if (!sandboxPromise) {
+    sandboxPromise = nodemailer.createTestAccount()
+      .then(account => nodemailer.createTransport({
+        host: account.smtp.host,
+        port: account.smtp.port,
+        secure: account.smtp.secure,
+        auth: { user: account.user, pass: account.pass }
+      }))
+      .catch(err => {
+        console.error('Notifications: could not create test mailbox (offline?):', err.message);
+        sandboxPromise = null; // don't cache the failure — retry on the next notification attempt
+        return null;
+      });
+  }
+  return sandboxPromise;
 }
 
 // How mail is set up, for the Notifications page and the start-up message. Never includes the password.
-function mailSummary() {
-  return { mode: config.mode, host: config.host || null, port: config.port || null, from: config.from || null };
+async function mailSummary() {
+  const c = await effectiveConfig();
+  return { mode: c.mode, host: c.host || null, port: c.port || null, from: c.from || null, source: c.source === 'tenant' ? 'tenant' : 'server' };
 }
 
 async function deliver({ to, subject, html }) {
-  if (config.mode === 'none') {
+  const cfg = await effectiveConfig();
+  if (cfg.mode === 'none') {
     return { status: 'not_configured', error: 'Email is not set up on this server (SMTP_HOST is empty), so nothing was sent.', previewUrl: null };
   }
   try {
-    const transporter = await getTransporter();
+    const transporter = await getTransporter(cfg);
     if (!transporter) return { status: 'failed', error: 'The test mailbox service could not be reached.', previewUrl: null };
     // Replies to a notice go to the help desk's own address (INBOUND_ADDRESS) when there is one, and are matched back to the ticket.
-    const info = await sendMail(transporter, { from: config.mode === 'smtp' ? config.from : `"${await branding.senderName()}" <notifications@novadesk.local>`, to, subject, html, replyTo: inbound.address || undefined });
-    return { status: 'sent', error: null, previewUrl: config.mode === 'smtp' ? null : (nodemailer.getTestMessageUrl(info) || null), messageId: info.messageId ? String(info.messageId).replace(/^<|>$/g, '') : null };
+    const info = await sendMail(transporter, { from: cfg.mode === 'smtp' ? cfg.from : `"${await branding.senderName()}" <notifications@novadesk.local>`, to, subject, html, replyTo: cfg.replyTo || inbound.address || undefined });
+    return { status: 'sent', error: null, previewUrl: cfg.mode === 'smtp' ? null : (nodemailer.getTestMessageUrl(info) || null), messageId: info.messageId ? String(info.messageId).replace(/^<|>$/g, '') : null };
   } catch (err) {
     console.error('Notifications: failed to send:', err.message);
-    return { status: 'failed', error: describeError(err, config), previewUrl: null };
+    return { status: 'failed', error: describeError(err, cfg), previewUrl: null };
   }
 }
 
@@ -80,7 +90,7 @@ async function sendNotification(notice) {
 function reportMailSetup() {
   if (config.mode === 'smtp') {
     console.log(`Email: sending through ${config.host}:${config.port} as ${config.from}${config.user ? ` (signed in as ${config.user})` : ''}.`);
-    getTransporter().then(t => t.verify())
+    getTransporter(config).then(t => t.verify())
       .then(() => console.log('Email: the mail server accepted the connection and sign-in.'))
       .catch(err => console.warn(`Email: could not reach the mail server: ${describeError(err, config)}. Notices will be recorded as failed until it answers.`));
   } else if (config.mode === 'none') {
@@ -88,4 +98,10 @@ function reportMailSetup() {
   }
 }
 
-module.exports = { sendNotification, sendNotificationDetailed, mailSummary, reportMailSetup };
+// Does the mail server answer and accept the sign-in? Nothing is sent. (For the administrator's "Test the connection".)
+async function verifyConnection(cfg) {
+  const t = createSmtpTransport(cfg);
+  try { await t.verify(); } finally { t.close(); }
+}
+
+module.exports = { sendNotification, sendNotificationDetailed, mailSummary, reportMailSetup, effectiveConfig, verifyConnection };

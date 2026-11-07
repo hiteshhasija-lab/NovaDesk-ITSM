@@ -480,9 +480,9 @@ nothing changes for a single organisation.
   A running server learns of a new or suspended tenant within five seconds. The default tenant cannot be suspended.
 - **Background work** (webhook delivery, SLA warnings and breaches, retention, the decommission jobs) runs for each tenant in
   turn; one tenant failing never stops the rest.
-- **What is still one for the whole installation:** the mail server (`SMTP_*`), the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
-  integration. Those belong to the **default tenant**; other tenants sign in with passwords, SCIM or their own single sign-on. Moving mail and the inbound mailbox into each
-  tenant's own settings is the next step. Making and suspending tenants is done in the platform console (next).
+- **What is still one for the whole installation:** the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
+  integration. Those belong to the **default tenant**; other tenants sign in with passwords, SCIM or their own single sign-on. Each tenant may set its own outgoing mail (above); moving the inbound mailbox
+  into each tenant's own settings is the next step. Making and suspending tenants is done in the platform console (next).
 - **Single sign-on for each tenant:** *Single sign-on* in the administrator's menu. A tenant sets up its own provider (OpenID Connect:
   Microsoft Entra ID, Google, Okta and others): issuer address, client ID and secret (kept encrypted, never shown again), button
   text, scopes, whether to make an account on first sign-in (never an administrator), which email domains may sign in, and whether
@@ -495,6 +495,14 @@ nothing changes for a single organisation.
   reserved networks** (and anything that is not https) when it is saved and again each time it is used; `SSO_ALLOW_PRIVATE=true`
   lifts that for a lab. (The check resolves the name when it is made, so it does not stop a name that is changed to an internal address
   between the check and the fetch.) Checked by `node scripts/tenant-sso-check.js` (in CI) against the mock provider.
+- **Outgoing mail for each tenant:** *Email settings* in the administrator's menu. A tenant may send its notices through its own
+  mail server and sender address (host, port, TLS, user name and password, From, optional Reply-To); left off, the installation's
+  `SMTP_*` settings apply, as before. The password is kept encrypted and never shown again. **Test the connection** checks the saved
+  server without sending anything (a real test message is still *Notifications > Send a test email to me*). Because the server
+  connects to whatever a tenant's administrator names, **private, local and reserved addresses and ports other than 25, 465, 587 and
+  2525 are refused** (so the form cannot be used to scan the network); `MAIL_ALLOW_PRIVATE=true` lifts both for a lab or a mail
+  server on your own network. As everywhere, the account's password never crosses the network unencrypted (a sign-in needs
+  STARTTLS or TLS from the start). Checked by `node scripts/tenant-mail-check.js` (in CI) against two real SMTP servers.
 - **The platform console:** set `PLATFORM_HOST` (for example `ops.helpdesk.example.com`) and that host name shows a console of its
   own, for the people who run the installation (the *operators*, who belong to no tenant): the tenants with counts of their
   people and records (never their content), **making a tenant** (name, short name, host names and its first administrator),

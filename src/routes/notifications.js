@@ -15,7 +15,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
   const testResult = req.session.mailTest || null;
   delete req.session.mailTest;
 
-  res.render('notifications/list', { title: 'Notifications', notifications, mail: mailSummary(), testResult });
+  res.render('notifications/list', { title: 'Notifications', notifications, mail: await mailSummary(), testResult });
 });
 
 // "Send a test email": an administrator checks the mail settings by sending a message to their own

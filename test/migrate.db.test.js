@@ -493,3 +493,16 @@ test('0017: every tenant can have one row of single sign-on settings, the secret
     assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM sso_settings')).rows[0].c), 2);
   });
 });
+
+test('0018: every tenant can have one row of mail settings, off by default, with a port the database accepts', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const r = (await knex.raw('SELECT * FROM mail_settings')).rows[0];
+    assert.deepStrictEqual([r.tenant_id, r.enabled, r.host, r.password_enc, r.secure, r.tls_verify], [1, 0, null, null, 0, 1], 'off, empty, certificates checked');
+    await assert.rejects(() => knex.raw('INSERT INTO mail_settings DEFAULT VALUES'), /duplicate|unique/i, 'one row for each tenant');
+    await assert.rejects(() => knex.raw('UPDATE mail_settings SET port = 70000'), /check/i);
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    await knex.raw('INSERT INTO mail_settings (tenant_id) VALUES (2)');
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM mail_settings')).rows[0].c), 2);
+  });
+});

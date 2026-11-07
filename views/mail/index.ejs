@@ -1,0 +1,40 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<%
+  const f = form || {};
+  const val = (k, fb) => (f[k] !== undefined ? f[k] : fb);
+  const on = (k, fb) => (form ? f[k] === 'on' : fb);
+%>
+<div class="container-fluid px-4 py-4" style="max-width: 900px;">
+  <h4 class="mb-2"><i class="bi bi-envelope-at text-primary me-1"></i>Email settings</h4>
+  <p class="text-muted small">The mail server and sender address this workspace's notices go out through. Left off, they use the installation's own mail settings. Changes are recorded in the audit log.</p>
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% if (test) { %><div class="alert alert-<%= test.ok ? 'success' : 'danger' %> py-2 small"><%= test.text %></div><% } %>
+  <p class="small">Now in use: <% if (now.mode === 'smtp') { %><strong><%= now.host %>:<%= now.port %></strong> as <strong><%= now.from %></strong> (<%= now.source === 'tenant' ? 'this workspace\'s own settings' : 'the installation\'s settings' %>).<% } else if (now.mode === 'none') { %><strong>no mail server</strong>: notices are recorded but not sent.<% } else { %>a sandbox mailbox (demonstration only; nothing reaches real inboxes).<% } %></p>
+
+  <form method="POST" action="/settings/mail" autocomplete="off">
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Use our own mail server</h6>
+      <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="enabled" name="enabled" <%= on('enabled', s.enabled) ? 'checked' : '' %>><label class="form-check-label" for="enabled">Send this workspace's email through the server below</label></div>
+      <div class="row g-3">
+        <div class="col-md-8"><label class="form-label" for="host">Mail server</label><input class="form-control" id="host" name="host" value="<%= val('host', s.host) %>" placeholder="smtp.example.com"></div>
+        <div class="col-md-4"><label class="form-label" for="port">Port</label><input class="form-control" id="port" name="port" type="number" value="<%= val('port', s.port) %>"><div class="form-text"><%= privateAllowed ? 'Any port.' : 'One of ' + ports.join(', ') + '.' %> 587 starts TLS after connecting; 465 is TLS from the start.</div></div>
+        <div class="col-md-6"><label class="form-label" for="username">User name</label><input class="form-control" id="username" name="username" value="<%= val('username', s.username) %>" autocomplete="off"><div class="form-text">Leave empty for a server that needs no sign-in.</div></div>
+        <div class="col-md-6"><label class="form-label" for="password">Password</label><input class="form-control" id="password" name="password" type="password" autocomplete="new-password" placeholder="<%= s.hasPassword ? '•••••••• (saved; type a new one to replace it)' : '' %>"><div class="form-text">Kept encrypted, and never shown again.</div></div>
+        <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" id="secure" name="secure" <%= on('secure', s.secure) ? 'checked' : '' %>><label class="form-check-label" for="secure">TLS from the first byte (usually port 465)</label></div>
+          <div class="form-check"><input class="form-check-input" type="checkbox" id="tls_verify" name="tls_verify" value="on" <%= (form ? f.tls_verify === 'on' : s.tlsVerify) ? 'checked' : '' %>><label class="form-check-label" for="tls_verify">Check the server's certificate</label><div class="form-text">Switch off only for a server with a self-signed certificate.</div></div></div>
+      </div>
+    </div></div>
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Sender</h6>
+      <div class="row g-3">
+        <div class="col-md-7"><label class="form-label" for="from_address">From</label><input class="form-control" id="from_address" name="from_address" value="<%= val('from_address', s.from) %>" placeholder="Acme Help Desk <helpdesk@acme.example>"><div class="form-text">Your mail server has to allow this sender.</div></div>
+        <div class="col-md-5"><label class="form-label" for="reply_to">Reply-to <span class="text-muted">(optional)</span></label><input class="form-control" id="reply_to" name="reply_to" value="<%= val('reply_to', s.replyTo) %>" placeholder="helpdesk@acme.example"></div>
+      </div>
+    </div></div>
+    <div class="d-flex gap-2 mb-3"><button type="submit" class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save</button><a href="/settings/mail" class="btn btn-outline-secondary">Cancel</a></div>
+  </form>
+  <form method="POST" action="/settings/mail/test" class="mb-4"><button type="submit" class="btn btn-outline-secondary btn-sm">Test the connection to the saved mail server</button> <a class="small ms-2" href="/notifications">Send a real test email</a></form>
+</div>
+<%- include('../partials/foot') %>
