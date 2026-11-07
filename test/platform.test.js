@@ -8,9 +8,12 @@ const p = require('../src/platform');
 const env = { SESSION_SECRET: 'a-test-secret-that-is-long-enough-for-the-rules-1234' };
 
 test('settings: no PLATFORM_HOST means no console; the other settings need it and go together', () => {
-  assert.deepStrictEqual(p.config({}), { enabled: false, host: '', allowedIps: [], bootstrap: null });
+  assert.deepStrictEqual(p.config({}), { enabled: false, host: '', allowedIps: [], bootstrap: null, requireMfa: true });
   const c = p.config({ PLATFORM_HOST: 'OPS.Helpdesk.Example.com.', PLATFORM_ALLOWED_IPS: '10.0.0.0/8, 203.0.113.7', PLATFORM_ADMIN_USERNAME: 'Root', PLATFORM_ADMIN_PASSWORD: 'x' });
   assert.deepStrictEqual([c.enabled, c.host, c.allowedIps, c.bootstrap], [true, 'ops.helpdesk.example.com', ['10.0.0.0/8', '203.0.113.7'], { username: 'root', password: 'x' }]);
+  assert.strictEqual(p.config({ PLATFORM_HOST: 'ops.example.com' }).requireMfa, true, 'two-step verification is required unless said otherwise');
+  assert.strictEqual(p.config({ PLATFORM_HOST: 'ops.example.com', PLATFORM_REQUIRE_MFA: 'FALSE' }).requireMfa, false);
+  assert.throws(() => p.config({ PLATFORM_HOST: 'ops.example.com', PLATFORM_REQUIRE_MFA: 'maybe' }), /true or false/);
   assert.throws(() => p.config({ PLATFORM_HOST: 'not a host' }), /host name/);
   assert.throws(() => p.config({ PLATFORM_HOST: 'ops.example.com', PLATFORM_ADMIN_USERNAME: 'a' }), /go together/);
   assert.throws(() => p.config({ PLATFORM_ADMIN_USERNAME: 'a', PLATFORM_ADMIN_PASSWORD: 'b' }), /need PLATFORM_HOST/);

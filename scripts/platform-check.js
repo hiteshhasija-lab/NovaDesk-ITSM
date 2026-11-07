@@ -70,7 +70,9 @@ const PW = 'Granite-Falcon-93k';
 async function main() {
   const knex = knexLib({ client: 'pg', connection: dbConfig(process.env), pool: { min: 0, max: 3 } });
   const apps = [];
-  const boot = async (port, env) => { const a = start(port, { SESSION_SECRET: `plat-${port}-${tag}`, ...env }); apps.push(a); if (!(await healthy(port, a))) throw new Error(`NovaDesk on ${port} did not start: ${a.text().slice(-400)}`); return a; };
+  await knex.raw('DELETE FROM platform_admins');   // so the first server makes the first operator from its settings
+  await knex.raw('DELETE FROM platform_audit');
+  const boot = async (port, env) => { const a = start(port, { SESSION_SECRET: `plat-${port}-${tag}`, PLATFORM_REQUIRE_MFA: 'false', ...env }); apps.push(a); if (!(await healthy(port, a))) throw new Error(`NovaDesk on ${port} did not start: ${a.text().slice(-400)}`); return a; };
   try {
     // one at a time: each makes the demonstration data on an empty database if it is the first
     await boot(18340, { PLATFORM_HOST: 'ops.test', PLATFORM_ADMIN_USERNAME: 'root', PLATFORM_ADMIN_PASSWORD: PW, TENANT_BASE_DOMAIN: 'desk.test' });

@@ -1,0 +1,41 @@
+<%- include('_head') %>
+<div class="container-fluid px-4 py-4" style="max-width: 760px;">
+  <h4 class="mb-2"><i class="bi bi-shield-lock text-primary me-1"></i>Two-step verification</h4>
+  <% if (forced) { %><div class="alert alert-warning py-2 small">This installation requires two-step verification for every operator. Set it up now: nothing else in the console opens until it is on.</div><% } %>
+  <% if (success) { %><div class="alert alert-success py-2 small"><%= success %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+
+  <% if (codes) { %>
+  <div class="card mb-3 border-warning"><div class="card-body">
+    <h6 class="section-title">Recovery codes</h6>
+    <p class="small text-muted">Each works once, in place of a code from the app, if you lose your phone. They are shown only now.</p>
+    <pre class="border rounded p-3 mb-0"><%= codes.join('\n') %></pre>
+  </div></div>
+  <% } %>
+
+  <% if (state.enabled) { %>
+  <div class="card mb-3"><div class="card-body">
+    <p class="mb-1"><span class="badge bg-success">On</span> since <%= state.enabledAt %>. <%= state.recoveryCodesLeft %> recovery code<%= state.recoveryCodesLeft === 1 ? '' : 's' %> left.</p>
+    <form method="POST" action="/mfa/recovery" class="d-flex gap-2 mt-3" autocomplete="off"><input type="hidden" name="_csrf" value="<%= csrf %>"><input class="form-control" name="code" placeholder="current code" inputmode="numeric" required><button class="btn btn-outline-secondary" type="submit">Make new recovery codes</button></form>
+    <% if (!required) { %>
+    <form method="POST" action="/mfa/disable" class="d-flex gap-2 mt-2" autocomplete="off"><input type="hidden" name="_csrf" value="<%= csrf %>"><input class="form-control" name="code" placeholder="current code" inputmode="numeric" required><button class="btn btn-outline-danger" type="submit">Switch it off</button></form>
+    <% } %>
+  </div></div>
+  <% } else if (setup) { %>
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="section-title">1. Add the console to your authenticator app</h6>
+    <div class="d-flex gap-3 flex-wrap align-items-start">
+      <div class="border rounded bg-white p-1" style="width:200px; max-width:100%;"><%- setup.qrSvg %></div>
+      <div class="small"><p class="text-muted">Scan the code, or choose <em>enter a setup key</em> and type this key:</p><p><code><%= setup.secret %></code></p></div>
+    </div>
+    <h6 class="section-title mt-3">2. Confirm with the first code</h6>
+    <form method="POST" action="/mfa/confirm" class="d-flex gap-2" autocomplete="off"><input type="hidden" name="_csrf" value="<%= csrf %>"><input class="form-control" name="code" placeholder="6-digit code" inputmode="numeric" required><button class="btn btn-primary" type="submit">Turn it on</button></form>
+  </div></div>
+  <% } else { %>
+  <div class="card mb-3"><div class="card-body">
+    <p>A code from an authenticator app (Microsoft Authenticator, Google Authenticator, Authy, 1Password) is asked for after the password.</p>
+    <form method="POST" action="/mfa/setup"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="btn btn-primary" type="submit">Set it up</button></form>
+  </div></div>
+  <% } %>
+</div>
+<%- include('../partials/foot') %>

@@ -8,6 +8,7 @@ const { createLimiter } = require('../rateLimit');
 const platform = require('../platform');
 const tenants = require('../tenants');
 const { checkPassword } = require('../passwords');
+const platformMfa = require('../platformMfa');
 
 function mount(env = process.env) {
   const cfg = platform.config(env);
@@ -24,11 +25,20 @@ function mount(env = process.env) {
       const token = platform.readCookies(req)[platform.COOKIE];
       const p = platform.verify(token, env);
       const op = p ? await platform.findById(p.o) : null;
-      if (op) { req.operator = op; req.csrf = p.c; res.locals.operator = op; res.locals.csrf = p.c; }
+      if (op && p.s === 'mfa') { req.pending = op; req.csrf = p.c; res.locals.csrf = p.c; }          // the password was right, the code is still to come
+      else if (op) {
+        req.operator = op; req.csrf = p.c; res.locals.operator = op; res.locals.csrf = p.c;
+        req.mfa = await platformMfa.status(op.id);
+        req.enrollOnly = cfg.requireMfa && !req.mfa.enabled;                                          // required, and not set up yet: only the setup pages open
+      }
       next();
     } catch (err) { next(err); }
   });
-  const needLogin = (req, res, next) => (req.operator ? next() : res.redirect('/login'));
+  const needLogin = (req, res, next) => {
+    if (!req.operator) return res.redirect('/login');
+    if (req.enrollOnly && !/^\/(mfa|logout)(\/|$)/.test(req.path)) return res.redirect('/mfa');
+    return next();
+  };
   const needToken = (req, res, next) => (platform.same(req.body && req.body._csrf, req.csrf) ? next() : page(res, 'platform/message', { title: 'Reload the page', message: 'The page was opened in an earlier session. Reload it and try again.', operator: req.operator }, 403));
 
   // ---- sign in and out
@@ -48,12 +58,74 @@ function mount(env = process.env) {
         await platform.audit(req, null, r.error === 'locked' ? 'login.locked' : 'login.failed', { detail: `username "${String(req.body.username || '').slice(0, 40)}"` });
         return again(r.error === 'locked' ? 'This account is locked for a while after too many wrong passwords.' : 'That username and password do not match.');
       }
-      await platform.audit(req, r.operator, 'login');
       clearCookie(req, res, platform.LOGIN_COOKIE);
+      if ((await platformMfa.status(r.operator.id)).enabled) {
+        // Right password: now the code. A short-lived cookie that opens nothing but the code page.
+        await platform.audit(req, r.operator, 'login.password_ok', { detail: 'waiting for the two-step code' });
+        setCookie(req, res, platform.COOKIE, platform.sessionCookie(r.operator, env, 'mfa'), platform.PENDING_MS);
+        return res.redirect('/login/mfa');
+      }
+      await platform.audit(req, r.operator, 'login', { detail: cfg.requireMfa ? 'two-step verification still to be set up' : null });
       setCookie(req, res, platform.COOKIE, platform.sessionCookie(r.operator, env), platform.LIFETIME_MS);
+      res.redirect(cfg.requireMfa ? '/mfa' : '/');
+    } catch (err) { next(err); }
+  });
+  // ---- the code, after the password
+  router.get('/login/mfa', (req, res) => (req.pending ? page(res, 'platform/login-mfa', {}) : res.redirect('/login')));
+  router.post('/login/mfa', async (req, res, next) => {
+    try {
+      if (!req.pending) return res.redirect('/login');
+      if (!platform.same(req.body._csrf, req.csrf)) return page(res, 'platform/login-mfa', { error: 'The page was opened in an earlier session. Sign in again.' }, 403);
+      const op = req.pending;
+      if (await platformMfa.isLocked(op.id)) { await platform.audit(req, op, 'login.locked'); return page(res, 'platform/login-mfa', { error: 'This account is locked for a while after too many wrong codes.' }, 401); }
+      const r = await platformMfa.verify(op.id, req.body.code);
+      if (!r.ok) {
+        await platformMfa.recordFailure(op.id);
+        await platform.audit(req, op, 'login.mfa_failed');
+        return page(res, 'platform/login-mfa', { error: 'That code is not right. Use the current code from your authenticator app, or a recovery code.' }, 401);
+      }
+      await platformMfa.clearFailures(op.id);
+      await platform.audit(req, op, 'login', { detail: r.usedRecoveryCode ? `a recovery code was used; ${r.recoveryCodesLeft} left` : 'two-step code' });
+      setCookie(req, res, platform.COOKIE, platform.sessionCookie(op, env), platform.LIFETIME_MS);
       res.redirect('/');
     } catch (err) { next(err); }
   });
+
+  // ---- two-step verification of the signed-in operator
+  const issuer = `Platform console (${cfg.host})`;
+  const mfaPage = async (req, res, extra = {}, status = 200) => page(res, 'platform/mfa', { title: 'Two-step verification', state: req.mfa, setup: req.mfa.enabled ? null : await platformMfa.pendingSetup(req.operator, issuer), required: cfg.requireMfa, forced: req.enrollOnly, codes: null, success: null, ...extra }, status);
+  router.get('/mfa', needLogin, async (req, res, next) => { try { await mfaPage(req, res); } catch (e) { next(e); } });
+  router.post('/mfa/setup', needLogin, needToken, async (req, res, next) => {
+    try { if (!req.mfa.enabled) await platformMfa.beginSetup(req.operator, issuer); res.redirect('/mfa'); } catch (e) { next(e); }
+  });
+  router.post('/mfa/confirm', needLogin, needToken, async (req, res, next) => {
+    try {
+      const codes = await platformMfa.finishSetup(req.operator.id, req.body.code);
+      if (!codes) return mfaPage(req, res, { error: 'That code is not right. Check your authenticator app and try again.' }, 400);
+      await platform.audit(req, req.operator, 'mfa.enabled');
+      req.mfa = await platformMfa.status(req.operator.id); req.enrollOnly = false;
+      await mfaPage(req, res, { codes, success: 'Two-step verification is on. Keep these recovery codes somewhere safe: each works once, and they are not shown again.' });
+    } catch (e) { next(e); }
+  });
+  router.post('/mfa/recovery', needLogin, needToken, async (req, res, next) => {
+    try {
+      if (!req.mfa.enabled || !(await platformMfa.verify(req.operator.id, req.body.code)).ok) { await platform.audit(req, req.operator, 'mfa.change_refused', { detail: 'new recovery codes' }); return mfaPage(req, res, { error: 'A current code from your authenticator app is needed to make new recovery codes.' }, 400); }
+      const codes = await platformMfa.replaceRecoveryCodes(req.operator.id);
+      await platform.audit(req, req.operator, 'mfa.recovery_codes_replaced');
+      await mfaPage(req, res, { codes, success: 'These are your new recovery codes. The old ones no longer work.' });
+    } catch (e) { next(e); }
+  });
+  router.post('/mfa/disable', needLogin, needToken, async (req, res, next) => {
+    try {
+      if (cfg.requireMfa) return mfaPage(req, res, { error: 'This installation requires two-step verification for every operator.' }, 400);
+      if (!req.mfa.enabled || !(await platformMfa.verify(req.operator.id, req.body.code)).ok) { await platform.audit(req, req.operator, 'mfa.change_refused', { detail: 'switching off' }); return mfaPage(req, res, { error: 'A current code from your authenticator app is needed to switch it off.' }, 400); }
+      await platformMfa.disable(req.operator.id);
+      await platform.audit(req, req.operator, 'mfa.disabled');
+      req.mfa = await platformMfa.status(req.operator.id);
+      await mfaPage(req, res, { success: 'Two-step verification is off.' });
+    } catch (e) { next(e); }
+  });
+
   router.post('/logout', needLogin, needToken, async (req, res) => { await platform.audit(req, req.operator, 'logout'); clearCookie(req, res, platform.COOKIE); res.redirect('/login'); });
 
   // ---- the overview and making a tenant

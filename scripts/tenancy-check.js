@@ -314,7 +314,7 @@ async function run({ p1, p2 }, knex, apps) {
   section = 'in the database';
   const stray = await q(`SELECT 'users' AS t, count(*)::int AS n FROM users WHERE tenant_id IS NULL UNION ALL SELECT 'incidents', count(*)::int FROM incidents WHERE tenant_id IS NULL`);
   check('no row is without a tenant', stray.every((r) => r.n === 0));
-  const rls = await q("SELECT count(*)::int AS n FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace AND NOT relrowsecurity AND relname NOT IN ('schema_migrations', 'tenants', 'tenant_hosts', 'platform_admins', 'platform_audit')");
+  const rls = await q("SELECT count(*)::int AS n FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace AND NOT relrowsecurity AND relname NOT IN ('schema_migrations', 'tenants', 'tenant_hosts', 'platform_admins', 'platform_audit', 'platform_mfa', 'platform_recovery_codes')");
   check('every table of the live database has row level security on', rls[0].n === 0);
   check('the application\'s own connections run as the restricted role', await tenancy.run(1, async () => (await db.prepare('select current_user as u').get()).u === 'novadesk_app'));
   check('a database call with no tenant fails instead of guessing', await db.prepare('select 1').get().then(() => false, (e) => e.code === 'NO_TENANT'));

@@ -506,3 +506,17 @@ test('0018: every tenant can have one row of mail settings, off by default, with
     assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM mail_settings')).rows[0].c), 2);
   });
 });
+
+test('0019: an operator\'s two-step secret and recovery codes belong to the operator and go with them', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const id = (await knex.raw("INSERT INTO platform_admins (username, password_hash, full_name) VALUES ('op', 'x', 'Op') RETURNING id")).rows[0].id;
+    await knex.raw("INSERT INTO platform_mfa (admin_id, secret_enc) VALUES (?, 'v1:a:b:c')", [id]);
+    await knex.raw("INSERT INTO platform_recovery_codes (admin_id, code_hash) VALUES (?, 'h1'), (?, 'h2')", [id, id]);
+    const m = (await knex.raw('SELECT enabled, last_counter FROM platform_mfa')).rows[0];
+    assert.deepStrictEqual([m.enabled, Number(m.last_counter)], [0, 0], 'off until a code confirms it');
+    await assert.rejects(() => knex.raw("INSERT INTO platform_mfa (admin_id, secret_enc) VALUES (?, 'again')", [id]), /duplicate|unique|primary/i, 'one secret for each operator');
+    await knex.raw('DELETE FROM platform_admins WHERE id = ?', [id]);
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM platform_mfa')).rows[0].c) + Number((await knex.raw('SELECT count(*) AS c FROM platform_recovery_codes')).rows[0].c), 0, 'removing an operator removes both');
+  });
+});

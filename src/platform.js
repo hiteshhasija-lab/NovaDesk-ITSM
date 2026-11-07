@@ -6,6 +6,7 @@
 //   PLATFORM_ALLOWED_IPS       optional: addresses (1.2.3.4) or IPv4 ranges (10.0.0.0/8) that may reach it; others get a 404
 //   PLATFORM_ADMIN_USERNAME    with PLATFORM_ADMIN_PASSWORD: the first operator, made at start-up when there is none yet
 //   PLATFORM_ADMIN_PASSWORD
+//   PLATFORM_REQUIRE_MFA       default true: operators must set up two-step verification before they can use the console (false: optional)
 // Signing in is by a signed cookie that carries no data of its own except who, until when, and the page token (nothing is kept
 // on the server), so the console needs no session table and nothing about it is in any tenant.
 'use strict';
@@ -32,7 +33,9 @@ function config(env = process.env) {
   const user = String(env.PLATFORM_ADMIN_USERNAME || '').trim().toLowerCase(); const pass = env.PLATFORM_ADMIN_PASSWORD || '';
   if (Boolean(user) !== Boolean(pass)) throw new Error('PLATFORM_ADMIN_USERNAME and PLATFORM_ADMIN_PASSWORD go together: set both, or neither.');
   if ((user || ips.length) && !host) throw new Error('PLATFORM_ADMIN_* and PLATFORM_ALLOWED_IPS need PLATFORM_HOST (the console has no address without it).');
-  return { enabled: Boolean(host), host, allowedIps: ips, bootstrap: user ? { username: user, password: pass } : null };
+  const mfa = String(env.PLATFORM_REQUIRE_MFA === undefined ? 'true' : env.PLATFORM_REQUIRE_MFA).trim().toLowerCase();
+  if (!['true', 'false'].includes(mfa)) throw new Error('PLATFORM_REQUIRE_MFA must be true or false.');
+  return { enabled: Boolean(host), host, allowedIps: ips, bootstrap: user ? { username: user, password: pass } : null, requireMfa: mfa === 'true' };
 }
 
 // ---- who may reach it
@@ -69,7 +72,9 @@ function verify(token, env = process.env, now = Date.now()) {
 }
 const newToken = () => crypto.randomBytes(24).toString('base64url');
 const same = (a, b) => { const x = Buffer.from(String(a || '')); const y = Buffer.from(String(b || '')); return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y); };
-const sessionCookie = (operator, env) => sign({ o: operator.id, e: Date.now() + LIFETIME_MS, c: newToken() }, env);
+// stage 'mfa': the password was right and the code is still to come (five minutes); otherwise the full session.
+const PENDING_MS = 5 * 60 * 1000;
+const sessionCookie = (operator, env, stage = 'ok') => sign({ o: operator.id, e: Date.now() + (stage === 'mfa' ? PENDING_MS : LIFETIME_MS), c: newToken(), s: stage }, env);
 const readCookies = (req) => Object.fromEntries(String(req.get('cookie') || '').split(';').map((c) => c.trim().split(/=(.*)/s).slice(0, 2)).filter(([k]) => k));
 
 // ---- operators
@@ -135,6 +140,6 @@ async function overview() {
 }
 
 module.exports = {
-  COOKIE, LOGIN_COOKIE, LIFETIME_MS, PlatformError, config, ipAllowed, parseRule, sign, verify, newToken, same, sessionCookie, readCookies,
+  COOKIE, LOGIN_COOKIE, LIFETIME_MS, PENDING_MS, PlatformError, config, ipAllowed, parseRule, sign, verify, newToken, same, sessionCookie, readCookies,
   findById, createOperator, bootstrap, login, audit, recentAudit, overview,
 };
