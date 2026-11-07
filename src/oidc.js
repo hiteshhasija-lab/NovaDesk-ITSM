@@ -9,7 +9,9 @@ const { authPolicy } = require('./settings');
 const { verifyIdToken, TokenError } = require('./jwt');
 
 const policy = authPolicy(process.env);       // throws at start-up when the settings do not fit together
-const config = policy.oidc;
+// What a request uses (the tenant's own settings, or for the default tenant the server's OIDC_* settings) comes from
+// ssoSettings.forRequest(req) and is passed to every function below as `cfg`.
+const ssoSettings = require('./ssoSettings');
 
 // What a person is told when sign-in fails. Details go to the server log instead.
 class SsoError extends Error {}
@@ -17,8 +19,9 @@ class SsoError extends Error {}
 const TIMEOUT_MS = 10000;
 const METADATA_TTL_MS = 60 * 60 * 1000;
 const JWKS_MIN_REFETCH_MS = (Number(process.env.OIDC_JWKS_MIN_REFETCH_S) || 60) * 1000;   // only tests and CI change this
-let metadata = null; let metadataAt = 0;
-let jwks = null; let jwksAt = 0;
+// Kept for each provider (by its issuer address).
+const metadataCache = new Map();   // issuer -> { m, at }
+const jwksCache = new Map();       // issuer -> { keys, at }
 
 const isLoopback = (u) => ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
 function checkEndpoint(name, value) {
@@ -34,43 +37,59 @@ async function getJson(url, init = {}) {
   return res.json();
 }
 
-async function getMetadata() {
-  if (metadata && Date.now() - metadataAt < METADATA_TTL_MS) return metadata;
+// A tenant's administrator chose the provider's address, so every address this server is about to fetch is checked first.
+async function guard(cfg, url, what) {
+  if (cfg.source !== 'tenant') return;
+  try { await ssoSettings.checkAddress(url, what); } catch (err) {
+    if (!(err instanceof ssoSettings.SsoSettingsError)) throw err;
+    console.error(`[SSO] refused to contact ${what}: ${err.message}`);
+    throw new SsoError('The identity provider\'s address is not allowed. Ask an administrator.');
+  }
+}
+
+async function getMetadata(cfg) {
+  const hit = metadataCache.get(cfg.issuer);
+  if (hit && Date.now() - hit.at < METADATA_TTL_MS) return hit.m;
+  await guard(cfg, cfg.issuer, 'the issuer address');
   let m;
-  try { m = await getJson(`${config.issuer}/.well-known/openid-configuration`); } catch (err) {
+  try { m = await getJson(`${cfg.issuer}/.well-known/openid-configuration`); } catch (err) {
     console.error(`[SSO] could not read the provider's configuration: ${err.message}`);
     throw new SsoError('The identity provider could not be reached. Try again in a moment, or sign in with your NovaDesk password.');
   }
-  if (!m.issuer || m.issuer.replace(/\/+$/, '') !== config.issuer) {
-    console.error(`[SSO] the provider reports issuer ${m.issuer}, expected ${config.issuer}`);
-    throw new SsoError('The identity provider is not set up the way NovaDesk expects. Ask an administrator to check OIDC_ISSUER.');
+  if (!m.issuer || m.issuer.replace(/\/+$/, '') !== cfg.issuer) {
+    console.error(`[SSO] the provider reports issuer ${m.issuer}, expected ${cfg.issuer}`);
+    throw new SsoError('The identity provider is not set up the way NovaDesk expects. Ask an administrator to check the issuer address.');
   }
-  for (const k of ['authorization_endpoint', 'token_endpoint', 'jwks_uri']) checkEndpoint(k, m[k]);
-  metadata = m; metadataAt = Date.now();
-  return metadata;
+  for (const k of ['authorization_endpoint', 'token_endpoint', 'jwks_uri']) { checkEndpoint(k, m[k]); await guard(cfg, m[k], `the provider's ${k}`); }
+  metadataCache.set(cfg.issuer, { m, at: Date.now() });
+  return m;
 }
 
-async function getJwks(force = false) {
-  if (!force && jwks && Date.now() - jwksAt < METADATA_TTL_MS) return jwks;
-  if (force && jwks && Date.now() - jwksAt < JWKS_MIN_REFETCH_MS) return jwks;     // at most one refetch a minute
-  const m = await getMetadata();
-  try { jwks = await getJson(m.jwks_uri); jwksAt = Date.now(); } catch (err) {
+async function getJwks(cfg, force = false) {
+  const hit = jwksCache.get(cfg.issuer);
+  if (!force && hit && Date.now() - hit.at < METADATA_TTL_MS) return hit.keys;
+  if (force && hit && Date.now() - hit.at < JWKS_MIN_REFETCH_MS) return hit.keys;     // at most one refetch a minute
+  const m = await getMetadata(cfg);
+  try {
+    const keys = await getJson(m.jwks_uri);
+    jwksCache.set(cfg.issuer, { keys, at: Date.now() });
+    return keys;
+  } catch (err) {
     console.error(`[SSO] could not fetch the provider's keys: ${err.message}`);
     throw new SsoError('The identity provider could not be reached. Try again in a moment.');
   }
-  return jwks;
 }
 
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 
 // The first step: where to send the browser, and what to remember in the session until it comes back.
-async function beginLogin() {
-  const m = await getMetadata();
+async function beginLogin(cfg) {
+  const m = await getMetadata(cfg);
   const state = randomToken(); const nonce = randomToken(); const verifier = randomToken();
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
   const url = new URL(m.authorization_endpoint);
   url.search = new URLSearchParams({
-    response_type: 'code', client_id: config.clientId, redirect_uri: config.redirectUri, scope: config.scopes.join(' '),
+    response_type: 'code', client_id: cfg.clientId, redirect_uri: cfg.redirectUri, scope: cfg.scopes.join(' '),
     state, nonce, code_challenge: challenge, code_challenge_method: 'S256',
   }).toString();
   return { redirectTo: url.toString(), saved: { state, nonce, verifier, at: Date.now() } };
@@ -78,11 +97,11 @@ async function beginLogin() {
 
 // The second step, when the provider sends the person back with a code: trade it for the ID token, check
 // the token, and return its claims.
-async function completeLogin({ code, saved }) {
-  const m = await getMetadata();
+async function completeLogin(cfg, { code, saved }) {
+  const m = await getMetadata(cfg);
   const form = new URLSearchParams({
-    grant_type: 'authorization_code', code, redirect_uri: config.redirectUri, client_id: config.clientId,
-    client_secret: config.clientSecret, code_verifier: saved.verifier,
+    grant_type: 'authorization_code', code, redirect_uri: cfg.redirectUri, client_id: cfg.clientId,
+    client_secret: cfg.clientSecret, code_verifier: saved.verifier,
   });
   let token;
   try {
@@ -97,11 +116,11 @@ async function completeLogin({ code, saved }) {
     console.error(`[SSO] could not reach the token endpoint: ${err.message}`);
     throw new SsoError('The identity provider could not be reached. Try again in a moment.');
   }
-  const args = { issuer: config.issuer, clientId: config.clientId, nonce: saved.nonce };
+  const args = { issuer: cfg.issuer, clientId: cfg.clientId, nonce: saved.nonce };
   try {
-    try { return verifyIdToken(token.id_token, { ...args, jwks: await getJwks() }); } catch (err) {
+    try { return verifyIdToken(token.id_token, { ...args, jwks: await getJwks(cfg) }); } catch (err) {
       if (!(err instanceof TokenError) || err.code !== 'unknown_kid') throw err;
-      return verifyIdToken(token.id_token, { ...args, jwks: await getJwks(true) });   // keys rotate: look once more
+      return verifyIdToken(token.id_token, { ...args, jwks: await getJwks(cfg, true) });   // keys rotate: look once more
     }
   } catch (err) {
     if (err instanceof TokenError) { console.error(`[SSO] token refused: ${err.message}`); throw new SsoError(err.message); }
@@ -124,15 +143,15 @@ async function uniqueUsername(email) {
 // Resolves { user } for the signed-in person, or throws SsoError saying why not. The identity is the provider's
 // stable subject id; the first time, an existing account is matched by email, and only when the provider says the
 // email is verified (or OIDC_TRUST_EMAIL=true); otherwise an account is created, if OIDC_AUTO_CREATE=true.
-async function resolveUser(claims) {
-  const issuer = config.issuer;
+async function resolveUser(cfg, claims) {
+  const issuer = cfg.issuer;
   const claimedEmail = normalizeEmail(claims.email);
   const email = claimedEmail || normalizeEmail(claims.preferred_username);
-  const verified = (Boolean(claimedEmail) && (claims.email_verified === true || claims.email_verified === 'true')) || config.trustEmail;
+  const verified = (Boolean(claimedEmail) && (claims.email_verified === true || claims.email_verified === 'true')) || cfg.trustEmail;
 
-  if (config.allowedDomains.length) {
+  if (cfg.allowedDomains.length) {
     const domain = email ? email.split('@')[1] : null;
-    if (!domain || !config.allowedDomains.includes(domain)) throw new SsoError('Your email domain is not allowed to sign in to this NovaDesk.');
+    if (!domain || !cfg.allowedDomains.includes(domain)) throw new SsoError('Your email domain is not allowed to sign in to this NovaDesk.');
   }
 
   const linked = await db.prepare(`
@@ -157,18 +176,27 @@ async function resolveUser(claims) {
     return { user, linked: true };
   }
 
-  if (config.autoCreate && verified) {
+  if (cfg.autoCreate && verified) {
     const username = await uniqueUsername(email);
     const created = await db.prepare(`
       INSERT INTO users (username, password_hash, full_name, email, role) VALUES (?, ?, ?, ?, ?) RETURNING id
-    `).run(username, bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10), String(claims.name || email.split('@')[0]).slice(0, 100), email, config.defaultRole);
+    `).run(username, bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10), String(claims.name || email.split('@')[0]).slice(0, 100), email, cfg.defaultRole);
     await db.prepare('INSERT INTO user_identities (user_id, issuer, subject, email, last_login_at) VALUES (?, ?, ?, ?, ?)').run(created.lastInsertRowid, issuer, claims.sub, email, nowStr());
-    console.log(`[SSO] created ${username} (${config.defaultRole}) from ${issuer}`);
+    console.log(`[SSO] created ${username} (${cfg.defaultRole}) from ${issuer}`);
     return { user: await db.prepare('SELECT * FROM users WHERE id = ?').get(created.lastInsertRowid), created: true };
   }
   throw new SsoError(`There is no NovaDesk account for ${email}. Ask an administrator to create one.`);
 }
 
-const enabled = () => config.enabled;
+// For the administrator's "Test the connection": does the provider answer, and does it name itself as expected? Nothing is signed in.
+async function probe(issuer) {
+  const cfg = { source: 'tenant', issuer: String(issuer).replace(/\/+$/, '') };
+  metadataCache.delete(cfg.issuer); jwksCache.delete(cfg.issuer);
+  const m = await getMetadata(cfg);
+  const keys = await getJwks(cfg, false);
+  return { authorization_endpoint: m.authorization_endpoint, token_endpoint: m.token_endpoint, keyCount: Array.isArray(keys && keys.keys) ? keys.keys.length : 0 };
+}
 
-module.exports = { enabled, config, policy, beginLogin, completeLogin, resolveUser, SsoError };
+const forRequest = (req) => ssoSettings.forRequest(req);
+
+module.exports = { forRequest, probe, policy, beginLogin, completeLogin, resolveUser, SsoError };

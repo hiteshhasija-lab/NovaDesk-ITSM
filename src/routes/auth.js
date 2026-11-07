@@ -7,11 +7,16 @@ const lockout = require('../lockout');
 const { audit } = require('../audit');
 
 const router = createAsyncRouter();
+// Which single sign-on settings apply to this request: its tenant's own, or (default tenant) the server's.
+router.use(async (req, res, next) => { try { req.sso = await sso.forRequest(req); next(); } catch (err) { next(err); } });
 
 const PENDING_MS = 10 * 60 * 1000;      // how long someone has to type the code after the password
 
-function loginView(extra = {}) {
-  return { title: 'Log In', error: null, sso: sso.enabled() ? { label: sso.config.buttonLabel } : null, localLogin: sso.policy.localLogin, ...extra };
+// LOCAL_LOGIN=false hides the password form, but only where this tenant has single sign-on to use instead (a tenant with none keeps its form).
+const localLoginFor = (req) => sso.policy.localLogin || !(req.sso && req.sso.enabled);
+// The settings that apply to this request's tenant (req.sso, set just below).
+function loginView(req, extra = {}) {
+  return { title: 'Log In', error: null, sso: req.sso && req.sso.enabled ? { label: req.sso.buttonLabel } : null, localLogin: localLoginFor(req), ...extra };
 }
 
 // Signs the person in: a fresh session (so nothing from before sign-in carries over), then the page they were
@@ -31,15 +36,15 @@ function establishSession(req, user, { remember = false, via = 'password' } = {}
 
 router.get('/login', (req, res) => {
   if (req.session.user) return res.redirect('/');
-  res.render('login', loginView());
+  res.render('login', loginView(req));
 });
 
 router.post('/login', async (req, res) => {
-  if (!sso.policy.localLogin) return res.status(403).render('login', loginView({ error: 'Sign in with your organisation account.' }));
+  if (!localLoginFor(req)) return res.status(403).render('login', loginView(req, { error: 'Sign in with your organisation account.' }));
   const { username, password } = req.body;
   const user = await db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(typeof username === 'string' ? username : '');
   // One answer for every way of failing (no such person, wrong password, account locked), 401 so the per-address limiter counts it.
-  const refuse = () => res.status(401).render('login', loginView({ error: 'Invalid username or password.' }));
+  const refuse = () => res.status(401).render('login', loginView(req, { error: 'Invalid username or password.' }));
   if (!user) {
     await verifyAgainstNobody(password);                          // takes as long as a real check, so timing does not reveal who exists
     await audit(req, null, 'login.failed', { detail: 'no such account' });   // the typed name is not kept: people sometimes type a password there
@@ -103,14 +108,14 @@ router.post('/login/mfa', async (req, res) => {
 
 // ---- single sign-on (OpenID Connect)
 // The messages are written with the built-in name; the organisation's own name (Settings > Branding) replaces it here.
-const ssoFailure = (res, status, message) => res.status(status).render('login', loginView({ error: String(message).replace(/NovaDesk/g, () => res.locals.brand.name) }));
+const ssoFailure = (res, status, message) => res.status(status).render('login', loginView(res.req, { error: String(message).replace(/NovaDesk/g, () => res.locals.brand.name) }));
 
 router.get('/auth/oidc/start', async (req, res) => {
-  if (!sso.enabled()) return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
+  if (!req.sso.enabled) return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
   if (req.session.user) return res.redirect('/');
   try {
-    const { redirectTo, saved } = await sso.beginLogin();
-    req.session.oidc = saved;
+    const { redirectTo, saved } = await sso.beginLogin(req.sso);
+    req.session.oidc = { ...saved, issuer: req.sso.issuer };
     req.session.save((err) => (err ? ssoFailure(res, 500, 'Could not start sign-in. Try again.') : res.redirect(redirectTo)));
   } catch (err) {
     if (err instanceof sso.SsoError) return ssoFailure(res, 502, err.message);
@@ -120,7 +125,7 @@ router.get('/auth/oidc/start', async (req, res) => {
 });
 
 router.get('/auth/oidc/callback', async (req, res) => {
-  if (!sso.enabled()) return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
+  if (!req.sso.enabled) return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
   const saved = req.session.oidc;
   delete req.session.oidc;                                  // each attempt can be completed once
   const { code, state, error } = req.query;
@@ -131,10 +136,11 @@ router.get('/auth/oidc/callback', async (req, res) => {
   if (!saved || typeof state !== 'string' || state !== saved.state || Date.now() - saved.at > PENDING_MS) {
     return ssoFailure(res, 400, 'That sign-in link has expired or was not started here. Start again.');
   }
+  if (saved.issuer !== req.sso.issuer) return ssoFailure(res, 400, 'The single sign-on settings changed while you were signing in. Start again.');
   if (typeof code !== 'string' || !code) return ssoFailure(res, 400, 'The identity provider did not send a sign-in code. Start again.');
   try {
-    const claims = await sso.completeLogin({ code, saved });
-    const { user, linked, created } = await sso.resolveUser(claims);
+    const claims = await sso.completeLogin(req.sso, { code, saved });
+    const { user, linked, created } = await sso.resolveUser(req.sso, claims);
     const dest = await establishSession(req, user, { via: 'sso' });
     if (created) await audit(req, user, 'sso.created', { targetType: 'user', targetId: user.id, targetName: user.username, detail: `account created on first sign-in (role ${user.role})` });
     else if (linked) await audit(req, user, 'sso.linked', { targetType: 'user', targetId: user.id, targetName: user.username, detail: 'linked to the identity provider by email' });
@@ -149,12 +155,12 @@ router.get('/auth/oidc/callback', async (req, res) => {
 
 router.get('/register', (req, res) => {
   if (req.session.user) return res.redirect('/');
-  if (!sso.policy.localLogin) return res.redirect('/login');
+  if (!localLoginFor(req)) return res.redirect('/login');
   res.render('register', { error: null, title: 'Create Account', form: {} });
 });
 
 router.post('/register', async (req, res) => {
-  if (!sso.policy.localLogin) return res.status(403).render('login', loginView({ error: 'Sign in with your organisation account.' }));
+  if (!localLoginFor(req)) return res.status(403).render('login', loginView(req, { error: 'Sign in with your organisation account.' }));
   const b = req.body;
   const form = { full_name: b.full_name, username: b.username, email: b.email, department: b.department };
 

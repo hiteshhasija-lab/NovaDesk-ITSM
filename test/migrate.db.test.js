@@ -480,3 +480,16 @@ test('0014: the one branding row starts at the built-in look, the logo is stored
     assert.strictEqual((await knex.raw('SELECT updated_by FROM branding_settings')).rows[0].updated_by, null, 'deleting the administrator who saved it does not delete the branding');
   });
 });
+
+test('0017: every tenant can have one row of single sign-on settings, the secret column is plain text for the encrypted blob, roles are limited', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const r = (await knex.raw('SELECT * FROM sso_settings')).rows[0];
+    assert.deepStrictEqual([r.tenant_id, r.enabled, r.issuer, r.client_secret_enc, r.default_role, r.auto_create, r.trust_email], [1, 0, null, null, 'user', 0, 0], 'off, empty and safest by default');
+    await assert.rejects(() => knex.raw('INSERT INTO sso_settings DEFAULT VALUES'), /duplicate|unique/i, 'one row for each tenant');
+    await assert.rejects(() => knex.raw("UPDATE sso_settings SET default_role = 'admin'"), /check/i, 'administrators are never made by single sign-on');
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    await knex.raw('INSERT INTO sso_settings (tenant_id) VALUES (2)');
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM sso_settings')).rows[0].c), 2);
+  });
+});

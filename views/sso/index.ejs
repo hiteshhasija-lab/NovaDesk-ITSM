@@ -1,0 +1,53 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<%
+  const f = form || {};
+  const val = (k, fb) => (f[k] !== undefined ? f[k] : fb);
+  const on = (k, fb) => (form ? f[k] === 'on' : fb);
+%>
+<div class="container-fluid px-4 py-4" style="max-width: 900px;">
+  <h4 class="mb-2"><i class="bi bi-building-lock text-primary me-1"></i>Single sign-on</h4>
+  <p class="text-muted small">Let people sign in to <%= brand.name %> with your organisation's account (OpenID Connect: Microsoft Entra ID, Google, Okta and others). People can still use their password unless the installation hides the password form. Changes are recorded in the audit log.</p>
+
+  <% if (notice) { %><div class="alert alert-success py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% if (test) { %><div class="alert alert-<%= test.ok ? 'success' : 'danger' %> py-2 small"><%= test.text %></div><% } %>
+  <% if (serverSso && !s.enabled) { %><div class="alert alert-info py-2 small">Single sign-on is on for this workspace from the server's own settings (<code><%= serverSso.issuer %></code>, button "<%= serverSso.label %>"). Switching it on here replaces those.</div><% } %>
+
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="section-title">Register <%= brand.name %> with your provider</h6>
+    <p class="small text-muted mb-1">Give your provider this <strong>redirect address</strong> (it is this workspace's own address, so each workspace registers its own):</p>
+    <p><code><%= redirectUri %></code></p>
+    <p class="small text-muted mb-0">The provider then gives you an issuer address, a client ID and a client secret.</p>
+  </div></div>
+
+  <form method="POST" action="/settings/sso" autocomplete="off">
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">The provider</h6>
+      <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="enabled" name="enabled" <%= on('enabled', s.enabled) ? 'checked' : '' %>><label class="form-check-label" for="enabled">Single sign-on is on</label></div>
+      <div class="row g-3">
+        <div class="col-12"><label class="form-label" for="issuer">Issuer address</label><input class="form-control" id="issuer" name="issuer" value="<%= val('issuer', s.issuer) %>" placeholder="https://login.microsoftonline.com/<tenant id>/v2.0"><div class="form-text">Must start with https://. The provider's <code>/.well-known/openid-configuration</code> is read from here.</div></div>
+        <div class="col-md-6"><label class="form-label" for="client_id">Client ID</label><input class="form-control" id="client_id" name="client_id" value="<%= val('client_id', s.clientId) %>"></div>
+        <div class="col-md-6"><label class="form-label" for="client_secret">Client secret</label><input class="form-control" id="client_secret" name="client_secret" type="password" autocomplete="new-password" placeholder="<%= s.hasSecret ? '•••••••• (saved; type a new one to replace it)' : '' %>"><div class="form-text">Kept encrypted, and never shown again.</div></div>
+        <div class="col-md-6"><label class="form-label" for="button_label">Button text</label><input class="form-control" id="button_label" name="button_label" maxlength="60" value="<%= val('button_label', s.buttonLabel) %>" placeholder="Sign in with SSO"></div>
+        <div class="col-md-6"><label class="form-label" for="scopes">Scopes</label><input class="form-control" id="scopes" name="scopes" value="<%= val('scopes', s.scopes) %>"></div>
+      </div>
+    </div></div>
+
+    <div class="card mb-3"><div class="card-body">
+      <h6 class="section-title">Who may sign in</h6>
+      <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="auto_create" name="auto_create" <%= on('auto_create', s.autoCreate) ? 'checked' : '' %>><label class="form-check-label" for="auto_create">Make an account the first time someone signs in</label></div>
+      <div class="row g-3 mb-2"><div class="col-md-4"><label class="form-label" for="default_role">Role of a new person</label><select class="form-select" id="default_role" name="default_role"><option value="user" <%= val('default_role', s.defaultRole) === 'user' ? 'selected' : '' %>>User</option><option value="agent" <%= val('default_role', s.defaultRole) === 'agent' ? 'selected' : '' %>>Agent</option></select><div class="form-text">Never administrator.</div></div></div>
+      <label class="form-label" for="allowed_domains">Only these email domains <span class="text-muted">(optional)</span></label>
+      <input class="form-control mb-2" id="allowed_domains" name="allowed_domains" value="<%= val('allowed_domains', s.allowedDomains) %>" placeholder="example.com, example.org">
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="trust_email" name="trust_email" <%= on('trust_email', s.trustEmail) ? 'checked' : '' %>><label class="form-check-label" for="trust_email">Trust the email address even when the provider does not say it is verified</label><div class="form-text">Microsoft Entra ID does not send that flag. Use this only with a provider that belongs to your own organisation: it lets an email match an existing account.</div></div>
+    </div></div>
+    <div class="d-flex gap-2 mb-4"><button type="submit" class="btn btn-primary"><i class="bi bi-check2 me-1"></i>Save</button><a href="/settings/sso" class="btn btn-outline-secondary">Cancel</a></div>
+  </form>
+
+  <form method="POST" action="/settings/sso/test" class="mb-4">
+    <button type="submit" class="btn btn-outline-secondary btn-sm" <%= s.issuer ? '' : 'disabled' %>>Test the connection to the saved issuer</button>
+    <span class="small text-muted ms-2"><%= peopleLinked %> <%= peopleLinked === 1 ? 'person is' : 'people are' %> linked to a provider.</span>
+  </form>
+</div>
+<%- include('../partials/foot') %>

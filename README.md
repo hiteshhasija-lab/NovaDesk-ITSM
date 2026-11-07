@@ -480,10 +480,21 @@ nothing changes for a single organisation.
   A running server learns of a new or suspended tenant within five seconds. The default tenant cannot be suspended.
 - **Background work** (webhook delivery, SLA warnings and breaches, retention, the decommission jobs) runs for each tenant in
   turn; one tenant failing never stops the rest.
-- **What is still one for the whole installation:** the mail server (`SMTP_*`), single sign-on (`OIDC_*`, which names one host in its
-  redirect address), the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
-  integration. Those belong to the **default tenant**; other tenants sign in with passwords or SCIM for now. Moving them into each
+- **What is still one for the whole installation:** the mail server (`SMTP_*`), the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
+  integration. Those belong to the **default tenant**; other tenants sign in with passwords, SCIM or their own single sign-on. Moving mail and the inbound mailbox into each
   tenant's own settings is the next step. Making and suspending tenants is done in the platform console (next).
+- **Single sign-on for each tenant:** *Single sign-on* in the administrator's menu. A tenant sets up its own provider (OpenID Connect:
+  Microsoft Entra ID, Google, Okta and others): issuer address, client ID and secret (kept encrypted, never shown again), button
+  text, scopes, whether to make an account on first sign-in (never an administrator), which email domains may sign in, and whether
+  to trust an email the provider has not marked verified. The page shows the **redirect address** to register with the provider: it is
+  the tenant's own host name, so each tenant registers its own. **Test the connection** reads the provider's configuration without signing
+  anyone in. People are linked to the provider per tenant, so the same person at the same provider is a separate account in each
+  tenant. The server's own `OIDC_*` settings still serve the **default tenant** when it has none of its own, so an installation that set
+  them carries on as before. `LOCAL_LOGIN=false` now hides the password form only for a tenant that has single sign-on to use instead.
+  Because the tenant's administrator chooses the provider's address, **the server refuses addresses that lead to private, local or
+  reserved networks** (and anything that is not https) when it is saved and again each time it is used; `SSO_ALLOW_PRIVATE=true`
+  lifts that for a lab. (The check resolves the name when it is made, so it does not stop a name that is changed to an internal address
+  between the check and the fetch.) Checked by `node scripts/tenant-sso-check.js` (in CI) against the mock provider.
 - **The platform console:** set `PLATFORM_HOST` (for example `ops.helpdesk.example.com`) and that host name shows a console of its
   own, for the people who run the installation (the *operators*, who belong to no tenant): the tenants with counts of their
   people and records (never their content), **making a tenant** (name, short name, host names and its first administrator),

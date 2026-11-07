@@ -169,6 +169,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/platform-check.js
+      - name: Single sign-on per tenant (settings, the address guard, secrets, a real sign-in through the mock provider, separation, LOCAL_LOGIN)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/tenant-sso-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step
