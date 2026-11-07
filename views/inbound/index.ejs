@@ -5,6 +5,8 @@
   <p class="text-muted small">Mail sent to the help desk's address becomes an incident, and a reply to a notice becomes a comment on its incident. Everything looked at is listed below with what was done about it.</p>
 
   <% if (notice) { %><div class="alert alert-info py-2 small"><%= notice %></div><% } %>
+  <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% if (newToken) { %><div class="alert alert-warning py-2 small">Token for the HTTP address: <code id="intakeToken"><%= newToken %></code></div><% } %>
 
   <div class="row g-3 mb-3">
     <div class="col-lg-6">
@@ -12,7 +14,7 @@
         <h6 class="section-title">Mailbox</h6>
         <% if (!cfg.imap) { %>
           <p><span class="badge bg-secondary">Not set up</span></p>
-          <p class="small text-muted mb-1">To have <%= brand.name %> read a mailbox, set <code>INBOUND_IMAP_HOST</code>, <code>INBOUND_IMAP_USER</code> and <code>INBOUND_IMAP_PASSWORD</code> in the server's environment (see the README, "Inbound email").</p>
+          <p class="small text-muted mb-1">Set this workspace's mailbox below, or (for the whole installation) set <code>INBOUND_IMAP_HOST</code>, <code>INBOUND_IMAP_USER</code> and <code>INBOUND_IMAP_PASSWORD</code> in the server's environment (see the README, "Inbound email").</p>
         <% } else { %>
           <p>
             <% if (status.lastError) { %><span class="badge bg-danger">Problem</span>
@@ -27,8 +29,8 @@
           </dl>
           <form method="POST" action="/settings/inbound/check" class="m-0"><button type="submit" class="btn btn-sm btn-outline-primary">Check now</button></form>
         <% } %>
-        <% if (cfg.hasSecret) { %>
-          <hr><p class="small mb-1"><span class="badge bg-success">On</span> A mail system can hand messages over: <code>POST /api/inbound/email</code> with the secret as a bearer token and the raw email as the body.</p>
+        <% if (httpOn) { %>
+          <hr><p class="small mb-1"><span class="badge bg-success">On</span> A mail system can hand messages over: <code>POST /api/inbound/email</code> with <%= source === 'server' ? 'the installation\'s secret' : 'this workspace\'s token' %> as a bearer token and the raw email as the body.</p>
         <% } %>
       </div></div>
     </div>
@@ -40,7 +42,7 @@
           <div><div class="fs-4 fw-semibold text-<%= tone %>"><%= counts[k] || 0 %></div><div class="small text-muted"><%= label %></div></div>
           <% }) %>
         </div>
-        <h6 class="section-title">Rules (set in the server's environment)</h6>
+        <h6 class="section-title">Rules <%= source === 'server' ? '(set in the server\'s environment)' : '' %></h6>
         <dl class="row small mb-0">
           <dt class="col-sm-5">Sender with no account</dt><dd class="col-sm-7"><%= cfg.unknownSenders === 'create' ? 'becomes a contact' : 'ignored' %></dd>
           <% if (cfg.allowedDomains.length) { %><dt class="col-sm-5">Allowed domains</dt><dd class="col-sm-7"><%= cfg.allowedDomains.join(', ') %></dd><% } %>
@@ -52,6 +54,44 @@
       </div></div>
     </div>
   </div>
+
+  <div class="card mb-3"><div class="card-body">
+    <h6 class="section-title">This workspace's own mailbox and rules</h6>
+    <% if (serverMailbox) { %><p class="small text-muted">The installation reads a mailbox of its own for this workspace (the server's settings). Switching on a mailbox here replaces it.</p><% } %>
+    <% const f = form || {}; const val = (k, fb) => (f[k] !== undefined ? f[k] : fb); const on = (k, fb) => (form ? f[k] === 'on' : fb); %>
+    <form method="POST" action="/settings/inbound/mailbox" autocomplete="off">
+      <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="enabled" name="enabled" <%= on('enabled', s.enabled) ? 'checked' : '' %>><label class="form-check-label" for="enabled">Read this mailbox: mail in it becomes incidents, replies become comments</label></div>
+      <div class="row g-3">
+        <div class="col-md-5"><label class="form-label" for="host">Mailbox server (IMAP)</label><input class="form-control" id="host" name="host" value="<%= val('host', s.host) %>" placeholder="imap.example.com"></div>
+        <div class="col-md-2"><label class="form-label" for="port">Port</label><input class="form-control" id="port" name="port" type="number" value="<%= val('port', s.port) %>"><div class="form-text"><%= ports.join(' or ') %></div></div>
+        <div class="col-md-5 d-flex flex-column justify-content-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="secure" name="secure" <%= on('secure', s.secure) ? 'checked' : '' %>><label class="form-check-label" for="secure">TLS from the first byte (993)</label></div><div class="form-check"><input class="form-check-input" type="checkbox" id="tls_verify" name="tls_verify" <%= on('tls_verify', s.tlsVerify) ? 'checked' : '' %>><label class="form-check-label" for="tls_verify">Check the server's certificate</label></div></div>
+        <div class="col-md-4"><label class="form-label" for="user">User name</label><input class="form-control" id="user" name="user" value="<%= val('user', s.user) %>"></div>
+        <div class="col-md-4"><label class="form-label" for="password">Password</label><input class="form-control" id="password" name="password" type="password" autocomplete="new-password" placeholder="<%= s.hasPassword ? '•••••••• (saved)' : '' %>"><div class="form-text">Kept encrypted, never shown again.</div></div>
+        <div class="col-md-4"><label class="form-label" for="poll_seconds">Look every (seconds)</label><input class="form-control" id="poll_seconds" name="poll_seconds" type="number" value="<%= val('poll_seconds', s.pollSeconds) %>"></div>
+        <div class="col-md-4"><label class="form-label" for="folder">Folder</label><input class="form-control" id="folder" name="folder" value="<%= val('folder', s.folder) %>" placeholder="INBOX"></div>
+        <div class="col-md-4"><label class="form-label" for="processed_folder">Move handled messages to <span class="text-muted">(optional)</span></label><input class="form-control" id="processed_folder" name="processed_folder" value="<%= val('processed_folder', s.processedFolder) %>"></div>
+        <div class="col-md-4"><label class="form-label" for="address">Help desk address</label><input class="form-control" id="address" name="address" value="<%= val('address', s.address) %>" placeholder="helpdesk@example.com"><div class="form-text">Replies to notices go here.</div></div>
+        <div class="col-12"><hr class="my-1"><div class="small text-muted">Rules, for the mailbox and the HTTP address alike</div></div>
+        <div class="col-md-4"><label class="form-label" for="unknown_senders">A sender with no account</label><select class="form-select" id="unknown_senders" name="unknown_senders"><option value="create" <%= val('unknown_senders', s.unknownSenders) === 'create' ? 'selected' : '' %>>becomes a contact</option><option value="ignore" <%= val('unknown_senders', s.unknownSenders) === 'ignore' ? 'selected' : '' %>>is ignored</option></select></div>
+        <div class="col-md-4"><label class="form-label" for="allowed_domains">Only these sender domains <span class="text-muted">(optional)</span></label><input class="form-control" id="allowed_domains" name="allowed_domains" value="<%= val('allowed_domains', s.allowedDomains) %>"></div>
+        <div class="col-md-4"><label class="form-label" for="blocked_senders">Never answer these <span class="text-muted">(addresses or domains)</span></label><input class="form-control" id="blocked_senders" name="blocked_senders" value="<%= val('blocked_senders', s.blockedSenders) %>"></div>
+        <div class="col-md-4"><label class="form-label" for="max_per_sender_hour">Messages per sender per hour</label><input class="form-control" id="max_per_sender_hour" name="max_per_sender_hour" type="number" value="<%= val('max_per_sender_hour', s.maxPerSenderHour) %>"><div class="form-text">0 = no limit.</div></div>
+        <div class="col-md-4"><label class="form-label" for="assignment_group">New incidents go to</label><select class="form-select" id="assignment_group" name="assignment_group"><option value="">nobody in particular</option><% groups.forEach(function (g) { %><option value="<%= g %>" <%= val('assignment_group', s.assignmentGroup) === g ? 'selected' : '' %>><%= g %></option><% }) %></select></div>
+        <div class="col-md-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="require_auth" name="require_auth" <%= on('require_auth', s.requireAuth) ? 'checked' : '' %>><label class="form-check-label" for="require_auth">Only mail the receiving server vouches for (SPF, DKIM or DMARC pass)</label></div></div>
+      </div>
+      <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-check2 me-1"></i>Save</button>
+    </form>
+    <hr>
+    <h6 class="section-title">The address for a mail system</h6>
+    <p class="small text-muted">A mail provider or server can hand messages over to <code>POST /api/inbound/email</code> (the raw email as the body, <code>Content-Type: message/rfc822</code>), with a token of this workspace's own as a bearer token.</p>
+    <% if (s.hasToken) { %>
+      <p class="small mb-2"><span class="badge bg-success">On</span> token starting <code><%= s.tokenPrefix %></code></p>
+      <form method="POST" action="/settings/inbound/token" class="d-inline"><button class="btn btn-sm btn-outline-secondary" type="submit">Make a new token</button></form>
+      <form method="POST" action="/settings/inbound/token/revoke" class="d-inline"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke it</button></form>
+    <% } else { %>
+      <form method="POST" action="/settings/inbound/token"><button class="btn btn-sm btn-outline-primary" type="submit">Make a token</button></form>
+    <% } %>
+  </div></div>
 
   <div class="card"><div class="table-responsive">
     <table class="table table-sm table-hover align-middle mb-0" id="inboundTable">

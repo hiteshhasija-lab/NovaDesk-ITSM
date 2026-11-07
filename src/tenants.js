@@ -106,6 +106,7 @@ async function seedDefaults() {
   await db.prepare('INSERT INTO scim_settings DEFAULT VALUES').run();
   await db.prepare('INSERT INTO sso_settings DEFAULT VALUES').run();
   await db.prepare('INSERT INTO mail_settings DEFAULT VALUES').run();
+  await db.prepare('INSERT INTO inbound_settings DEFAULT VALUES').run();
   await db.prepare("INSERT INTO business_calendars (name, is_default) VALUES ('Business hours', 1)").run();
   await db.prepare(`INSERT INTO sla_policies (applies_to, priority, target_minutes, clock, warn_percent, active) VALUES
     ('incident', 1, 240, 'calendar', 75, 1), ('incident', 2, 480, 'calendar', 75, 1), ('incident', 3, 1440, 'calendar', 75, 1), ('incident', 4, 4320, 'calendar', 75, 1),

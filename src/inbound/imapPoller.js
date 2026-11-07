@@ -20,9 +20,9 @@ const state = { configured: false, mailbox: null, folder: null, running: false, 
 let timer = null;
 let cfg = null;
 
-function connect() {
-  if (deps.createClient) return deps.createClient(cfg);
-  const c = cfg.imap;
+function connect(conf = cfg) {
+  if (deps.createClient) return deps.createClient(conf);
+  const c = conf.imap;
   const client = new ImapFlow({
     host: c.host, port: c.port, secure: c.secure, auth: { user: c.user, pass: c.pass },
     tls: { rejectUnauthorized: c.tlsVerify }, logger: false, disableAutoIdle: true,
@@ -32,9 +32,11 @@ function connect() {
   return client;
 }
 
-async function lookOnce() {
-  const c = cfg.imap;
-  const client = connect();
+// One look at one mailbox: `conf` is an inboundConfig() (and, for a tenant's own mailbox, its `env` so the rules are the tenant's), `tries` counts
+// the failed tries of each message.
+async function lookWith(conf, tries) {
+  const c = conf.imap;
+  const client = connect(conf);
   let handled = 0;
   await client.connect();
   try {
@@ -46,26 +48,26 @@ async function lookOnce() {
         let done = true;
         try {
           const head = await client.fetchOne(uid, { size: true }, { uid: true });
-          if (head && head.size > cfg.maxMessageBytes) {
-            await deps.recordUnreadable({ messageId: key, source: 'imap', size: head.size, reason: `larger than the ${Math.round(cfg.maxMessageBytes / 1048576)} MB limit (INBOUND_MAX_MESSAGE_MB): not read`, outcome: 'rejected' });
+          if (head && head.size > conf.maxMessageBytes) {
+            await deps.recordUnreadable({ messageId: key, source: 'imap', size: head.size, reason: `larger than the ${Math.round(conf.maxMessageBytes / 1048576)} MB limit (INBOUND_MAX_MESSAGE_MB): not read`, outcome: 'rejected' });
           } else {
             const full = await client.fetchOne(uid, { source: true }, { uid: true });
             let parsed = null;
             try { parsed = await deps.parseMessage(full.source); } catch (err) { await deps.recordUnreadable({ messageId: key, source: 'imap', size: head ? head.size : 0, reason: `could not be read as an email: ${err.message}` }); }
-            if (parsed) await deps.processMessage(parsed, { source: 'imap' });
+            if (parsed) await deps.processMessage(parsed, conf.env ? { source: 'imap', env: conf.env } : { source: 'imap' });
           }
-          attempts.delete(key);
+          tries.delete(key);
         } catch (err) {
           // Something was down (the database, say): leave the message unread and try again at the next look, a few times;
           // a message that keeps failing is written down and set aside so it cannot hold up the ones behind it.
-          const n = (attempts.get(key) || 0) + 1;
-          attempts.set(key, n);
+          const n = (tries.get(key) || 0) + 1;
+          tries.set(key, n);
           console.warn(`[Inbound] a message could not be handled (try ${n} of ${MAX_TRIES}): ${err.message}`);
           if (n >= MAX_TRIES) {
             // Set aside only if that can be written down: with the database down it cannot, and the message must wait.
             try {
               await deps.recordUnreadable({ messageId: key, source: 'imap', reason: `could not be handled after ${MAX_TRIES} tries: ${String(err.message).slice(0, 200)}` });
-              attempts.delete(key);
+              tries.delete(key);
             } catch { done = false; }
           } else done = false;
         }
@@ -80,8 +82,11 @@ async function lookOnce() {
   return handled;
 }
 
+const lookOnce = () => lookWith(cfg, attempts);
+
 // The mailbox is set up for the whole installation (INBOUND_IMAP_*), so what it receives belongs to the default tenant.
-const poll = () => tenancy.run(1, pollMailbox);
+// (unless the default tenant has set up a mailbox of its own: src/inbound/tenantPoller.js reads that one instead)
+const poll = () => tenancy.run(1, async () => { if (await require('../inboundSettings').mailboxEnabled()) { schedule(); return; } return pollMailbox(); });
 async function pollMailbox() {
   if (state.running || !cfg || !cfg.imap) return;
   state.running = true; state.lastStartedAt = new Date().toISOString();
@@ -126,4 +131,4 @@ function stop() { clearTimeout(timer); timer = null; }
 // "Check now": look at once, and resolve when that look is over.
 async function checkNow() { if (!cfg || !cfg.imap) return false; clearTimeout(timer); await poll(); return true; }
 
-module.exports = { start, stop, checkNow, state: () => ({ ...state }), lookOnce, _test: { deps, setConfig: (c) => { cfg = c; }, attempts, MAX_TRIES } };
+module.exports = { start, stop, checkNow, state: () => ({ ...state }), lookOnce, lookWith, deps, _test: { deps, setConfig: (c) => { cfg = c; }, attempts, MAX_TRIES } };

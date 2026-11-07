@@ -232,6 +232,7 @@ initDb()
 
     require('./platform').bootstrap(require('./platform').config(process.env)).catch((err) => console.warn(`[Platform] ${err.message}`));
     startScheduler();
+    require('./inbound/tenantPoller').start();
     startSessionCleanup();
     inboundPoller.start(process.env);
     require('./inbound/process').startPruning(process.env);

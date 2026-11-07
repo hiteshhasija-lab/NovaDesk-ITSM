@@ -520,3 +520,21 @@ test('0019: an operator\'s two-step secret and recovery codes belong to the oper
     assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM platform_mfa')).rows[0].c) + Number((await knex.raw('SELECT count(*) AS c FROM platform_recovery_codes')).rows[0].c), 0, 'removing an operator removes both');
   });
 });
+
+test('0020: every tenant can have one row of inbound settings, off by default; a token hash belongs to one tenant only', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const r = (await knex.raw('SELECT * FROM inbound_settings')).rows[0];
+    assert.deepStrictEqual([r.tenant_id, r.enabled, r.imap_host, r.imap_password_enc, r.unknown_senders, r.max_per_sender_hour, r.poll_seconds, r.intake_token_hash, r.require_auth], [1, 0, null, null, 'create', 10, 60, null, 0], 'off, empty, safe defaults');
+    await assert.rejects(() => knex.raw('INSERT INTO inbound_settings DEFAULT VALUES'), /duplicate|unique/i, 'one row for each tenant');
+    await assert.rejects(() => knex.raw("UPDATE inbound_settings SET poll_seconds = 1"), /check/i);
+    await assert.rejects(() => knex.raw("UPDATE inbound_settings SET unknown_senders = 'delete'"), /check/i);
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    await knex.raw("UPDATE inbound_settings SET intake_token_hash = 'h1'");
+    await knex.raw("INSERT INTO inbound_settings (tenant_id) VALUES (2)");
+    await assert.rejects(() => knex.raw("UPDATE inbound_settings SET intake_token_hash = 'h1' WHERE tenant_id = 2"), /duplicate|unique/i, 'a token hash finds one tenant');
+    await knex.raw("UPDATE inbound_settings SET intake_token_hash = NULL");
+    await knex.raw("UPDATE inbound_settings SET intake_token_hash = NULL WHERE tenant_id = 2");
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM inbound_settings')).rows[0].c), 2, 'rows with no token do not collide');
+  });
+});

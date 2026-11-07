@@ -184,6 +184,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/platform-mfa-check.js
+      - name: Inbound email per tenant (a tenant's own mailbox and rules, its own token for the HTTP address, separation, guards)
+        run: |
+          # Before the sign-in policies step too: it signs in as the demonstration administrator.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/tenant-inbound-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

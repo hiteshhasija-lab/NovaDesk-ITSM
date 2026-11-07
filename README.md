@@ -480,9 +480,8 @@ nothing changes for a single organisation.
   A running server learns of a new or suspended tenant within five seconds. The default tenant cannot be suspended.
 - **Background work** (webhook delivery, SLA warnings and breaches, retention, the decommission jobs) runs for each tenant in
   turn; one tenant failing never stops the rest.
-- **What is still one for the whole installation:** the inbound mailbox and HTTP mail intake (`INBOUND_*`), and the NovaConnect/ESXi decommission
-  integration. Those belong to the **default tenant**; other tenants sign in with passwords, SCIM or their own single sign-on. Each tenant may set its own outgoing mail (above); moving the inbound mailbox
-  into each tenant's own settings is the next step. Making and suspending tenants is done in the platform console (next).
+- **What is still one for the whole installation:** the NovaConnect/ESXi decommission integration (and the `INBOUND_*` settings, which
+  serve the default tenant when it has none of its own). Those belong to the **default tenant**; other tenants sign in with passwords, SCIM or their own single sign-on. Each tenant may set its own outgoing and inbound mail (above). Making and suspending tenants is done in the platform console (next).
 - **Single sign-on for each tenant:** *Single sign-on* in the administrator's menu. A tenant sets up its own provider (OpenID Connect:
   Microsoft Entra ID, Google, Okta and others): issuer address, client ID and secret (kept encrypted, never shown again), button
   text, scopes, whether to make an account on first sign-in (never an administrator), which email domains may sign in, and whether
@@ -503,6 +502,18 @@ nothing changes for a single organisation.
   2525 are refused** (so the form cannot be used to scan the network); `MAIL_ALLOW_PRIVATE=true` lifts both for a lab or a mail
   server on your own network. As everywhere, the account's password never crosses the network unencrypted (a sign-in needs
   STARTTLS or TLS from the start). Checked by `node scripts/tenant-mail-check.js` (in CI) against two real SMTP servers.
+- **Inbound email for each tenant:** *Inbound email* in the administrator's menu. A tenant may have **its own mailbox** that the server
+  reads over IMAP (host, port, TLS, user name and password, folder, optional folder to move handled messages to, how often to look) and
+  **its own rules**: what to do with a sender who has no account (make a contact, or ignore), which sender domains are allowed, which
+  addresses are never answered, a limit of messages per sender per hour, whether the receiving server must vouch for the sender, and
+  which group new incidents go to. A message in the mailbox becomes an incident of that tenant and a reply to a notice becomes a comment
+  on its incident. A tenant also has **its own token for the HTTP address** (`POST /api/inbound/email`, the raw email as the body):
+  the token is shown once, only a hash is kept, making a new one replaces the old at once, and a suspended tenant's token is refused.
+  The mailbox password is kept encrypted and never shown again. As for outgoing mail, the server refuses private, local and reserved
+  addresses and ports other than 143 and 993 (`MAIL_ALLOW_PRIVATE=true` lifts both). The installation's own `INBOUND_*` settings
+  and `INBOUND_SECRET` still serve the **default tenant** when it has none of its own, so nothing changes for an installation that uses
+  them. Each tenant's mailbox is read on its own (a slow one never holds up another). Checked by `node scripts/tenant-inbound-check.js`
+  (in CI; the mailbox is a fake one inside the script).
 - **The platform console:** set `PLATFORM_HOST` (for example `ops.helpdesk.example.com`) and that host name shows a console of its
   own, for the people who run the installation (the *operators*, who belong to no tenant): the tenants with counts of their
   people and records (never their content), **making a tenant** (name, short name, host names and its first administrator),
