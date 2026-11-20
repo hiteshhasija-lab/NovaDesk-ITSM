@@ -527,6 +527,17 @@ nothing changes for a single organisation.
   (`PLATFORM_REQUIRE_MFA=false` makes it optional); the code is asked for after the password, a code works once, and wrong codes
   lock the account like wrong passwords. Keeping the console behind a VPN or the address list is still sensible. Checked by
   `node scripts/platform-check.js` and `node scripts/platform-mfa-check.js` (in CI).
+- **Leaving the service (export and delete):** in the platform console a tenant's page has an **export** and a **delete** card. The export is one download
+  (tar.gz): a file of rows for every table, the files attached to records, the logo and the sign-in picture, and a manifest with the row counts. **Credentials and
+  secrets are never in it** (password hashes, API key and token hashes, two-step secrets and recovery codes, stored provider and mail passwords, webhook
+  secrets), nor are sessions and the service's own machinery; the manifest says so. It is made inside the tenant, so nothing of another tenant can be in it,
+  and it is recorded with its size and SHA-256. Both cards ask the operator to confirm who they are again (the current authenticator code, or the password).
+  **Deleting** goes one way only: the tenant must be **suspended**, a **final export** must have been made *after* the suspension, the operator **types the
+  tenant's short name** and confirms again, and then deletion is **scheduled** after a grace period (`TENANT_DELETE_GRACE_DAYS`, 7 by default). Meanwhile the
+  tenant is closed like a suspended one and the deletion can be **called off**. A background job then removes everything the tenant owns (all its rows in one
+  transaction, in an order that never breaks a link, checked to leave none behind, or nothing is deleted), its host names, and its attached files; the platform's
+  own log keeps the history. The default tenant can be neither exported nor deleted. Files still on disk are read when the export is made, and each table is held in
+  memory while it is written, so a very large tenant needs memory for its largest table. Checked by `node scripts/tenant-offboarding-check.js` (in CI).
 - **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
   as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
   reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a

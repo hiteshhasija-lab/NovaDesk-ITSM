@@ -8,6 +8,8 @@
 //      or a refusal (TENANT_UNKNOWN_HOST=reject, for an installation that serves several organisations).
 // API keys and SCIM tokens belong to a tenant themselves and need no host name.
 'use strict';
+const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 const { checkPassword } = require('./passwords');
 const { db, nowStr } = require('./db');
@@ -32,7 +34,7 @@ const TTL_MS = 5000;
 const invalidate = () => { cache = null; };
 async function load() {
   if (cache && Date.now() - cache.at < TTL_MS) return cache;
-  const tenants = await tenancy.runPlatform(() => db.prepare('SELECT id, slug, name, status, created_at FROM tenants ORDER BY id').all());
+  const tenants = await tenancy.runPlatform(() => db.prepare('SELECT id, slug, name, status, created_at, status_changed_at, export_at, export_sha256, export_bytes, export_by, deletion_scheduled_at, deletion_requested_by FROM tenants ORDER BY id').all());
   const hosts = await tenancy.runPlatform(() => db.prepare('SELECT host, tenant_id FROM tenant_hosts').all());
   const byId = new Map(tenants.map((t) => [t.id, t]));
   cache = { at: Date.now(), tenants, byId, bySlug: new Map(tenants.map((t) => [t.slug, t])), byHost: new Map(hosts.map((h) => [h.host, byId.get(h.tenant_id)])) };
@@ -199,11 +201,103 @@ async function resetAdminPassword(tenantId, username, password, operatorName) {
 async function setStatus(id, status) {
   if (Number(id) === DEFAULT_ID && status !== 'active') throw new TenantError('The default tenant cannot be suspended.');
   if (!['active', 'suspended'].includes(status)) throw new TenantError('Status must be active or suspended.');
-  await tenancy.runPlatform(() => db.prepare('UPDATE tenants SET status = ? WHERE id = ?').run(status, Number(id)));
+  const t = await get(id);
+  if (t && t.status === 'pending_deletion') throw new TenantError('This tenant is waiting to be deleted: call the deletion off first.');
+  await tenancy.runPlatform(() => db.prepare('UPDATE tenants SET status = ?, status_changed_at = ? WHERE id = ?').run(status, nowStr(), Number(id)));
   invalidate();
+}
+
+// ---- leaving the service: export, then delete (src/tenantExport.js; the platform console asks for each step)
+const graceDays = (env = process.env) => {
+  const raw = env.TENANT_DELETE_GRACE_DAYS;
+  if (raw === undefined || String(raw).trim() === '') return 7;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 365) throw new Error('TENANT_DELETE_GRACE_DAYS must be a whole number of days from 0 to 365.');
+  return n;
+};
+async function recordExport(id, { sha256, bytes }, operatorName) {
+  await tenancy.runPlatform(() => db.prepare('UPDATE tenants SET export_at = ?, export_sha256 = ?, export_bytes = ?, export_by = ? WHERE id = ?').run(nowStr(), sha256, bytes, operatorName, Number(id)));
+  invalidate();
+}
+// What stands between this tenant and deletion, as a sentence, or null when it may be scheduled.
+async function deletionBlocker(id) {
+  const t = await get(id);
+  if (!t) return 'There is no such tenant.';
+  if (Number(id) === DEFAULT_ID) return 'The default tenant cannot be deleted.';
+  if (t.status === 'pending_deletion') return 'Deletion is already scheduled.';
+  if (t.status !== 'suspended') return 'Suspend the tenant first: its people must stop changing things before the final export.';
+  if (!t.export_at || !t.status_changed_at || t.export_at <= t.status_changed_at) return 'Make a final export first: one made after the tenant was suspended.';
+  return null;
+}
+async function scheduleDeletion(id, operatorName, env = process.env) {
+  const blocker = await deletionBlocker(id);
+  if (blocker) throw new TenantError(blocker);
+  const days = graceDays(env);
+  const when = new Date(Date.now() + days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+  await tenancy.runPlatform(() => db.prepare("UPDATE tenants SET status = 'pending_deletion', deletion_scheduled_at = ?, deletion_requested_by = ? WHERE id = ? AND status = 'suspended'").run(when, operatorName, Number(id)));
+  invalidate();
+  return { when, days };
+}
+async function cancelDeletion(id) {
+  const t = await get(id);
+  if (!t || t.status !== 'pending_deletion') throw new TenantError('Deletion is not scheduled for this tenant.');
+  await tenancy.runPlatform(() => db.prepare("UPDATE tenants SET status = 'suspended', deletion_scheduled_at = NULL, deletion_requested_by = NULL WHERE id = ? AND status = 'pending_deletion'").run(Number(id)));
+  invalidate();
+}
+
+// The tables that hold a tenant's data, in the order rows can be removed: a table only after every table that points at it.
+async function purgeOrder(tx) {
+  const tables = (await tx.prepare("SELECT relname AS t FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' AND relrowsecurity").all()).map((r) => r.t);
+  const fks = await tx.prepare("SELECT c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent FROM pg_constraint c WHERE c.contype = 'f' AND c.confdeltype IN ('a', 'r') AND c.conrelid <> c.confrelid").all();
+  const kids = new Map(tables.map((t) => [t, new Set()]));
+  for (const f of fks) if (kids.has(f.child) && kids.has(f.parent)) kids.get(f.parent).add(f.child);
+  const left = new Set(tables); const order = [];
+  while (left.size) {
+    const ready = [...left].filter((t) => [...kids.get(t)].every((k) => !left.has(k)));
+    if (!ready.length) throw new Error(`cannot order the tables for deletion (a cycle): ${[...left].join(', ')}`);
+    for (const t of ready.sort()) { order.push(t); left.delete(t); }
+  }
+  return order;
+}
+
+// Removes a tenant and everything it owns: its rows (all or nothing, and checked to be gone), its hosts, its attached files. Only a tenant whose
+// scheduled time has come (or `due` is false, for tests and tools) and never the default tenant. Returns what was removed.
+async function purge(id, { due = true } = {}) {
+  const t = await get(id);
+  if (!t) throw new TenantError('There is no such tenant.');
+  if (Number(id) === DEFAULT_ID) throw new TenantError('The default tenant cannot be deleted.');
+  if (t.status !== 'pending_deletion') throw new TenantError('Deletion has not been scheduled for this tenant.');
+  if (due && t.deletion_scheduled_at > nowStr()) throw new TenantError(`Deletion is scheduled for ${t.deletion_scheduled_at} UTC.`);
+  const files = await tenancy.run(Number(id), () => db.prepare('SELECT entity_type, filename FROM attachments').all());
+  const counts = {};
+  await tenancy.runPlatform(() => db.transaction(async (tx) => {
+    const order = await purgeOrder(tx);
+    for (let pass = 0; pass < 2; pass++) {       // twice: a delete trigger may leave something behind in a table already done
+      for (const name of order) counts[name] = (counts[name] || 0) + (await tx.prepare(`DELETE FROM "${name}" WHERE tenant_id = ?`).run(Number(id))).changes;
+    }
+    for (const name of order) {
+      const left = Number((await tx.prepare(`SELECT COUNT(*) AS c FROM "${name}" WHERE tenant_id = ?`).get(Number(id))).c);
+      if (left) throw new Error(`${left} row${left === 1 ? '' : 's'} of the tenant remain in ${name}: nothing was deleted`);
+    }
+    await tx.prepare('DELETE FROM tenant_hosts WHERE tenant_id = ?').run(Number(id));
+    await tx.prepare('DELETE FROM tenants WHERE id = ?').run(Number(id));
+  }));
+  invalidate();
+  // The files go only after the rows are certainly gone (the other way round a failure would leave rows without their files).
+  const root = require('./tenantExport').UPLOAD_ROOT; let removed = 0;
+  for (const f of files) { try { fs.unlinkSync(path.join(root, String(f.entity_type), path.basename(String(f.filename)))); removed++; } catch { /* already gone */ } }
+  return { rows: Object.values(counts).reduce((a, b) => a + b, 0), tables: Object.keys(counts).length, files: removed, slug: t.slug, name: t.name };
+}
+// Every tenant whose time has come. One that fails is reported and tried again next time; the others carry on.
+async function purgeDue(onDone = () => {}) {
+  const due = (await load()).tenants.filter((t) => t.status === 'pending_deletion' && t.deletion_scheduled_at <= nowStr());
+  for (const t of due) {
+    try { onDone(t, await purge(t.id)); } catch (err) { console.error(`[Tenant ${t.slug}] deletion failed: ${err.message}`); }
+  }
+  return due.length;
 }
 
 module.exports = {
   DEFAULT_ID, TenantError, unknownPolicy, baseDomain, list, get, forHost, scope, pinned, enterRequestTenant, isActive,
-  forEachTenant, createTenant, createAdmin, setStatus, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
+  forEachTenant, createTenant, createAdmin, setStatus, graceDays, recordExport, deletionBlocker, scheduleDeletion, cancelDeletion, purge, purgeDue, purgeOrder, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
 };

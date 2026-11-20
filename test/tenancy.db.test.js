@@ -181,3 +181,17 @@ test('deleting a record deletes its custom values through the trigger, as the re
     assert.deepStrictEqual(ev, [{ tenant_id: 2 }], 'the event belongs to the tenant whose change it was');
   });
 });
+
+test('the tables of a tenant can always be put in an order that deletes them without breaking a foreign key (the guard for deleting a tenant)', { skip }, async () => {
+  const tenants = require('../src/tenants');
+  await withTenancy(async ({ admin }) => {
+    const tx = { prepare: (sql) => ({ all: async () => (await admin.raw(sql)).rows, get: async () => (await admin.raw(sql)).rows[0] }) };
+    const order = await tenants.purgeOrder(tx);
+    const tenantTables = (await admin.raw("SELECT relname AS t FROM pg_class WHERE relnamespace = current_schema()::regnamespace AND relkind = 'r' AND relrowsecurity")).rows.map((r) => r.t);
+    assert.deepStrictEqual([...order].sort(), [...tenantTables].sort(), 'every table of a tenant is in the order, once');
+    const pos = new Map(order.map((t, i) => [t, i]));
+    const fks = (await admin.raw("SELECT c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent FROM pg_constraint c WHERE c.contype = 'f' AND c.confdeltype IN ('a', 'r') AND c.conrelid <> c.confrelid")).rows;
+    for (const f of fks) if (pos.has(f.child) && pos.has(f.parent)) assert.ok(pos.get(f.child) < pos.get(f.parent), `${f.child} is deleted before ${f.parent}, which it points at`);
+    assert.ok(order.indexOf('users') > order.indexOf('incidents'), 'people go after the records that name them');
+  });
+});

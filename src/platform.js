@@ -126,7 +126,7 @@ const recentAudit = (limit = 50, tenantId = null) => P(() => (tenantId
 // ---- what the overview shows: every tenant with what it holds (counts only, never content)
 async function overview() {
   return P(async () => {
-    const tenants = await db.prepare(`SELECT t.id, t.slug, t.name, t.status, t.created_at,
+    const tenants = await db.prepare(`SELECT t.id, t.slug, t.name, t.status, t.created_at, t.status_changed_at, t.export_at, t.export_sha256, t.export_bytes, t.export_by, t.deletion_scheduled_at, t.deletion_requested_by,
         (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id) AS users,
         (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.active = 1) AS active_users,
         (SELECT COUNT(*) FROM incidents i WHERE i.tenant_id = t.id) AS incidents,

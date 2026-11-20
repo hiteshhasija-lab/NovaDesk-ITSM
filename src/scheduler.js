@@ -110,6 +110,12 @@ function startScheduler() {
   setInterval(slaSweep, SLA_SWEEP_MS);
   setTimeout(slaSweep, Math.min(20 * 1000, SLA_SWEEP_MS));
   // Retention: logs and messages older than the administrator's limits are removed (src/privacy/retention.js).
+  // Tenants whose deletion has come due are removed (src/tenants.js purge), and the platform's own log says so.
+  const platform = require('./platform');
+  const purgeEvery = (Number(process.env.TENANT_PURGE_POLL_S) || 60) * 1000;
+  const purging = () => tenants.purgeDue((t, r) => platform.audit(null, { username: 'scheduler' }, 'tenant.deleted', { tenant: t, detail: `${r.rows} rows in ${r.tables} tables, ${r.files} files removed` })).catch((e) => console.error('Tenant deletion failed:', e.message));
+  setInterval(purging, purgeEvery).unref();
+  setTimeout(purging, Math.min(40 * 1000, purgeEvery)).unref();
   const keepAll = each(retention.sweep, 'Retention sweep');
   const keep = () => keepAll().catch((e) => console.error('Retention sweep failed:', e.message));
   setInterval(keep, RETENTION_SWEEP_MS);

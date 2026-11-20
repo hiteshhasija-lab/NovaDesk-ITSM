@@ -10,7 +10,7 @@
       <tr class="<%= t.status === 'active' ? '' : 'text-muted' %>">
         <td><a href="/tenants/<%= t.id %>"><%= t.name %></a><% if (t.id === 1) { %> <span class="badge bg-secondary">default</span><% } %></td>
         <td><code><%= t.slug %></code></td>
-        <td><span class="badge bg-<%= t.status === 'active' ? 'success' : 'warning text-dark' %>"><%= t.status %></span></td>
+        <td><span class="badge bg-<%= t.status === 'active' ? 'success' : (t.status === 'pending_deletion' ? 'danger' : 'warning text-dark') %>"><%= t.status === 'pending_deletion' ? 'deleting' : t.status %></span></td>
         <td class="small"><%= t.hosts.length ? t.hosts.join(', ') : '—' %></td>
         <td class="text-end"><%= t.active_users %> / <%= t.users %></td><td class="text-end"><%= t.incidents %></td><td class="text-end"><%= t.requests %></td><td class="text-end"><%= t.changes %></td>
         <td class="small"><%= t.last_seen || '—' %></td>

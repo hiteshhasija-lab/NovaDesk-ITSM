@@ -9,6 +9,7 @@ const platform = require('../platform');
 const tenants = require('../tenants');
 const { checkPassword } = require('../passwords');
 const platformMfa = require('../platformMfa');
+const tenantExport = require('../tenantExport');
 
 function mount(env = process.env) {
   const cfg = platform.config(env);
@@ -158,7 +159,8 @@ function mount(env = process.env) {
       req.tenant = t; next();
     } catch (e) { next(e); }
   };
-  const show = async (req, res, extra = {}, status = 200) => page(res, 'platform/tenant', { title: req.tenant.name, tenant: req.tenant, admins: await tenants.adminsOf(req.tenant.id), history: await platform.recentAudit(30, req.tenant.id), isDefault: req.tenant.id === tenants.DEFAULT_ID, ...extra }, status);
+  const reauthWords = (req) => (req.mfa && req.mfa.enabled ? 'the current code from your authenticator app' : 'your password');
+  const show = async (req, res, extra = {}, status = 200) => page(res, 'platform/tenant', { title: req.tenant.name, tenant: req.tenant, admins: await tenants.adminsOf(req.tenant.id), history: await platform.recentAudit(30, req.tenant.id), isDefault: req.tenant.id === tenants.DEFAULT_ID, deleteBlocker: await tenants.deletionBlocker(req.tenant.id), graceDays: tenants.graceDays(env), reauthWords: reauthWords(req), ...extra }, status);
   router.get('/tenants/:id', needLogin, load, async (req, res, next) => { try { await show(req, res); } catch (e) { next(e); } });
   const act = (action, fn) => [needLogin, needToken, load, async (req, res, next) => {
     try {
@@ -183,6 +185,42 @@ function mount(env = process.env) {
     const user = await tenants.resetAdminPassword(req.tenant.id, req.body.username, req.body.password, req.operator.username);
     return `administrator ${user.username}`;
   }));
+
+  // ---- leaving the service: a final export, then deletion (after a grace period, and it can be called off)
+  // Both ask the operator to prove who they are again: the current code from the authenticator app, or the password where two-step verification is not on.
+  const reauth = async (req) => {
+    const typed = String(req.body.confirm || '');
+    if (req.mfa && req.mfa.enabled) { const r = await platformMfa.verify(req.operator.id, typed); if (!r.ok) await platformMfa.recordFailure(req.operator.id); return r.ok; }
+    return Boolean((await platform.login(req.operator.username, typed)).operator);
+  };
+  router.post('/tenants/:id/export', needLogin, needToken, load, async (req, res, next) => {
+    try {
+      if (req.tenant.id === tenants.DEFAULT_ID) return show(req, res, { error: 'The default tenant is the installation\'s own: there is nothing to export it to.' }, 400);
+      if (!(await reauth(req))) { await platform.audit(req, req.operator, 'tenant.export_refused', { tenant: req.tenant, detail: 'confirmation was wrong' }); return show(req, res, { error: `Enter ${reauthWords(req)} to download the export.` }, 400); }
+      res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${req.tenant.slug}-export-${new Date().toISOString().slice(0, 10)}.tar.gz"`, 'Cache-Control': 'no-store' });
+      try {
+        const r = await tenantExport.exportTenant(req.tenant, res, { operator: req.operator });
+        await tenants.recordExport(req.tenant.id, r, req.operator.username);
+        await platform.audit(req, req.operator, 'tenant.exported', { tenant: req.tenant, detail: `${r.tables} tables, ${r.rows} rows, ${r.files} files, ${r.bytes} bytes, sha256 ${r.sha256}${r.missing ? `, ${r.missing} attachment(s) missing on disk` : ''}` });
+      } catch (err) {
+        console.error(`[Platform] the export of ${req.tenant.slug} failed: ${err.message}`);
+        await platform.audit(req, req.operator, 'tenant.export_failed', { tenant: req.tenant, detail: String(err.message).slice(0, 200) });
+      }
+    } catch (e) { next(e); }
+  });
+  router.post('/tenants/:id/delete', needLogin, needToken, load, async (req, res, next) => {
+    try {
+      if (req.tenant.id === tenants.DEFAULT_ID) return show(req, res, { error: 'The default tenant cannot be deleted.' }, 400);
+      if (String(req.body.slug || '').trim() !== req.tenant.slug) return show(req, res, { error: `Type the tenant's short name (${req.tenant.slug}) exactly to confirm.` }, 400);
+      if (!(await reauth(req))) { await platform.audit(req, req.operator, 'tenant.delete_refused', { tenant: req.tenant, detail: 'confirmation was wrong' }); return show(req, res, { error: `Enter ${reauthWords(req)} to schedule the deletion.` }, 400); }
+      try {
+        const r = await tenants.scheduleDeletion(req.tenant.id, req.operator.username, env);
+        await platform.audit(req, req.operator, 'tenant.deletion_scheduled', { tenant: req.tenant, detail: `for ${r.when} UTC (${r.days} day${r.days === 1 ? '' : 's'} of grace); the export it rests on: sha256 ${req.tenant.export_sha256}` });
+        res.redirect(`/tenants/${req.tenant.id}?done=deletion_scheduled`);
+      } catch (err) { if (err instanceof tenants.TenantError) return show(req, res, { error: err.message }, 400); throw err; }
+    } catch (e) { next(e); }
+  });
+  router.post('/tenants/:id/delete/cancel', ...act('tenant.deletion_cancelled', async (req) => { await tenants.cancelDeletion(req.tenant.id); return `back to suspended (it was due ${req.tenant.deletion_scheduled_at} UTC)`; }));
 
   router.get('/audit', needLogin, async (req, res, next) => { try { page(res, 'platform/audit', { title: 'Audit log', entries: await platform.recentAudit(200) }); } catch (e) { next(e); } });
   router.use((req, res) => page(res, 'platform/message', { title: 'Not found', message: 'There is no such page.', operator: req.operator }, 404));

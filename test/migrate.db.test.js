@@ -538,3 +538,13 @@ test('0020: every tenant can have one row of inbound settings, off by default; a
     assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM inbound_settings')).rows[0].c), 2, 'rows with no token do not collide');
   });
 });
+
+test('0021: a tenant can be waiting to be deleted, and the columns that record the road to deletion start empty', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const t = (await knex.raw('SELECT status, status_changed_at, export_at, export_sha256, export_bytes, export_by, deletion_scheduled_at, deletion_requested_by FROM tenants WHERE id = 1')).rows[0];
+    assert.deepStrictEqual(Object.values(t), ['active', null, null, null, null, null, null, null], 'nothing recorded for the default tenant');
+    for (const status of ['suspended', 'pending_deletion', 'active']) await knex.raw('UPDATE tenants SET status = ? WHERE id = 1', [status]);
+    await assert.rejects(() => knex.raw("UPDATE tenants SET status = 'deleted' WHERE id = 1"), /check/i, 'only the three states exist');
+  });
+});
