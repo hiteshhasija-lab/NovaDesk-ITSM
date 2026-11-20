@@ -2,6 +2,7 @@
 // result, and only then does a second request carry it out. The file is kept in the imports table in between, and the
 // rows are judged again at that moment, so a preview that has gone stale cannot do more than the data allows now.
 'use strict';
+const limits = require('../limits');
 const { db, nowStr } = require('../db');
 const { audit } = require('../audit');
 const csv = require('./csv');
@@ -124,7 +125,7 @@ async function run(jobId, { req, actor }) {
         if (item.action === 'add') result.added++; else result.updated++;
       } catch (err) {
         result.failed++;
-        note({ ...item, action: 'failed', message: `Could not be saved: ${err.message}` });
+        note({ ...item, action: 'failed', message: `Could not be saved: ${limits.isLimitError(err) ? limits.sentence(err) : err.message}` });
         console.error(`[Import] ${kind.id} row ${item.row}: ${err.message}`);
       }
     }

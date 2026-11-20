@@ -42,7 +42,7 @@ function makeUpload(entityType) {
 function attachRoutes(router, entityType, { table, getEntity, canAccess, canManage, middleware = [] }) {
   const upload = makeUpload(entityType);
 
-  router.post('/:id/attachments', ...middleware, (req, res) => {
+  router.post('/:id/attachments', ...middleware, (req, res, next) => {
     upload.single('file')(req, res, async (err) => {
       // The file is already on disk when this runs: whatever refuses the request also removes it.
       const discard = () => { if (req.file) fs.unlink(req.file.path, () => {}); };
@@ -58,10 +58,15 @@ function attachRoutes(router, entityType, { table, getEntity, canAccess, canMana
       }
       if (!req.file) return res.redirect(`/${table}/${req.params.id}`);
 
-      await db.prepare(`
-        INSERT INTO attachments (entity_type, entity_id, filename, original_name, mime_type, size, uploaded_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(entityType, req.params.id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.session.user.id);
+      try {
+        await db.prepare(`
+          INSERT INTO attachments (entity_type, entity_id, filename, original_name, mime_type, size, uploaded_by)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(entityType, req.params.id, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, req.session.user.id);
+      } catch (e) {
+        fs.unlink(req.file.path, () => {});      // the file was already on disk: a refused row must not leave it behind
+        return next(e);                          // (the error handler says a usage limit plainly; thrown here it would be an unhandled rejection)
+      }
 
       await logActivity(entityType, req.params.id, req.session.user.id, `Attached file: ${req.file.originalname}`);
       res.redirect(`/${table}/${req.params.id}`);

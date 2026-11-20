@@ -34,7 +34,7 @@ const TTL_MS = 5000;
 const invalidate = () => { cache = null; };
 async function load() {
   if (cache && Date.now() - cache.at < TTL_MS) return cache;
-  const tenants = await tenancy.runPlatform(() => db.prepare('SELECT id, slug, name, status, created_at, status_changed_at, export_at, export_sha256, export_bytes, export_by, deletion_scheduled_at, deletion_requested_by FROM tenants ORDER BY id').all());
+  const tenants = await tenancy.runPlatform(() => db.prepare('SELECT id, slug, name, status, created_at, status_changed_at, export_at, export_sha256, export_bytes, export_by, deletion_scheduled_at, deletion_requested_by, limit_users, limit_records, limit_storage_mb FROM tenants ORDER BY id').all());
   const hosts = await tenancy.runPlatform(() => db.prepare('SELECT host, tenant_id FROM tenant_hosts').all());
   const byId = new Map(tenants.map((t) => [t.id, t]));
   cache = { at: Date.now(), tenants, byId, bySlug: new Map(tenants.map((t) => [t.slug, t])), byHost: new Map(hosts.map((h) => [h.host, byId.get(h.tenant_id)])) };
@@ -207,6 +207,13 @@ async function setStatus(id, status) {
   invalidate();
 }
 
+// The limits of a tenant (src/limits.js): people, stored records, megabytes of attached files; null = no limit. Lowering one below what is used
+// deletes nothing, it only stops new things.
+async function setLimits(id, { users = null, records = null, storageMb = null }) {
+  await tenancy.runPlatform(() => db.prepare('UPDATE tenants SET limit_users = ?, limit_records = ?, limit_storage_mb = ? WHERE id = ?').run(users, records, storageMb, Number(id)));
+  invalidate();
+}
+
 // ---- leaving the service: export, then delete (src/tenantExport.js; the platform console asks for each step)
 const graceDays = (env = process.env) => {
   const raw = env.TENANT_DELETE_GRACE_DAYS;
@@ -299,5 +306,5 @@ async function purgeDue(onDone = () => {}) {
 
 module.exports = {
   DEFAULT_ID, TenantError, unknownPolicy, baseDomain, list, get, forHost, scope, pinned, enterRequestTenant, isActive,
-  forEachTenant, createTenant, createAdmin, setStatus, graceDays, recordExport, deletionBlocker, scheduleDeletion, cancelDeletion, purge, purgeDue, purgeOrder, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
+  forEachTenant, createTenant, createAdmin, setStatus, setLimits, graceDays, recordExport, deletionBlocker, scheduleDeletion, cancelDeletion, purge, purgeDue, purgeOrder, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
 };

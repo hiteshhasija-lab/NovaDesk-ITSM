@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { db, logActivity, nowStr } = require('../db');
 const { inboundConfig, mailConfig } = require('../settings');
+const limits = require('../limits');
 const { audit } = require('../audit');
 const { MAX_FILE_SIZE, BLOCKED_EXTENSIONS, uploadRoot } = require('../collab');
 const incidentActions = require('../incidentActions');
@@ -83,8 +84,14 @@ async function saveAttachments(incidentId, user, attachments) {
     if (kept >= MAX_FILES) { skipped.push(`${name} (more than ${MAX_FILES} files)`); continue; }
     const stored = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${/^\.[a-z0-9]{1,10}$/.test(ext) ? ext : ''}`;
     fs.writeFileSync(path.join(dir, stored), a.content, { flag: 'wx' });
-    await db.prepare('INSERT INTO attachments (entity_type, entity_id, filename, original_name, mime_type, size, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run('incident', incidentId, stored, name, String(a.contentType).slice(0, 100), a.size, user.id);
+    try {
+      await db.prepare('INSERT INTO attachments (entity_type, entity_id, filename, original_name, mime_type, size, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run('incident', incidentId, stored, name, String(a.contentType).slice(0, 100), a.size, user.id);
+    } catch (err) {
+      fs.unlink(path.join(dir, stored), () => {});                // the file is already on disk: a refused row must not leave it behind
+      if (limits.isLimitError(err)) { skipped.push(`${name} (no room left: ${limits.reason(err)})`); continue; }
+      throw err;
+    }
     await logActivity('incident', incidentId, user.id, `Attached file: ${name} (from the email)`);
     kept++;
   }
@@ -175,6 +182,8 @@ async function processMessage(msg, { source, env = process.env } = {}) {
     const saved = await saveAttachments(created.id, sender, msg.attachments);
     return await finish(claimId, { outcome: 'ticket', reason: [note, `${created.number}`, saved.skipped.length ? `${saved.skipped.length} file(s) not kept` : null].filter(Boolean).join('; '), record: created.id, userId: sender.id });
   } catch (err) {
+    // The workspace is full (a usage limit): the message is turned away and said so, not tried again for ever.
+    if (limits.isLimitError(err)) return finish(claimId, { outcome: 'rejected', reason: limits.reason(err) });
     // Nothing is half-recorded as done: the claim is released, so the message is tried again at the next look.
     await db.prepare("DELETE FROM inbound_emails WHERE id = ? AND outcome = 'processing'").run(claimId).catch(() => {});
     throw err;

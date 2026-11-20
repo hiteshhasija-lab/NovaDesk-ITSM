@@ -49,6 +49,7 @@ const customFieldRoutes = require('./routes/customFields');
 const brandingRoutes = require('./routes/branding');
 const ssoSettingsRoutes = require('./routes/ssoSettings');
 const mailSettingsRoutes = require('./routes/mailSettings');
+const usageRoutes = require('./routes/usage');
 const branding = require('./branding');
 const tenancy = require('./tenancy');
 const tenants = require('./tenants');
@@ -178,6 +179,7 @@ app.use('/settings/fields', customFieldRoutes);
 app.use('/settings/branding', brandingRoutes);
 app.use('/settings/sso', ssoSettingsRoutes);
 app.use('/settings/mail', mailSettingsRoutes);
+app.use('/settings/usage', usageRoutes);
 app.use('/search', searchRoutes);
 app.use('/profile/mfa', mfaRoutes);
 app.use('/profile/api-keys', apiKeyRoutes);
@@ -197,6 +199,8 @@ app.use((req, res) => {
 // in the log: a body that is too large, malformed input, an id that is not a number.
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode;
+  // A usage limit of the workspace (src/limits.js, enforced by the database): said plainly, not as a server error.
+  if (require('./limits').isLimitError(err)) return res.status(403).render('error', { title: 'Limit reached', message: require('./limits').sentence(err) });
   // Postgres "invalid input syntax" / "out of range": a non-numeric or absurd id in the URL.
   if (err.code === '22P02' || err.code === '22003') return res.status(404).render('error', { title: 'Not Found', message: 'Page not found.' });
   if (status >= 400 && status < 500) {

@@ -538,6 +538,13 @@ nothing changes for a single organisation.
   transaction, in an order that never breaks a link, checked to leave none behind, or nothing is deleted), its host names, and its attached files; the platform's
   own log keeps the history. The default tenant can be neither exported nor deleted. Files still on disk are read when the export is made, and each table is held in
   memory while it is written, so a very large tenant needs memory for its largest table. Checked by `node scripts/tenant-offboarding-check.js` (in CI).
+- **Usage limits for each tenant.** In the platform console, a tenant's page has a *Limits and usage* card: a ceiling on **active people**, on **records**
+  (incidents, requests, changes, problems, configuration items and articles together) and on **attached files** (MB). Empty means no limit, `0` allows nothing new.
+  The limits are enforced **by the database** (a trigger on each table, with a lock so that simultaneous requests cannot slip past), so every way in is held to
+  them: the web pages, the REST API (`403`, code `limit_reached`), SCIM, CSV import, inbound email (the mail is turned away and said so, not retried for ever) and
+  attachments. Lowering a limit below what a tenant already has deletes nothing; it only stops anything new. People who are switched off do not count, and
+  switching someone back on needs a free place. A tenant's administrator sees what is used and allowed, read-only, under *Plan and usage* in the settings; every change
+  is in the platform's audit log. Checked by `test/limits.test.js`, the 0022 case in `test/migrate.db.test.js` and `node scripts/tenant-limits-check.js` (in CI).
 - **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
   as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
   reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a

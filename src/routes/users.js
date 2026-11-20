@@ -1,3 +1,4 @@
+const limits = require('../limits');
 const { db } = require('../db');
 const mfa = require('../mfa');
 const apiKeys = require('../apiKeys');
@@ -48,6 +49,8 @@ router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
     await audit(req, req.session.user, 'user.created', { targetType: 'user', targetId: created && created.id, targetName: b.username, detail: `role ${b.role || 'user'}` });
     res.redirect('/users');
   } catch (e) {
+    // A usage limit (src/limits.js) is said as it is, not hidden behind "invalid data".
+    if (limits.isLimitError(e)) { res.status(403); return again(limits.sentence(e)); }
     again('Username already exists or invalid data.');
   }
 });
@@ -104,6 +107,7 @@ router.post('/:id/update', requireAuth, requireRole('admin'), async (req, res) =
       UPDATE users SET username=?, full_name=?, email=?, role=?, department=?, active=? WHERE id=?
     `).run(b.username, b.full_name, b.email || null, b.role, b.department || null, b.active === 'on' ? 1 : 0, req.params.id);
   } catch (e) {
+    if (limits.isLimitError(e)) { res.status(403); return again(limits.sentence(e)); }      // switching someone on again needs a free place
     return again('Username already exists or invalid data.');
   }
   await saveGroups(user.id, b.groups);

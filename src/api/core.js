@@ -7,6 +7,7 @@ const express = require('express');
 const { db, nowStr } = require('../db');
 const apiKeys = require('../apiKeys');
 const tenants = require('../tenants');
+const tenantLimits = require('../limits');
 const { createWindowCounter } = require('../rateLimit');
 const { rateLimits } = require('../settings');
 
@@ -210,6 +211,7 @@ function createApi() {
         else if (e.type === 'entity.too.large') e = new ApiError(413, 'payload_too_large', 'The body is too large (the limit is 256 KB).');
         else if (e.type === 'charset.unsupported' || e.type === 'encoding.unsupported') e = new ApiError(415, 'unsupported_media_type', 'Send the body as UTF-8 JSON.');
         else if (e.code === '22P02' || e.code === '22003') e = notFound();
+        else if (tenantLimits.isLimitError(e)) e = new ApiError(403, 'limit_reached', tenantLimits.sentence(e));
         else { console.error('[API] unexpected failure:', err); e = new ApiError(500, 'server_error', 'Something went wrong on our side.'); }
       }
       const body = { error: { code: e.code, message: e.message } };

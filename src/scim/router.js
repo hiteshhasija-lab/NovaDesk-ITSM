@@ -7,6 +7,7 @@ const { createWindowCounter } = require('../rateLimit');
 const { rateLimits } = require('../settings');
 const tokens = require('./tokens');
 const tenants = require('../tenants');
+const tenantLimits = require('../limits');
 const service = require('./service');
 const discovery = require('./discovery');
 const R = require('./resource');
@@ -56,6 +57,7 @@ function createScimRouter(env = process.env) {
   const handle = (fn) => async (req, res) => {
     try { await fn(req, res); } catch (err) {
       if (err instanceof E.ScimError) return fail(res, err);
+      if (tenantLimits.isLimitError(err)) return fail(res, new E.ScimError(403, null, tenantLimits.sentence(err)));
       console.error(`[SCIM] ${req.method} ${req.path} failed:`, err);
       return fail(res, new E.ScimError(500, null, 'The server could not do that. Try again, or ask an administrator.'));
     }

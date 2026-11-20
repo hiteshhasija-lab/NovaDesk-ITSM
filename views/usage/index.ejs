@@ -1,0 +1,20 @@
+<%- include('../partials/head') %>
+<%- include('../partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 800px;">
+  <h4 class="mb-2"><i class="bi bi-speedometer text-primary me-1"></i>Plan and usage</h4>
+  <p class="text-muted small">What this workspace uses, and what it is allowed. The limits are set by the people who run <%= brand.name %> for you; ask them to change one. Nothing is ever deleted because a limit was reached: new things are refused until there is room.</p>
+  <div class="card"><div class="card-body">
+    <% rows.forEach(function (r) { %>
+    <div class="mb-4">
+      <div class="d-flex justify-content-between align-items-baseline"><strong><%= r.label %></strong>
+        <span><%= r.used %><%= r.unit %> <span class="text-muted">of</span> <%= r.limit === null ? 'no limit' : r.limit + r.unit %></span></div>
+      <% if (r.percent !== null) { %>
+      <div class="progress mt-1" style="height: 10px;" role="progressbar" aria-label="<%= r.label %> used" aria-valuenow="<%= r.percent %>" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar <%= r.percent >= 100 ? 'bg-danger' : (r.percent >= 90 ? 'bg-warning' : '') %>" style="width: <%= r.percent %>%"></div></div>
+      <% if (r.percent >= 100) { %><div class="small text-danger mt-1">The limit is reached: nothing new of this kind can be added.</div><% } else if (r.percent >= 90) { %><div class="small text-warning mt-1">Nearly full.</div><% } %>
+      <% } %>
+      <div class="small text-muted mt-1"><%= r.detail %></div>
+    </div>
+    <% }) %>
+  </div></div>
+</div>
+<%- include('../partials/foot') %>

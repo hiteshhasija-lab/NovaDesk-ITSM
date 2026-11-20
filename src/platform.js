@@ -126,12 +126,14 @@ const recentAudit = (limit = 50, tenantId = null) => P(() => (tenantId
 // ---- what the overview shows: every tenant with what it holds (counts only, never content)
 async function overview() {
   return P(async () => {
-    const tenants = await db.prepare(`SELECT t.id, t.slug, t.name, t.status, t.created_at, t.status_changed_at, t.export_at, t.export_sha256, t.export_bytes, t.export_by, t.deletion_scheduled_at, t.deletion_requested_by,
+    const tenants = await db.prepare(`SELECT t.id, t.slug, t.name, t.status, t.created_at, t.status_changed_at, t.export_at, t.export_sha256, t.export_bytes, t.export_by, t.deletion_scheduled_at, t.deletion_requested_by, t.limit_users, t.limit_records, t.limit_storage_mb,
         (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id) AS users,
         (SELECT COUNT(*) FROM users u WHERE u.tenant_id = t.id AND u.active = 1) AS active_users,
         (SELECT COUNT(*) FROM incidents i WHERE i.tenant_id = t.id) AS incidents,
         (SELECT COUNT(*) FROM service_requests r WHERE r.tenant_id = t.id) AS requests,
         (SELECT COUNT(*) FROM changes c WHERE c.tenant_id = t.id) AS changes,
+        (SELECT COUNT(*) FROM problems p WHERE p.tenant_id = t.id) AS problems, (SELECT COUNT(*) FROM cmdb_ci ci WHERE ci.tenant_id = t.id) AS cis, (SELECT COUNT(*) FROM kb_articles k WHERE k.tenant_id = t.id) AS articles,
+        (SELECT COALESCE(SUM(a.size), 0) FROM attachments a WHERE a.tenant_id = t.id) AS storage_bytes,
         (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.tenant_id = t.id) AS last_seen
       FROM tenants t ORDER BY t.id`).all();
     const hosts = await db.prepare('SELECT host, tenant_id FROM tenant_hosts ORDER BY host').all();

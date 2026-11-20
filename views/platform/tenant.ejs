@@ -26,6 +26,17 @@
     <% } %>
   </div></div>
 
+  <div class="card mb-3"><div class="card-body"><h6 class="section-title">Limits and usage</h6>
+    <p class="small text-muted">What this tenant may hold. Empty means no limit. A limit is enforced by the database for every way of adding something (pages, API, SCIM, single sign-on, inbound mail, imports). Lowering one below what is used deletes nothing: it only stops new things.</p>
+    <form method="POST" action="/tenants/<%= tenant.id %>/limits" class="row g-3">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <div class="col-md-4"><label class="form-label" for="limit_users">Active people</label><input class="form-control" id="limit_users" name="limit_users" inputmode="numeric" value="<%= tenant.limit_users === null ? '' : tenant.limit_users %>" placeholder="no limit"><div class="form-text">used: <%= usage.users.used %></div></div>
+      <div class="col-md-4"><label class="form-label" for="limit_records">Records</label><input class="form-control" id="limit_records" name="limit_records" inputmode="numeric" value="<%= tenant.limit_records === null ? '' : tenant.limit_records %>" placeholder="no limit"><div class="form-text">used: <%= usage.records.used %> (incidents, requests, changes, problems, CIs, articles)</div></div>
+      <div class="col-md-4"><label class="form-label" for="limit_storage_mb">Attached files (MB)</label><input class="form-control" id="limit_storage_mb" name="limit_storage_mb" inputmode="numeric" value="<%= tenant.limit_storage_mb === null ? '' : tenant.limit_storage_mb %>" placeholder="no limit"><div class="form-text">used: <%= usage.storage.usedMb %> MB</div></div>
+      <div class="col-12"><button class="btn btn-outline-primary" type="submit">Save the limits</button></div>
+    </form>
+  </div></div>
+
   <div class="card mb-3"><div class="card-body"><h6 class="section-title">Administrators</h6>
     <table class="table table-sm"><thead class="table-light"><tr><th>Username</th><th>Name</th><th>Email</th><th>Active</th></tr></thead><tbody>
     <% admins.forEach(function (a) { %><tr><td><code><%= a.username %></code></td><td><%= a.full_name %></td><td><%= a.email || '—' %></td><td><%= a.active ? 'yes' : 'no' %></td></tr><% }) %>

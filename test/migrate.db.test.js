@@ -548,3 +548,60 @@ test('0021: a tenant can be waiting to be deleted, and the columns that record t
     await assert.rejects(() => knex.raw("UPDATE tenants SET status = 'deleted' WHERE id = 1"), /check/i, 'only the three states exist');
   });
 });
+
+test('0022: limits are enforced by the database: people, records and files, per tenant, for every way in, with nothing lost when one is lowered', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    const user = (n, t = 1, active = 1) => knex.raw("INSERT INTO users (username, password_hash, full_name, role, active, tenant_id) VALUES (?, 'x', ?, 'user', ?, ?) RETURNING id", [n, n, active, t]);
+    const refused = (p, kind, n) => assert.rejects(() => p, (e) => e.code === 'ND001' && new RegExp(`nd_limit:${kind}:${n}`).test(e.message), `refused with ND001 for ${kind}`);
+    // people
+    const t = (await knex.raw("SELECT limit_users, limit_records, limit_storage_mb FROM tenants WHERE id = 1")).rows[0];
+    assert.deepStrictEqual(t, { limit_users: null, limit_records: null, limit_storage_mb: null }, 'no limits to begin with');
+    for (let i = 0; i < 5; i++) await user(`free${i}`);
+    await knex.raw('UPDATE tenants SET limit_users = 5 WHERE id = 1');
+    await refused(user('sixth'), 'users', 5);
+    await user('off-one', 1, 0);                                                               // a switched-off person takes no place
+    const a = (await knex.raw("SELECT id FROM users WHERE username = 'free0'")).rows[0].id;
+    await knex.raw('UPDATE users SET active = 0 WHERE id = ?', [a]);
+    await user('takes-the-place');                                                              // switching one off frees a place
+    await refused(knex.raw('UPDATE users SET active = 1 WHERE id = ?', [a]), 'users', 5);       // and switching them back on needs one
+    await knex.raw("UPDATE users SET full_name = 'Renamed' WHERE username = 'free1'");         // changing someone who already counts is fine
+    await knex.raw('UPDATE tenants SET limit_users = 2 WHERE id = 1');
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM users WHERE tenant_id = 1 AND active = 1')).rows[0].c), 5, 'lowering a limit below the use deletes nothing');
+    await refused(user('over'), 'users', 2);
+    await user('other-tenant', 2);                                                              // another tenant has its own count and limit
+    await knex.raw('UPDATE tenants SET limit_users = 0 WHERE id = 2');
+    await refused(user('nobody-allowed', 2), 'users', 0);
+    await knex.raw('UPDATE tenants SET limit_users = NULL WHERE id = 1');
+    await user('unlimited-again');
+    // records: every kind counts toward one total
+    const caller = (await knex.raw("SELECT id FROM users WHERE tenant_id = 1 LIMIT 1")).rows[0].id;
+    await knex.raw('UPDATE tenants SET limit_records = 3 WHERE id = 1');
+    await knex.raw("INSERT INTO incidents (number, short_description, caller_id) VALUES ('INC1', 'a', ?)", [caller]);
+    await knex.raw("INSERT INTO problems (number, short_description) VALUES ('PRB1', 'b')");
+    await knex.raw("INSERT INTO cmdb_ci (ci_number, name, ci_type) VALUES ('CI1', 'c', 'server')");
+    await refused(knex.raw("INSERT INTO incidents (number, short_description, caller_id) VALUES ('INC2', 'd', ?)", [caller]), 'records', 3);
+    await refused(knex.raw("INSERT INTO problems (number, short_description) VALUES ('PRB2', 'e')"), 'records', 3);
+    await refused(knex.raw("INSERT INTO cmdb_ci (ci_number, name, ci_type) VALUES ('CI2', 'f', 'server')"), 'records', 3);
+    await knex.raw("UPDATE incidents SET short_description = 'changed' WHERE number = 'INC1'");  // changing one is not adding one
+    await knex.raw("DELETE FROM problems WHERE number = 'PRB1'");
+    await knex.raw("INSERT INTO problems (number, short_description) VALUES ('PRB3', 'g')");    // deleting makes room
+    // files
+    await knex.raw('UPDATE tenants SET limit_storage_mb = 1 WHERE id = 1');
+    const att = (name, size, tid = 1) => knex.raw("INSERT INTO attachments (entity_type, entity_id, filename, original_name, mime_type, size, uploaded_by, tenant_id) VALUES ('incident', 1, ?, ?, 'text/plain', ?, ?, ?)", [name, name, size, caller, tid]);
+    await att('one', 600000);
+    await refused(att('two', 600000), 'storage', 1);
+    await att('small', 100000);
+    await refused(att('exactly-over', 1048576 - 700000 + 1), 'storage', 1);
+    await att('exactly-fits', 1048576 - 700000);
+    await att('elsewhere', 5000000, 2);                                                           // another tenant's files do not count here
+    // a race for the last place: eight inserts at once, one place
+    await knex.raw('UPDATE tenants SET limit_users = 1, limit_records = NULL WHERE id = 2');
+    await knex.raw("DELETE FROM users WHERE tenant_id = 2");
+    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, i) => user(`racer${i}`, 2)));
+    assert.strictEqual(results.filter((r) => r.status === 'fulfilled').length, 1, 'exactly one of eight got the place');
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM users WHERE tenant_id = 2')).rows[0].c), 1);
+    assert.ok(results.filter((r) => r.status === 'rejected').every((r) => r.reason.code === 'ND001'));
+  });
+});

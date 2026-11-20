@@ -2,6 +2,7 @@ const { db } = require('../db');
 const createAsyncRouter = require('../asyncRouter');
 const mfa = require('../mfa');
 const sso = require('../oidc');
+const limits = require('../limits');
 const { checkPassword, hashPassword, verifyPassword, verifyAgainstNobody } = require('../passwords');
 const lockout = require('../lockout');
 const { audit } = require('../audit');
@@ -148,6 +149,7 @@ router.get('/auth/oidc/callback', async (req, res) => {
     res.redirect(dest);
   } catch (err) {
     if (err instanceof sso.SsoError) return ssoFailure(res, 401, err.message);
+    if (limits.isLimitError(err)) return ssoFailure(res, 403, limits.sentence(err));      // a new account would exceed the workspace's limit of people
     console.error('[SSO] sign-in failed:', err);
     ssoFailure(res, 500, 'Sign-in failed. Try again, or ask an administrator.');
   }
@@ -179,6 +181,7 @@ router.post('/register', async (req, res) => {
       VALUES (?, ?, ?, ?, 'user', ?)
     `).run(b.username, await hashPassword(b.password), b.full_name, b.email || null, b.department || null);
   } catch (e) {
+    if (limits.isLimitError(e)) return res.status(403).render('register', { error: limits.sentence(e), title: 'Create Account', form });
     return res.render('register', { error: 'That username is already taken.', title: 'Create Account', form });
   }
 
