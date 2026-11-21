@@ -116,7 +116,8 @@ function startScheduler() {
   const purging = () => tenants.purgeDue((t, r) => platform.audit(null, { username: 'scheduler' }, 'tenant.deleted', { tenant: t, detail: `${r.rows} rows in ${r.tables} tables, ${r.files} files removed` })).catch((e) => console.error('Tenant deletion failed:', e.message));
   setInterval(purging, purgeEvery).unref();
   setTimeout(purging, Math.min(40 * 1000, purgeEvery)).unref();
-  const keepAll = each(retention.sweep, 'Retention sweep');
+  const inactiveAccounts = require('./privacy/inactive');
+  const keepAll = each(async () => { await retention.sweep(); await inactiveAccounts.sweep(); }, 'Retention sweep');
   const keep = () => keepAll().catch((e) => console.error('Retention sweep failed:', e.message));
   setInterval(keep, RETENTION_SWEEP_MS);
   setTimeout(keep, Math.min(5 * 60 * 1000, RETENTION_SWEEP_MS));

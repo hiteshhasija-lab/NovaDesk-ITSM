@@ -90,3 +90,13 @@ test('the export sections are unique, and none of them ever selects a secret', (
     assert.strictEqual((s.from.match(/\?/g) || []).length, s.bind({ id: 1, email: 'a@b.test' }).length, `${s.id}: placeholders match bindings`);
   }
 });
+
+test('inactive accounts: the rule is off when empty, in range otherwise, and the day it happens is the day switched off plus the rule', () => {
+  const inactive = require('../src/privacy/inactive');
+  assert.deepStrictEqual(inactive.parseDays(''), { days: null });
+  assert.deepStrictEqual(inactive.parseDays(' Never '), { days: null });
+  assert.deepStrictEqual(inactive.parseDays('90'), { days: 90 });
+  for (const bad of ['29', '3651', '-5', '1.5', 'ninety', '90 days']) assert.ok(inactive.parseDays(bad).error, `${bad} is refused`);
+  assert.strictEqual(inactive.addDays('2026-11-20 23:59:59', 30), '2026-12-20');
+  assert.strictEqual(inactive.addDays('2026-01-31 00:00:00', 30), '2026-03-02');
+});

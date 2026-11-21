@@ -605,3 +605,35 @@ test('0022: limits are enforced by the database: people, records and files, per 
     assert.ok(results.filter((r) => r.status === 'rejected').every((r) => r.reason.code === 'ND001'));
   });
 });
+
+test('0023: the day a person is switched off is kept by the database for every way of doing it, and switching on clears it', { skip }, async () => {
+  // People who are off when the migration runs start their clock then; nobody is dated before it.
+  await withSchema(async (knex) => {
+    const dir = DEFAULT_DIR;
+    const before = fs.readdirSync(dir).filter((f) => f.endsWith('.sql') && f < '0023');
+    const only = dirWith(Object.fromEntries(before.map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')])));
+    await migrate(knex, { dir: only });
+    await knex.raw("INSERT INTO users (username, password_hash, full_name, role, active) VALUES ('was-on', 'x', 'On', 'user', 1), ('was-off', 'x', 'Off', 'user', 0)");
+    await migrate(knex);
+    const row = async (n) => (await knex.raw('SELECT active, deactivated_at FROM users WHERE username = ?', [n])).rows[0];
+    assert.strictEqual((await row('was-on')).deactivated_at, null, 'a person who is on has no date');
+    assert.match((await row('was-off')).deactivated_at, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/, 'a person already off starts their clock at the upgrade');
+    // switching off, from anywhere, sets it; the same SQL the Users page, SCIM and imports end in
+    await knex.raw("UPDATE users SET active = 0 WHERE username = 'was-on'");
+    const first = (await row('was-on')).deactivated_at;
+    assert.ok(first, 'switching off dates it');
+    await knex.raw("UPDATE users SET active = 0, full_name = 'Renamed' WHERE username = 'was-on'");
+    assert.strictEqual((await row('was-on')).deactivated_at, first, 'saving an account that is already off does not restart the count');
+    await knex.raw("UPDATE users SET full_name = 'Other' WHERE username = 'was-on'");
+    assert.strictEqual((await row('was-on')).deactivated_at, first, 'an unrelated change leaves it');
+    await knex.raw("UPDATE users SET active = 1 WHERE username = 'was-on'");
+    assert.strictEqual((await row('was-on')).deactivated_at, null, 'switching on clears it');
+    await knex.raw("UPDATE users SET active = 0 WHERE username = 'was-on'");
+    assert.ok((await row('was-on')).deactivated_at, 'and switching off again starts afresh');
+    // an account made already off (an import of an inactive person) is dated at once
+    await knex.raw("INSERT INTO users (username, password_hash, full_name, role, active) VALUES ('born-off', 'x', 'Born', 'user', 0)");
+    assert.ok((await row('born-off')).deactivated_at, 'made off, dated');
+    await knex.raw("INSERT INTO users (username, password_hash, full_name, role, active) VALUES ('born-on', 'x', 'Born', 'user', 1)");
+    assert.strictEqual((await row('born-on')).deactivated_at, null);
+  });
+});

@@ -57,6 +57,47 @@
     </form>
   </div></div>
 
+  <div class="card mb-3"><div class="card-body" id="inactive">
+    <h6 class="section-title">Accounts that stay switched off</h6>
+    <p class="small text-muted">An account that has been switched off (inactive on the Users page) keeps a person's name and details for as long as it exists. Set a number of days and <%= brand.name %> anonymises accounts that have been off for longer than that, once a day: the same as <em>Anonymise</em> on the person's page, with their comments and files kept. It cannot be undone. Accounts that are switched on are never touched, and switching an account on again starts the count afresh. Off until you set it; the shortest is <%= min %> days.</p>
+    <form method="POST" action="/privacy/inactive" class="row g-2 align-items-end mb-2">
+      <div class="col-sm-4 col-md-3">
+        <label class="form-label small" for="inactive_days">Days switched off (empty = never)</label>
+        <input class="form-control form-control-sm<%= inactiveError ? ' is-invalid' : '' %>" id="inactive_days" name="inactive_days" value="<%= inactiveValue !== null ? inactiveValue : (inactiveRule.days || '') %>" inputmode="numeric" maxlength="4" placeholder="never">
+        <% if (inactiveError) { %><div class="invalid-feedback"><%= inactiveError %></div><% } %>
+      </div>
+      <div class="col-auto"><button type="submit" class="btn btn-sm btn-primary">Save</button></div>
+    </form>
+    <% if (inactiveRule.days) { %>
+      <p class="small text-muted mb-2">Last run: <% if (inactiveRule.lastRunAt) { %><%- h.fmtDate(inactiveRule.lastRunAt) %>, <%= inactiveRule.lastCount === null ? '—' : inactiveRule.lastCount %> anonymised<% } else { %>never<% } %>.
+        <strong><%= inactiveWaiting.due %></strong> account<%= inactiveWaiting.due === 1 ? ' is' : 's are' %> past the limit now.</p>
+    <% } %>
+    <% if (!inactiveWaiting.people.length) { %>
+      <p class="small text-muted mb-0">Nobody is switched off at the moment.</p>
+    <% } else { %>
+      <div class="table-responsive"><table class="table table-sm align-middle small mb-2">
+        <thead class="table-light"><tr><th>Person</th><th>Switched off</th><th><%= inactiveRule.days ? 'Anonymised on' : '' %></th></tr></thead>
+        <tbody>
+        <% inactiveWaiting.people.forEach(p => { %>
+          <tr>
+            <td><a href="/privacy/person/<%= p.id %>"><%= p.full_name %></a> <span class="text-muted"><%= p.username %></span></td>
+            <td><%- h.fmtDate(p.deactivated_at) %></td>
+            <td><% if (inactiveRule.days) { %><%= p.overdue ? 'next run' : p.on %><% } %></td>
+          </tr>
+        <% }) %>
+        </tbody>
+      </table></div>
+      <% if (inactiveWaiting.total > inactiveWaiting.people.length) { %><p class="small text-muted">…and <%= inactiveWaiting.total - inactiveWaiting.people.length %> more.</p><% } %>
+      <% if (inactiveRule.days) { %><p class="small text-muted mb-2">To keep someone, switch their account on again before the day (Users, then the person).</p><% } %>
+    <% } %>
+    <% if (inactiveRule.days) { %>
+    <form method="POST" action="/privacy/inactive/run" class="mt-2" data-confirm="Anonymise every account that is past the limit now? This cannot be undone.">
+      <button type="submit" class="btn btn-sm btn-outline-danger">Anonymise now</button>
+      <span class="small text-muted ms-2">Does today's run straight away instead of waiting for it.</span>
+    </form>
+    <% } %>
+  </div></div>
+
   <div class="card"><div class="card-body">
     <h6 class="section-title">Recent privacy actions</h6>
     <% if (!recent.length) { %><p class="small text-muted mb-0">Nothing yet.</p><% } else { %>
