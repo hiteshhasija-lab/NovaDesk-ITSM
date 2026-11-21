@@ -1,0 +1,10 @@
+<%- include('../partials/head') %>
+<div class="login-wrapper<%= brand.loginClass %>"<%- brand.loginStyle %>>
+  <div class="login-content">
+    <div class="card login-card">
+    <div class="card-body px-4 px-md-5 py-3">
+      <div class="text-center mb-2">
+        <div class="login-logo-mark mx-auto"><img src="<%= brand.iconUrl %>" alt=""></div>
+        <div class="login-welcome"><%= heading %></div>
+        <div class="login-title<%= brand.name.length > 14 ? ' login-title-mid' : '' %>"><%= brand.name %></div>
+      </div>

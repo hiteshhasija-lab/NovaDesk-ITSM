@@ -216,6 +216,10 @@ jobs:
         run: |
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/limit-warnings-check.js
+      - name: Self-service sign-up (the page only on its own host, the emailed link, the workspace and its administrator, every abuse limit, approval, expiry)
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/signup-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

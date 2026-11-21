@@ -651,3 +651,25 @@ test('0024: a warning is remembered once for each limit of each tenant, and one 
     assert.strictEqual((await knex.raw("SELECT tenant_id FROM limit_warnings WHERE kind = 'storage'")).rows[0].tenant_id, 1, 'a row made without naming a tenant is the statement\'s own tenant');
   });
 });
+
+test('0025: a sign-up request keeps only hashes, has one row for each link, and a deleted tenant leaves no request behind', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    const add = (token, extra = '') => knex.raw(`INSERT INTO signups (token_hash, slug, org_name, admin_username, admin_name, admin_email, expires_at${extra ? ', ' + extra.split('=')[0] : ''}) VALUES (?, 'acme', 'Acme', 'ann', 'Ann', 'ann@acme.example', '2099-01-01 00:00:00'${extra ? ', ' + extra.split('=')[1] : ''}) RETURNING id, status`, [token]);
+    const first = (await add('h1')).rows[0];
+    assert.strictEqual(first.status, 'pending', 'a new request waits');
+    await assert.rejects(() => add('h1'), (e) => e.code === '23505', 'one row for each link');
+    await assert.rejects(() => add('h2', "status='done'"), (e) => e.code === '23514', 'only the known states');
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    await knex.raw('UPDATE signups SET tenant_id = 2 WHERE id = ?', [first.id]);
+    await knex.raw('DELETE FROM tenants WHERE id = 2');
+    assert.strictEqual((await knex.raw('SELECT tenant_id FROM signups WHERE id = ?', [first.id])).rows[0].tenant_id, null, 'a request outlives its tenant with no link to it (src/tenants.js purge removes the row itself)');
+    await knex.raw("INSERT INTO platform_settings (key, value) VALUES ('signup_paused', 'true')");
+    await assert.rejects(() => knex.raw("INSERT INTO platform_settings (key, value) VALUES ('signup_paused', 'false')"), (e) => e.code === '23505');
+    // the application's restricted role can read and write both (they are shared on purpose)
+    await knex.raw('SET ROLE novadesk_app');
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM signups')).rows[0].c), 1);
+    await knex.raw("UPDATE platform_settings SET value = 'false'");
+    await knex.raw('RESET ROLE');
+  });
+});

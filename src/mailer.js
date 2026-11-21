@@ -49,8 +49,8 @@ async function mailSummary() {
   return { mode: c.mode, host: c.host || null, port: c.port || null, from: c.from || null, source: c.source === 'tenant' ? 'tenant' : 'server' };
 }
 
-async function deliver({ to, subject, html }) {
-  const cfg = await effectiveConfig();
+async function deliver({ to, subject, html }, forcedConfig = null) {
+  const cfg = forcedConfig || await effectiveConfig();
   if (cfg.mode === 'none') {
     return { status: 'not_configured', error: 'Email is not set up on this server (SMTP_HOST is empty), so nothing was sent.', previewUrl: null };
   }
@@ -80,6 +80,14 @@ async function sendNotificationDetailed({ to, toName, subject, html, relatedType
   return result;
 }
 
+// A message from the installation itself, to someone who is not (yet) in any tenant: the link that confirms a sign-up, the welcome that follows.
+// Always the server's own mail settings (SMTP_*), no tenant's; nothing is recorded in any tenant's notices. Resolves { status, error }; never throws.
+async function sendSystem({ to, subject, html }) {
+  if (!to) return { status: 'failed', error: 'no address' };
+  const frame = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;">${html}</div>`;
+  try { return await tenancy.run(1, () => deliver({ to, subject, html: frame }, config)); } catch (err) { console.error('[Mail] a system message could not be sent:', err.message); return { status: 'failed', error: err.message }; }
+}
+
 async function sendNotification(notice) {
   const result = await sendNotificationDetailed(notice);
   return result ? result.previewUrl : null;
@@ -104,4 +112,4 @@ async function verifyConnection(cfg) {
   try { await t.verify(); } finally { t.close(); }
 }
 
-module.exports = { sendNotification, sendNotificationDetailed, mailSummary, reportMailSetup, effectiveConfig, verifyConnection };
+module.exports = { sendNotification, sendNotificationDetailed, sendSystem, mailSummary, reportMailSetup, effectiveConfig, verifyConnection };

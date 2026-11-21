@@ -18,7 +18,7 @@ const tenancy = require('./tenancy');
 const DEFAULT_ID = 1;
 const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9]){0,1}$/;
 const HOST_RE = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9]){0,1}$/;
-const RESERVED = new Set(['www', 'api', 'admin', 'platform', 'app', 'mail', 'static', 'assets', 'health']);
+const RESERVED = new Set(['www', 'api', 'admin', 'platform', 'app', 'mail', 'static', 'assets', 'health', 'signup', 'register', 'login', 'ops', 'status']);
 class TenantError extends Error {}
 
 const unknownPolicy = (env = process.env) => {
@@ -133,16 +133,21 @@ async function createTenant({ slug, name, hosts = [] }) {
   return tenant;
 }
 
+// Is this short name already a tenant's? (Looked at across all tenants.)
+async function slugTaken(slug) { return tenancy.runPlatform(async () => Boolean(await db.prepare('SELECT 1 AS x FROM tenants WHERE slug = ?').get(String(slug)))); }
+
 // The first administrator of a tenant. The password follows the same rules as everyone's. Returns the new user's id.
-async function createAdmin(tenantId, { username, password, fullName, email }) {
+async function createAdmin(tenantId, { username, password, passwordHash = null, fullName, email }) {
   const name = String(username || '').trim();
   if (!/^[A-Za-z0-9._-]{2,40}$/.test(name)) throw new TenantError('The username must be 2 to 40 letters, digits, dots, hyphens or underscores.');
-  const weak = checkPassword(password || '', { username: name, email, fullName });
+  // A password already checked and hashed elsewhere (the sign-up page keeps only the hash until the tenant is made) is taken as it is.
+  if (passwordHash && !/^\$2[aby]\$\d\d\$.{53}$/.test(passwordHash)) throw new TenantError('The stored password is not valid.');
+  const weak = passwordHash ? null : checkPassword(password || '', { username: name, email, fullName });
   if (weak) throw new TenantError(weak);
   return tenancy.run(tenantId, async () => {
     if (await db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(name)) throw new TenantError(`There is already a person called "${name}" in this tenant.`);
     const row = await db.prepare("INSERT INTO users (username, password_hash, full_name, email, role) VALUES (?, ?, ?, ?, 'admin') RETURNING id")
-      .get(name, bcrypt.hashSync(password, 10), String(fullName || name).trim(), email ? String(email).trim() : null);
+      .get(name, passwordHash || bcrypt.hashSync(password, 10), String(fullName || name).trim(), email ? String(email).trim() : null);
     // As on a fresh installation: the first administrator may approve decommissions until someone else is put in the group.
     await db.prepare(`INSERT INTO user_assignment_groups (user_id, group_name)
       SELECT ?, 'IRO-Build/Decom' WHERE NOT EXISTS (SELECT 1 FROM user_assignment_groups WHERE group_name = 'IRO-Build/Decom')`).run(row.id);
@@ -287,6 +292,7 @@ async function purge(id, { due = true } = {}) {
       if (left) throw new Error(`${left} row${left === 1 ? '' : 's'} of the tenant remain in ${name}: nothing was deleted`);
     }
     await tx.prepare('DELETE FROM tenant_hosts WHERE tenant_id = ?').run(Number(id));
+    await tx.prepare('DELETE FROM signups WHERE tenant_id = ?').run(Number(id));      // the request that made it (with the email address in it) goes with it
     await tx.prepare('DELETE FROM tenants WHERE id = ?').run(Number(id));
   }));
   invalidate();
@@ -306,5 +312,5 @@ async function purgeDue(onDone = () => {}) {
 
 module.exports = {
   DEFAULT_ID, TenantError, unknownPolicy, baseDomain, list, get, forHost, scope, pinned, enterRequestTenant, isActive,
-  forEachTenant, createTenant, createAdmin, setStatus, setLimits, graceDays, recordExport, deletionBlocker, scheduleDeletion, cancelDeletion, purge, purgeDue, purgeOrder, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
+  forEachTenant, createTenant, slugTaken, createAdmin, setStatus, setLimits, graceDays, recordExport, deletionBlocker, scheduleDeletion, cancelDeletion, purge, purgeDue, purgeOrder, rename, addHost, removeHost, adminsOf, resetAdminPassword, cleanName, checkSlug, checkHost, invalidate, hostOf,
 };

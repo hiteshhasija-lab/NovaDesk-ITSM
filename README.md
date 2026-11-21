@@ -582,6 +582,19 @@ nothing changes for a single organisation.
   that links to *Plan and usage*; nobody else sees it. In the platform console a line above the tenants names those that are close, the limits column is marked, and a tenant's page
   says which warnings were told and when. The job runs every `LIMIT_WARN_POLL_S` seconds (600) and uses the mail server of each tenant (a tenant without one uses the installation's;
   with neither, the warning is recorded as not sent in the tenant's record of notices). Checked by `test/limitWarnings.test.js` and `node scripts/limit-warnings-check.js` (in CI).
+- **Self-service sign-up.** With `SIGNUP_HOST` set (it needs `TENANT_BASE_DOMAIN`, so every new workspace has the address `<short name>.<that domain>`, and `SMTP_HOST`,
+  because the confirmation link is sent by the installation's own mail server: no tenant exists yet) a public page on that host name lets an organisation ask for a workspace:
+  its name, a short name, the first administrator (name, email, username, password) and, if `SIGNUP_TERMS_URL` is set, an acceptance of the terms. Nothing is made until the
+  person has used the emailed link (long, random, good for `SIGNUP_LINK_HOURS` = 24 hours, works once; opening it only shows what would be made and a button, so a mail scanner
+  cannot use it up). Then the tenant, its administrator (who signs in at `<short name>.<base domain>` with the password they chose, kept only as a hash and only until then) and its
+  starting limits are made, the platform's audit log says so, and a welcome email follows. New workspaces start with the limits `SIGNUP_LIMIT_USERS` / `_RECORDS` / `_STORAGE_MB`
+  (5 people, 500 records, 50 MB; `none` for no limit; changed per tenant in the console afterwards). `SIGNUP_REQUIRE_APPROVAL=true` makes each new workspace start switched off for
+  the people who run the service to switch on. Abuse limits: a hidden field and a minimum time that only a program trips over, `SIGNUP_PER_IP_PER_HOUR` (5; behind a proxy set
+  `TRUST_PROXY` so the real address is seen), at most 3 links an hour for one email address, `SIGNUP_MAX_PER_DAY` requests a day (50), `SIGNUP_ALLOWED_DOMAINS` and
+  `SIGNUP_BLOCKED_DOMAINS` for email domains, and a **Pause sign-ups** switch in the console (*Sign-ups*, which also lists every request and what became of it). Use
+  `SIGNUP_SCHEME=http` only for a test. Short names kept for the system (`www`, `signup`, `login`, ...) cannot be asked for. Unconfirmed requests expire and old ones are removed
+  (with the email addresses in them) after 90 days; deleting a tenant removes its request. Checked by `test/signup.test.js` and `node scripts/signup-check.js` (in CI, against
+  a local mail sink: the whole road, every refusal, two people pressing at once, two people wanting one name, approval mode, expiry).
 - **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
   as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
   reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a

@@ -1,0 +1,9 @@
+<%- include('_top', { heading: 'Confirm your workspace' }) %>
+      <% if (error) { %><div class="alert alert-danger py-2 small" role="alert"><%= error %></div><% } %>
+      <p class="small mb-2">You are about to make the workspace <strong><%= req.org_name %></strong> at <strong><%= address %></strong>, with <strong><%= req.admin_name %></strong> (<%= req.admin_email %>) as its administrator, signing in as <strong><%= req.admin_username %></strong>.</p>
+      <% if (approval) { %><p class="small text-muted">The people who run this service look at each new workspace before it is switched on; you are told by email.</p><% } %>
+      <form method="POST" action="/verify/<%= token %>">
+        <input type="hidden" name="t" value="<%= formToken %>">
+        <button type="submit" class="btn login-btn-primary w-100 py-2">Create my workspace <i class="bi bi-arrow-right ms-1"></i></button>
+      </form>
+<%- include('_bottom') %>

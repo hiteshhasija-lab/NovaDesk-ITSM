@@ -1,0 +1,8 @@
+<%- include('_top', { heading: suspended ? 'Almost there' : 'Your workspace is ready' }) %>
+      <% if (suspended) { %>
+      <p class="small mb-2">Your workspace <strong><%= name %></strong> has been made. The people who run this service switch it on after a look at the request; you will get an email, and then you can sign in at <strong><%= url %></strong> as <strong><%= username %></strong>.</p>
+      <% } else { %>
+      <p class="small mb-3">Sign in at the address of your workspace as <strong><%= username %></strong>, with the password you chose.</p>
+      <a href="<%= url %>" class="btn login-btn-primary w-100 py-2"><%= url %> <i class="bi bi-arrow-right ms-1"></i></a>
+      <% } %>
+<%- include('_bottom') %>

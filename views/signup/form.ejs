@@ -1,0 +1,25 @@
+<%- include('_top', { heading: 'Create your workspace' }) %>
+      <% if (error) { %><div class="alert alert-danger py-2 small" role="alert"><%= error %></div><% } %>
+      <form method="POST" action="/signup" autocomplete="off">
+        <input type="hidden" name="t" value="<%= formToken %>">
+        <%# a field only a program fills in: people do not see it %>
+        <div style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label>Leave this empty <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <label class="form-label small mb-0" for="org_name">Organisation</label>
+        <input class="form-control mb-2" id="org_name" name="org_name" maxlength="80" value="<%= form.org_name || '' %>" required autofocus>
+        <label class="form-label small mb-0" for="slug">Short name <span class="text-muted">(the address of your workspace: <code>short-name.<%= base %></code>)</span></label>
+        <input class="form-control mb-2" id="slug" name="slug" maxlength="40" pattern="[a-z0-9]([a-z0-9-]*[a-z0-9]){0,1}" value="<%= form.slug || '' %>" required>
+        <label class="form-label small mb-0" for="admin_name">Your name</label>
+        <input class="form-control mb-2" id="admin_name" name="admin_name" maxlength="80" value="<%= form.admin_name || '' %>" required>
+        <label class="form-label small mb-0" for="email">Your email address <span class="text-muted">(we send a link to confirm it)</span></label>
+        <input class="form-control mb-2" id="email" name="email" type="email" maxlength="120" value="<%= form.email || '' %>" required>
+        <label class="form-label small mb-0" for="username">Username <span class="text-muted">(you sign in with it)</span></label>
+        <input class="form-control mb-2" id="username" name="username" maxlength="40" autocomplete="username" value="<%= form.username || '' %>" required>
+        <div class="row g-2 mb-2">
+          <div class="col-sm-6"><label class="form-label small mb-0" for="password">Password</label><input class="form-control" id="password" name="password" type="password" autocomplete="new-password" required></div>
+          <div class="col-sm-6"><label class="form-label small mb-0" for="password2">Once more</label><input class="form-control" id="password2" name="password2" type="password" autocomplete="new-password" required></div>
+        </div>
+        <% if (terms) { %><div class="form-check mb-2 small"><input class="form-check-input" type="checkbox" name="terms" id="terms"<%= form.terms === 'on' ? ' checked' : '' %>><label class="form-check-label" for="terms">I accept the <a href="<%= terms %>" target="_blank" rel="noopener">terms</a></label></div><% } %>
+        <button type="submit" class="btn login-btn-primary w-100 py-2 mt-1">Create workspace <i class="bi bi-arrow-right ms-1"></i></button>
+        <p class="small text-muted mt-2 mb-0">You become the administrator of the new workspace and can add everyone else yourself. Nothing is made until you confirm your email address.</p>
+      </form>
+<%- include('_bottom') %>

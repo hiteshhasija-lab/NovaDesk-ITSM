@@ -231,6 +231,19 @@ function mount(env = process.env) {
   });
   router.post('/tenants/:id/delete/cancel', ...act('tenant.deletion_cancelled', async (req) => { await tenants.cancelDeletion(req.tenant.id); return `back to suspended (it was due ${req.tenant.deletion_scheduled_at} UTC)`; }));
 
+  // Sign-ups of new workspaces (src/signup.js): who asked and what became of it, and the switch that pauses them.
+  const signupCfg = (() => { try { return require('../signup').config(env); } catch { return { enabled: false }; } })();
+  router.get('/signups', needLogin, async (req, res, next) => {
+    try { const s = require('../signup'); page(res, 'platform/signups', { title: 'Sign-ups', ...(await s.recent(100)), signupHost: signupCfg.enabled ? signupCfg.host : null, cfg: signupCfg }); } catch (e) { next(e); }
+  });
+  router.post('/signups/pause', needLogin, needToken, async (req, res, next) => {
+    try {
+      const on = req.body.paused === 'true';
+      await require('../signup').setPaused(on, req.operator.username);
+      await platform.audit(req, req.operator, on ? 'signup.paused' : 'signup.resumed', { detail: on ? 'new sign-ups are refused until resumed' : 'new sign-ups are accepted again' });
+      res.redirect('/signups');
+    } catch (e) { next(e); }
+  });
   router.get('/audit', needLogin, async (req, res, next) => { try { page(res, 'platform/audit', { title: 'Audit log', entries: await platform.recentAudit(200) }); } catch (e) { next(e); } });
   router.use((req, res) => page(res, 'platform/message', { title: 'Not found', message: 'There is no such page.', operator: req.operator }, 404));
 

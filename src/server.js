@@ -56,6 +56,7 @@ const tenancy = require('./tenancy');
 const limitWarnings = require('./limitWarnings');
 const tenants = require('./tenants');
 const platformConsole = require('./routes/platform');
+const signupPage = require('./routes/signup');
 const scimRouter = require('./scim/router');
 
 const app = express();
@@ -129,6 +130,8 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // The NovaConnect integration and mail handed over by HTTP belong to the default tenant alone.
 // The platform console answers on its own host name (PLATFORM_HOST) and belongs to no tenant; without that setting it does not exist.
 app.use(platformConsole.mount(process.env));
+// The sign-up page for new workspaces answers on its own host name (SIGNUP_HOST) and nowhere else; without that setting it does not exist.
+app.use(signupPage.mount(process.env));
 app.use('/api/integrations', tenants.pinned());
 app.use(tenants.scope(process.env));
 app.use(branding.middleware);

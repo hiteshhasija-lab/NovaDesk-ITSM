@@ -119,6 +119,10 @@ function startScheduler() {
   setTimeout(purging, Math.min(40 * 1000, purgeEvery)).unref();
   const inactiveAccounts = require('./privacy/inactive');
   // Warnings before a tenant reaches a usage limit (src/limitWarnings.js): looked at every LIMIT_WARN_POLL_S (10 minutes); each level is told once.
+  // Sign-up requests nobody confirmed expire, and old ones (with the email addresses in them) are removed (src/signup.js).
+  const signupClean = () => require('./signup').cleanup().catch((e) => console.error('Sign-up clean-up failed:', e.message));
+  setInterval(signupClean, 6 * 3600 * 1000).unref();
+  setTimeout(signupClean, 90 * 1000).unref();
   const warnAll = each(() => limitWarnings.sweep(), 'Limit warnings');
   const warnEvery = (Number(process.env.LIMIT_WARN_POLL_S) || 600) * 1000;
   const warn = () => warnAll().catch((e) => console.error('Limit warnings failed:', e.message));
