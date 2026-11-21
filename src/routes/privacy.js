@@ -6,6 +6,7 @@ const createAsyncRouter = require('../asyncRouter');
 const { audit } = require('../audit');
 const person = require('../privacy/person');
 const retention = require('../privacy/retention');
+const inactive = require('../privacy/inactive');
 const { anonymise, refusal, PrivacyError } = require('../privacy/anonymise');
 const { patternsFor, MIN_LENGTH } = require('../privacy/scrub');
 
@@ -16,7 +17,11 @@ const like = (q) => `%${String(q).replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 
 async function indexView(extra = {}) {
   const recent = await db.prepare("SELECT * FROM audit_log WHERE action LIKE 'privacy.%' OR action LIKE 'retention.%' ORDER BY id DESC LIMIT 15").all();
-  return { title: 'Privacy', people: null, q: '', rules: await retention.rules(), min: retention.MIN_DAYS, max: retention.MAX_DAYS, errors: {}, values: null, notice: null, recent, ...extra };
+  const inactiveRule = await inactive.rule();
+  return {
+    title: 'Privacy', people: null, q: '', rules: await retention.rules(), min: retention.MIN_DAYS, max: retention.MAX_DAYS, errors: {}, values: null, notice: null, recent,
+    inactiveRule, inactiveWaiting: await inactive.waiting(inactiveRule.days), inactiveError: null, inactiveValue: null, ...extra,
+  };
 }
 
 router.get('/', async (req, res) => {
@@ -39,6 +44,18 @@ router.post('/retention/run', async (req, res) => {
   const ran = await retention.sweep({ manual: true, actor: req.session.user, req });
   const total = ran.reduce((n, r) => n + r.removed, 0);
   res.render('privacy/index', await indexView({ notice: !ran.length ? 'No limit is set, so nothing was removed.' : `Done: ${total} record${total === 1 ? '' : 's'} removed (${ran.map((r) => `${r.label} ${r.removed}`).join(', ')}).` }));
+});
+
+// Anonymise accounts that have been switched off for a long time (src/privacy/inactive.js).
+router.post('/inactive', async (req, res) => {
+  const result = await inactive.save(req.body.inactive_days, { actor: req.session.user, req });
+  if (result.error) return res.status(400).render('privacy/index', await indexView({ inactiveError: result.error, inactiveValue: req.body.inactive_days }));
+  res.render('privacy/index', await indexView({ notice: result.changed ? 'Saved. Accounts switched off for longer than that are anonymised in the next daily run, or when you press "Anonymise now".' : 'Nothing changed.' }));
+});
+
+router.post('/inactive/run', async (req, res) => {
+  const r = await inactive.sweep({ manual: true, actor: req.session.user, req });
+  res.render('privacy/index', await indexView({ notice: !r.ran ? 'No rule is set, so nothing was anonymised.' : `Done: ${r.anonymised} account${r.anonymised === 1 ? '' : 's'} anonymised${r.skipped ? `, ${r.skipped} left alone` : ''}.` }));
 });
 
 async function personView(p, actor, extra = {}) {

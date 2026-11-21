@@ -330,6 +330,15 @@ in the audit log.
   shorter than 4 characters are not searched for in text (the page says so), and server backups, the mail server and
   other connected systems still hold what they held. Not possible for yourself. An anonymised account cannot be
   edited, signed in to, or brought back by a CSV import.
+- **Anonymise accounts that stay switched off.** Set a number of days (30 at least) on the Privacy page and accounts that have been
+  switched off (inactive on the Users page) for longer are anonymised by themselves, once a day: exactly what *Anonymise* does,
+  with comments and files kept. It is off until you set it, it cannot be undone, and it never touches an account that is switched
+  on, whatever its owner last did. How long an account has been off is kept by the database (`users.deactivated_at`), however it
+  was switched off (Users page, SCIM, CSV import), and switching it on again starts the count afresh, so *to keep someone, switch
+  them on before the day*. People who were already off when this was installed start counting from the upgrade. The page lists who
+  is next and on what day, and *Anonymise now* does the daily run straight away. Each run and each person is in the audit log. The
+  rule belongs to the tenant: one tenant's rule never touches another's people. A person provisioned by SCIM who is anonymised no
+  longer exists for the identity provider, which is told 404 and may make a new account. Checked by `node scripts/inactive-accounts-check.js` (in CI).
 - **Retention.** Each of the audit log, email notices, the inbound email record and webhook deliveries is kept for ever
   until you set a number of days (30 at least). Once a day older rows are removed in batches (unfinished work is never
   touched: mail still being processed, deliveries still waiting); *Run now* does it at once. Tickets, comments and their
