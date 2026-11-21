@@ -53,6 +53,7 @@ const mailSettingsRoutes = require('./routes/mailSettings');
 const usageRoutes = require('./routes/usage');
 const branding = require('./branding');
 const tenancy = require('./tenancy');
+const limitWarnings = require('./limitWarnings');
 const tenants = require('./tenants');
 const platformConsole = require('./routes/platform');
 const scimRouter = require('./scim/router');
@@ -143,6 +144,17 @@ app.use(session({
 }));
 
 app.use(attachUser);
+
+// An administrator sees, on every page, the limits that are nearly or fully used (src/limitWarnings.js; cached for a minute). Never a reason to fail a page.
+app.use(async (req, res, next) => {
+  try {
+    if (req.method === 'GET' && req.session && req.session.user && req.session.user.role === 'admin' && !req.path.startsWith('/settings/usage') && !req.path.startsWith('/api')) {
+      const rows = await limitWarnings.bannerFor(tenancy.currentId());
+      if (rows.length) res.locals.limitNotices = rows;
+    }
+  } catch (err) { console.error('[Limits] the notice could not be worked out:', err.message); }
+  next();
+});
 
 // Forged-request protection (src/csrf.js): every page carries the session's token, every change must send it back.
 app.use(csrf.renderWithToken);

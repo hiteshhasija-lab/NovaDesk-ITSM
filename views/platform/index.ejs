@@ -3,6 +3,8 @@
   <h4 class="mb-1">Tenants</h4>
   <p class="text-muted small">Counts only: this console never shows what is inside a tenant. A tenant is reached at its host names<%= base ? ` or <short name>.${base}` : '' %>; any other host name is <%= policy === 'reject' ? 'refused (404)' : 'the default tenant\'s' %>. A new or changed tenant reaches a running server within five seconds.</p>
   <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+  <% const close = tenants.filter(function (t) { return t.nearest && t.nearest[1] >= 80; }); %>
+  <% if (close.length) { %><div class="alert alert-warning py-2 small" id="nearLimits"><i class="bi bi-speedometer"></i> <strong><%= close.length %></strong> tenant<%= close.length === 1 ? ' is' : 's are' %> close to a limit: <% close.forEach(function (t, i) { %><%= i ? ', ' : '' %><a href="/tenants/<%= t.id %>"><%= t.name %></a> (<%= { users: 'people', records: 'records', storage: 'files' }[t.nearest[0]] %> <%= Math.floor(t.nearest[1]) %>%)<% }) %>.</div><% } %>
   <div class="card mb-4"><div class="table-responsive"><table class="table table-sm align-middle mb-0">
     <thead class="table-light"><tr><th>Name</th><th>Short name</th><th>Status</th><th>Host names</th><th class="text-end">People</th><th class="text-end">Incidents</th><th class="text-end">Requests</th><th class="text-end">Changes</th><th>Limits (used / allowed)</th><th>Last active</th></tr></thead>
     <tbody>
@@ -13,7 +15,7 @@
         <td><span class="badge bg-<%= t.status === 'active' ? 'success' : (t.status === 'pending_deletion' ? 'danger' : 'warning text-dark') %>"><%= t.status === 'pending_deletion' ? 'deleting' : t.status %></span></td>
         <td class="small"><%= t.hosts.length ? t.hosts.join(', ') : '—' %></td>
         <td class="text-end"><%= t.active_users %> / <%= t.users %></td><td class="text-end"><%= t.incidents %></td><td class="text-end"><%= t.requests %></td><td class="text-end"><%= t.changes %></td>
-        <td class="small"><% const recs = t.incidents + t.requests + t.changes + t.problems + t.cis + t.articles; const parts = []; if (t.limit_users !== null) parts.push('people ' + t.active_users + '/' + t.limit_users); if (t.limit_records !== null) parts.push('records ' + recs + '/' + t.limit_records); if (t.limit_storage_mb !== null) parts.push('files ' + Math.round(t.storage_bytes / 104857.6) / 10 + '/' + t.limit_storage_mb + ' MB'); %><%= parts.length ? parts.join(' · ') : 'no limits' %></td>
+        <td class="small"><% const recs = t.incidents + t.requests + t.changes + t.problems + t.cis + t.articles; const parts = []; if (t.limit_users !== null) parts.push('people ' + t.active_users + '/' + t.limit_users); if (t.limit_records !== null) parts.push('records ' + recs + '/' + t.limit_records); if (t.limit_storage_mb !== null) parts.push('files ' + Math.round(t.storage_bytes / 104857.6) / 10 + '/' + t.limit_storage_mb + ' MB'); %><%= parts.length ? parts.join(' · ') : 'no limits' %><% if (t.nearest && t.nearest[1] >= 80) { %> <span class="badge bg-<%= t.nearest[1] >= 100 ? 'danger' : (t.nearest[1] >= 90 ? 'warning text-dark' : 'info text-dark') %> align-middle"><%= t.nearest[1] >= 100 ? 'full' : Math.floor(t.nearest[1]) + '%' %></span><% } %></td>
         <td class="small"><%= t.last_seen || '—' %></td>
       </tr>
     <% }) %>

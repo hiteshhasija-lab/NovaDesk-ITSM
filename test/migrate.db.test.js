@@ -637,3 +637,17 @@ test('0023: the day a person is switched off is kept by the database for every w
     assert.strictEqual((await row('born-on')).deactivated_at, null);
   });
 });
+
+test('0024: a warning is remembered once for each limit of each tenant, and one tenant\'s rows are another\'s own', { skip }, async () => {
+  await withSchema(async (knex) => {
+    await migrate(knex);
+    await knex.raw("INSERT INTO tenants (id, slug, name) VALUES (2, 'acme', 'Acme')");
+    await knex.raw("INSERT INTO limit_warnings (kind, level, percent, tenant_id) VALUES ('users', 80, 85, 1), ('users', 90, 91, 2)");
+    assert.strictEqual(Number((await knex.raw('SELECT count(*) AS c FROM limit_warnings')).rows[0].c), 2, 'each tenant has its own row for the same kind');
+    await assert.rejects(() => knex.raw("INSERT INTO limit_warnings (kind, level, tenant_id) VALUES ('users', 0, 1)"), (e) => e.code === '23505', 'one row for each kind of each tenant');
+    await assert.rejects(() => knex.raw("INSERT INTO limit_warnings (kind, level, tenant_id) VALUES ('people', 0, 1)"), (e) => e.code === '23514', 'only the three kinds of limit');
+    await assert.rejects(() => knex.raw("INSERT INTO limit_warnings (kind, level, tenant_id) VALUES ('records', 85, 1)"), (e) => e.code === '23514', 'only the levels 0, 80, 90 and 100');
+    await knex.raw("INSERT INTO limit_warnings (kind, level) VALUES ('storage', 0)");
+    assert.strictEqual((await knex.raw("SELECT tenant_id FROM limit_warnings WHERE kind = 'storage'")).rows[0].tenant_id, 1, 'a row made without naming a tenant is the statement\'s own tenant');
+  });
+});

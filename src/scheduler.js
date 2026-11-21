@@ -4,6 +4,7 @@ const { resumeInterruptedDecoms } = require('./decomAutomation');
 const { sweep: sweepSla } = require('./slaService');
 const webhooks = require('./webhooks');
 const retention = require('./privacy/retention');
+const limitWarnings = require('./limitWarnings');
 const tenants = require('./tenants');
 
 const POLL_INTERVAL_MS = 30 * 1000;
@@ -117,6 +118,12 @@ function startScheduler() {
   setInterval(purging, purgeEvery).unref();
   setTimeout(purging, Math.min(40 * 1000, purgeEvery)).unref();
   const inactiveAccounts = require('./privacy/inactive');
+  // Warnings before a tenant reaches a usage limit (src/limitWarnings.js): looked at every LIMIT_WARN_POLL_S (10 minutes); each level is told once.
+  const warnAll = each(() => limitWarnings.sweep(), 'Limit warnings');
+  const warnEvery = (Number(process.env.LIMIT_WARN_POLL_S) || 600) * 1000;
+  const warn = () => warnAll().catch((e) => console.error('Limit warnings failed:', e.message));
+  setInterval(warn, warnEvery).unref();
+  setTimeout(warn, Math.min(45 * 1000, warnEvery)).unref();
   const keepAll = each(async () => { await retention.sweep(); await inactiveAccounts.sweep(); }, 'Retention sweep');
   const keep = () => keepAll().catch((e) => console.error('Retention sweep failed:', e.message));
   setInterval(keep, RETENTION_SWEEP_MS);

@@ -116,6 +116,11 @@
     }).catch(function () {});
   });
 </script>
+<% if (typeof limitNotices !== 'undefined' && limitNotices && limitNotices.length) { %>
+<% limitNotices.forEach(function (n) { %>
+<div class="alert <%= n.full ? 'alert-danger' : 'alert-warning' %> rounded-0 border-0 mb-0 text-center py-1 small" role="status"><i class="bi bi-speedometer me-1"></i>Your workspace <%= n.text %> <a href="/settings/usage" class="alert-link">Plan and usage</a></div>
+<% }) %>
+<% } %>
 <% if (typeof flashNotice !== 'undefined' && flashNotice) { %>
 <div class="alert alert-warning rounded-0 border-0 mb-0 text-center py-2 small"><i class="bi bi-info-circle me-1"></i><%= flashNotice %></div>
 <% } %>

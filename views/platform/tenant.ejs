@@ -35,6 +35,9 @@
       <div class="col-md-4"><label class="form-label" for="limit_storage_mb">Attached files (MB)</label><input class="form-control" id="limit_storage_mb" name="limit_storage_mb" inputmode="numeric" value="<%= tenant.limit_storage_mb === null ? '' : tenant.limit_storage_mb %>" placeholder="no limit"><div class="form-text">used: <%= usage.storage.usedMb %> MB</div></div>
       <div class="col-12"><button class="btn btn-outline-primary" type="submit">Save the limits</button></div>
     </form>
+    <% if (typeof warnings !== 'undefined' && warnings.some(function (w) { return w.level > 0; })) { %>
+    <p class="small text-muted mt-3 mb-0" id="limitWarnings">Administrators of this tenant were told by email: <%= warnings.filter(function (w) { return w.level > 0; }).map(function (w) { return ({ users: 'people', records: 'records', storage: 'files' }[w.kind]) + ' ' + (w.level >= 100 ? 'full' : w.level + '%') + ' (' + w.sent_at + ' UTC)'; }).join(' · ') %>. Each level is told once; a warning comes again only after use has fallen clearly below it, or the limit was raised.</p>
+    <% } %>
   </div></div>
 
   <div class="card mb-3"><div class="card-body"><h6 class="section-title">Administrators</h6>

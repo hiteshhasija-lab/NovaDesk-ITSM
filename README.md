@@ -575,6 +575,13 @@ nothing changes for a single organisation.
   attachments. Lowering a limit below what a tenant already has deletes nothing; it only stops anything new. People who are switched off do not count, and
   switching someone back on needs a free place. A tenant's administrator sees what is used and allowed, read-only, under *Plan and usage* in the settings; every change
   is in the platform's audit log. Checked by `test/limits.test.js`, the 0022 case in `test/migrate.db.test.js` and `node scripts/tenant-limits-check.js` (in CI).
+- **Warnings before a limit is reached.** The administrators of a tenant are told by email when use of a limit first reaches **80%, 90% and 100%** (people,
+  records, attached files), through the tenant's own mail server, with what is used, what is allowed and what to do. Each level is told once: a warning comes again
+  only after use has fallen more than 5 points below the level, or the limit was removed or raised and use then climbs again, so a workspace hovering around a line is not
+  mailed again and again. The percentages are exact (89.9% is not yet 90%). From 90% every administrator also sees a slim notice on every page (red when the limit is reached)
+  that links to *Plan and usage*; nobody else sees it. In the platform console a line above the tenants names those that are close, the limits column is marked, and a tenant's page
+  says which warnings were told and when. The job runs every `LIMIT_WARN_POLL_S` seconds (600) and uses the mail server of each tenant (a tenant without one uses the installation's;
+  with neither, the warning is recorded as not sent in the tenant's record of notices). Checked by `test/limitWarnings.test.js` and `node scripts/limit-warnings-check.js` (in CI).
 - **Honest limits:** the policies protect against a query that is missing a filter, not against someone who can run their own SQL
   as the application (the tenant is a session setting). Files attached to records are stored on disk under random names and are
   reached only through their record, which is tenant-checked. A reference to another tenant's row (a person's id typed into a

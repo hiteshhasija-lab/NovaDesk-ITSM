@@ -10,6 +10,7 @@
 // Signing in is by a signed cookie that carries no data of its own except who, until when, and the page token (nothing is kept
 // on the server), so the console needs no session table and nothing about it is in any tenant.
 'use strict';
+const limitWarnings = require('./limitWarnings');
 const crypto = require('crypto');
 const { db, nowStr } = require('./db');
 const tenancy = require('./tenancy');
@@ -124,6 +125,11 @@ const recentAudit = (limit = 50, tenantId = null) => P(() => (tenantId
   : db.prepare('SELECT * FROM platform_audit ORDER BY id DESC LIMIT ?').all(limit)));
 
 // ---- what the overview shows: every tenant with what it holds (counts only, never content)
+// The warnings told to a tenant's administrators (src/limitWarnings.js): [{ kind, level, percent, sent_at }].
+async function limitWarningsOf(tenantId) {
+  return P(() => db.prepare('SELECT kind, level, percent, sent_at FROM limit_warnings WHERE tenant_id = ? ORDER BY kind').all(Number(tenantId)));
+}
+
 async function overview() {
   return P(async () => {
     const tenants = await db.prepare(`SELECT t.id, t.slug, t.name, t.status, t.created_at, t.status_changed_at, t.export_at, t.export_sha256, t.export_bytes, t.export_by, t.deletion_scheduled_at, t.deletion_requested_by, t.limit_users, t.limit_records, t.limit_storage_mb,
@@ -137,11 +143,11 @@ async function overview() {
         (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.tenant_id = t.id) AS last_seen
       FROM tenants t ORDER BY t.id`).all();
     const hosts = await db.prepare('SELECT host, tenant_id FROM tenant_hosts ORDER BY host').all();
-    return tenants.map((t) => ({ ...t, hosts: hosts.filter((h) => h.tenant_id === t.id).map((h) => h.host) }));
+    return tenants.map((t) => { const pcts = limitWarnings.pctsOfRow(t); return { ...t, hosts: hosts.filter((h) => h.tenant_id === t.id).map((h) => h.host), pcts, nearest: limitWarnings.nearest(pcts) }; });
   });
 }
 
 module.exports = {
   COOKIE, LOGIN_COOKIE, LIFETIME_MS, PENDING_MS, PlatformError, config, ipAllowed, parseRule, sign, verify, newToken, same, sessionCookie, readCookies,
-  findById, createOperator, bootstrap, login, audit, recentAudit, overview,
+  findById, createOperator, bootstrap, login, audit, recentAudit, overview, limitWarningsOf,
 };

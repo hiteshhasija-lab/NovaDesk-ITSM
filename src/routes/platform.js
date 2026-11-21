@@ -161,7 +161,7 @@ function mount(env = process.env) {
     } catch (e) { next(e); }
   };
   const reauthWords = (req) => (req.mfa && req.mfa.enabled ? 'the current code from your authenticator app' : 'your password');
-  const show = async (req, res, extra = {}, status = 200) => page(res, 'platform/tenant', { title: req.tenant.name, tenant: req.tenant, admins: await tenants.adminsOf(req.tenant.id), history: await platform.recentAudit(30, req.tenant.id), isDefault: req.tenant.id === tenants.DEFAULT_ID, deleteBlocker: await tenants.deletionBlocker(req.tenant.id), usage: await limits.usage(req.tenant.id), graceDays: tenants.graceDays(env), reauthWords: reauthWords(req), ...extra }, status);
+  const show = async (req, res, extra = {}, status = 200) => page(res, 'platform/tenant', { title: req.tenant.name, tenant: req.tenant, admins: await tenants.adminsOf(req.tenant.id), history: await platform.recentAudit(30, req.tenant.id), isDefault: req.tenant.id === tenants.DEFAULT_ID, deleteBlocker: await tenants.deletionBlocker(req.tenant.id), usage: await limits.usage(req.tenant.id), warnings: await platform.limitWarningsOf(req.tenant.id), graceDays: tenants.graceDays(env), reauthWords: reauthWords(req), ...extra }, status);
   router.get('/tenants/:id', needLogin, load, async (req, res, next) => { try { await show(req, res); } catch (e) { next(e); } });
   const act = (action, fn) => [needLogin, needToken, load, async (req, res, next) => {
     try {
@@ -175,6 +175,7 @@ function mount(env = process.env) {
     let wanted; try { wanted = limits.parseLimits(req.body); } catch (e) { throw new tenants.TenantError(e.message); }
     const t = req.tenant; const was = { users: t.limit_users, records: t.limit_records, storageMb: t.limit_storage_mb };
     await tenants.setLimits(t.id, wanted);
+    require('../limitWarnings').forgetBanner();        // the administrators' notice is worked out afresh at their next page
     const show = (v) => (v === null || v === undefined ? 'none' : v);
     return `people ${show(was.users)} -> ${show(wanted.users)}; records ${show(was.records)} -> ${show(wanted.records)}; storage MB ${show(was.storageMb)} -> ${show(wanted.storageMb)}`;
   }));
