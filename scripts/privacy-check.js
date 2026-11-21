@@ -157,8 +157,10 @@ async function run(base, knex, app) {
   check('search finds a person by username', found.status === 200 && found.text.includes(P) && !found.text.includes(`/privacy/person/${raj.id}"`));
   check('search finds by email', (await admin.get(`/privacy?q=${encodeURIComponent(raj.email)}`)).text.includes(`/privacy/person/${raj.id}"`));
   check('search finds by part of a name, any case', (await admin.get(`/privacy?q=${encodeURIComponent(firstWord.toUpperCase())}`)).text.includes(P));
-  check('no search lists nobody', !(await admin.get('/privacy')).text.includes('/privacy/person/'));
-  check('a percent sign or underscore is just a character, not "everything"', !(await admin.get('/privacy?q=%25')).text.includes('/privacy/person/') && !(await admin.get('/privacy?q=_')).text.includes('/privacy/person/'));
+  // Only the search results are looked at: the card about accounts that stay switched off names people too, whenever someone is switched off.
+  const results = (html) => html.slice(html.indexOf('Find a person'), html.indexOf('How long to keep things'));
+  check('no search lists nobody', !results((await admin.get('/privacy')).text).includes('/privacy/person/'));
+  check('a percent sign or underscore is just a character, not "everything"', !results((await admin.get('/privacy?q=%25')).text).includes('/privacy/person/') && !results((await admin.get('/privacy?q=_')).text).includes('/privacy/person/'));
   check('markup in a search comes out as text', !(await admin.get(`/privacy?q=${encodeURIComponent('<img src=x onerror=alert(1)>')}`)).text.includes('<img src=x'));
 
   // ------------------------------------------------------------------------------------------------------------- export
