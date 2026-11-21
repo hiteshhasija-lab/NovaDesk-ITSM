@@ -180,7 +180,16 @@ async function run(knex, apps) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   check('the system tar reads the archive: a rows file for every table, the manifest, the files', list.includes('manifest.json') && list.includes('tables/incidents.jsonl') && list.includes('tables/users.jsonl') && list.some((n) => n.startsWith('files/')) && manifest.format === 'novadesk-tenant-export/1' && manifest.tenant.slug === SLUG_X && manifest.exported_by === `ops${tag}`);
   const mismatched = [];
-  for (const [t, n] of Object.entries(manifest.tables)) { const have = Number((await one(`SELECT COUNT(*) AS c FROM "${t}" WHERE tenant_id = ?`, [tx.id])).c); const text = fs.readFileSync(path.join(dir, 'tables', `${t}.jsonl`), 'utf8'); const lines = text ? text.trim().split('\n').filter(Boolean).length : 0; if (have !== n || lines !== n) mismatched.push(`${t}: db ${have}, manifest ${n}, file ${lines}`); }
+  // In CI another NovaDesk (the walk-through's, with its sweeps every 2 seconds) is running on the same database and looks after every tenant, this one included: it
+  // writes email notices and ticket history for this tenant at moments of its own. For those two tables the database may therefore hold MORE than the file; the file must
+  // still match its manifest exactly, and every other table must match the database exactly.
+  const BACKGROUND = new Set(['notifications', 'activity_log']);
+  for (const [t, n] of Object.entries(manifest.tables)) {
+    const have = Number((await one(`SELECT COUNT(*) AS c FROM "${t}" WHERE tenant_id = ?`, [tx.id])).c);
+    const text = fs.readFileSync(path.join(dir, 'tables', `${t}.jsonl`), 'utf8'); const lines = text ? text.trim().split('\n').filter(Boolean).length : 0;
+    const dbOk = BACKGROUND.has(t) ? have >= n : have === n;
+    if (!dbOk || lines !== n) mismatched.push(`${t}: db ${have}, manifest ${n}, file ${lines}`);
+  }
   check('every table has as many rows in its file as the tenant has in the database', mismatched.length === 0 && Object.keys(manifest.tables).length === tenantTables.length - 6, mismatched.join(' | ') || `${Object.keys(manifest.tables).length} of ${tenantTables.length}`);
   const incidents = fs.readFileSync(path.join(dir, 'tables/incidents.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   check('the rows are the tenant\'s own, whole (text, status, numbers), and only its own', incidents.length === 2 && incidents.some((r) => r.short_description === `X secret incident ${tag}` && r.number === 'INC0000001' && r.tenant_id === tx.id) && incidents.every((r) => r.tenant_id === tx.id));
