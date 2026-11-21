@@ -144,7 +144,7 @@ async function run(knex, mails, [PA, PB, PC], todayAtStart) {
   check('nothing has been made yet: no tenant', await count('SELECT count(*) AS c FROM tenants WHERE slug = ?', [`o1-${tag}`]) === 0);
   const seen = await A.get(`/verify/${t1}`);
   check('opening the link shows what would be made and makes nothing (a mail scanner may open it)', seen.status === 200 && seen.text.includes(`Org 1 ${tag}`) && /Create my workspace/.test(seen.text) && await count('SELECT count(*) AS c FROM tenants WHERE slug = ?', [`o1-${tag}`]) === 0 && (await one('SELECT status FROM signups WHERE slug = ?', [`o1-${tag}`])).status === 'pending');
-  for (const bad of ['short', 'x'.repeat(43), `${t1.slice(0, 42)}A`]) check(`a link that is not right (${bad.slice(0, 8)}...) is refused`, [404, 400].includes((await A.get(`/verify/${bad}`)).status));
+  for (const bad of ['short', 'x'.repeat(43), `${t1.slice(0, 42)}${t1.endsWith('A') ? 'B' : 'A'}`]) check(`a link that is not right (${bad.slice(0, 8)}...) is refused`, [404, 400].includes((await A.get(`/verify/${bad}`)).status));
   check('pressing the button of a made-up link makes nothing', (await A.raw('POST', `/verify/${'a'.repeat(43)}`, { form: { t: await formOf(A) } })).status === 400);
 
   section = 'confirming';
