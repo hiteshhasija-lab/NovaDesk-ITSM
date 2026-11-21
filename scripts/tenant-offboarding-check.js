@@ -180,9 +180,9 @@ async function run(knex, apps) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
   check('the system tar reads the archive: a rows file for every table, the manifest, the files', list.includes('manifest.json') && list.includes('tables/incidents.jsonl') && list.includes('tables/users.jsonl') && list.some((n) => n.startsWith('files/')) && manifest.format === 'novadesk-tenant-export/1' && manifest.tenant.slug === SLUG_X && manifest.exported_by === `ops${tag}`);
   const mismatched = [];
-  // In CI another NovaDesk (the walk-through's, with its sweeps every 2 seconds) is running on the same database and looks after every tenant, this one included: it
-  // writes email notices and ticket history for this tenant at moments of its own. For those two tables the database may therefore hold MORE than the file; the file must
-  // still match its manifest exactly, and every other table must match the database exactly.
+  // Every NovaDesk makes one sweep for SLA warnings about 20 seconds after it starts, whatever SLA_SWEEP_S says, and it writes email notices and ticket history for
+  // this tenant's incidents when it does. On a slow machine that lands between the export and this comparison. For those two tables the database may therefore hold
+  // MORE than the file; the file must still match its manifest exactly, and every other table must match the database exactly.
   const BACKGROUND = new Set(['notifications', 'activity_log']);
   for (const [t, n] of Object.entries(manifest.tables)) {
     const have = Number((await one(`SELECT COUNT(*) AS c FROM "${t}" WHERE tenant_id = ?`, [tx.id])).c);

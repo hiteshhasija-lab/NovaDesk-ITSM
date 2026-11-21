@@ -54,10 +54,12 @@ router.get('/', requireAuth, async (req, res) => {
   if (priority) { where.push('i.priority = ?'); params.push(priority); }
   if (assigned_to === 'unassigned') { where.push('i.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('i.assigned_to = ?'); params.push(assigned_to); }
+  const cf = await customFields.listFilter('incident', 'i', req.query, req.session.user.role);
   if (q) {
-    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?' + cf.search(q).sql + ')');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params);
   }
+  where.push(...cf.where); params.push(...cf.params);
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -84,7 +86,7 @@ router.get('/', requireAuth, async (req, res) => {
 
   res.render('incidents/list', {
     title: 'Incidents', incidents: items, filters: { status, priority, q, sla, assigned_to },
-    staffUsers, assignableUsers, sort, pagination, query: req.query
+    staffUsers, assignableUsers, sort, pagination, query: req.query, cfFilter: cf
   });
 });
 
@@ -108,10 +110,12 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
   if (priority) { where.push('i.priority = ?'); params.push(priority); }
   if (assigned_to === 'unassigned') { where.push('i.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('i.assigned_to = ?'); params.push(assigned_to); }
+  const cf = await customFields.listFilter('incident', 'i', req.query, req.session.user.role);
   if (q) {
-    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where.push('(i.number ILIKE ? OR i.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?' + cf.search(q).sql + ')');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params);
   }
+  where.push(...cf.where); params.push(...cf.params);
 
     const rangeCutoff = reportRangeCutoff(req.query.range);
   if (rangeCutoff) { where.push('i.created_at >= ?'); params.push(rangeCutoff); }

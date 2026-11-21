@@ -18,7 +18,7 @@ const KEEP_FILE_HOURS = 24;
 const KEEP_HISTORY_DAYS = 90;
 
 // Reads the text and works out which column is which. Throws ImportError when the file cannot be imported at all.
-function readTable(kind, text, mode) {
+function readTable(kind, text, mode, extra = []) {
   let parsed;
   try { parsed = csv.parse(text, { maxRecords: kind.maxRows + 1 }); } catch (e) {
     if (e instanceof csv.CsvError) throw new ImportError(e.message);
@@ -28,8 +28,13 @@ function readTable(kind, text, mode) {
   if (!records.length) throw new ImportError('The file is empty.');
   const header = records[0].map(csv.cleanCell);
 
+  // The kind's own columns, then the administrator's custom fields (a custom field never takes the name of a built-in column).
+  const columns = [...kind.columns, ...extra];
   const byAlias = new Map();
-  for (const col of kind.columns) { byAlias.set(csv.headerKey(col.field), col); for (const a of col.aliases) byAlias.set(csv.headerKey(a), col); }
+  for (const col of columns) {
+    const names = [col.field, ...col.aliases];
+    for (const a of names) { const k = csv.headerKey(a); if (!byAlias.has(k)) byAlias.set(k, col); }
+  }
   const index = {};              // field -> column position
   const used = []; const ignored = []; const unknown = [];
   header.forEach((h, i) => {
@@ -43,7 +48,7 @@ function readTable(kind, text, mode) {
     else unknown.push(h);
   });
   if (!used.length) throw new ImportError(`None of the column names in the first row are ones NovaDesk knows (${kind.columns.map((c) => c.label).join(', ')}). The first row must be the column names.`);
-  const missing = kind.columns.filter((c) => (c.required === 'always' || (c.required === 'new' && mode !== 'update')) && index[c.field] === undefined);
+  const missing = columns.filter((c) => (c.required === 'always' || (c.required === 'new' && mode !== 'update')) && index[c.field] === undefined);
   if (missing.length) throw new ImportError(`The file needs ${missing.length === 1 ? 'a column' : 'columns'} named ${missing.map((c) => `"${c.label}"`).join(' and ')}. Columns found: ${used.join(', ') || 'none'}.`);
   if (kind.identity && !kind.identity.some((f) => index[f] !== undefined)) throw new ImportError(`The file needs a "${kind.columns.find((c) => c.field === kind.identity[0]).label}" or a "${kind.columns.find((c) => c.field === kind.identity[1]).label}" column to say which ${kind.noun} each row is.`);
   return { records, header, index, used, ignored, unknown, delimiter: parsed.delimiter };
@@ -52,15 +57,17 @@ function readTable(kind, text, mode) {
 // Judges every row against what exists now. Writes nothing.
 async function buildPlan(kind, text, options, actor, lookups) {
   const mode = options.mode === 'update' ? 'update' : 'add';
-  const table = readTable(kind, text, mode);
-  const ctx = kind.context(lookups || await kind.load(), { actor });
+  const loaded = lookups || await kind.load({ actor });
+  const columns = [...kind.columns, ...(loaded.customCols || [])];
+  const table = readTable(kind, text, mode, loaded.customCols || []);
+  const ctx = kind.context(loaded, { actor });
   const items = [];
   let blank = 0;
   for (let i = 1; i < table.records.length; i++) {
     const rec = table.records[i];
     const row = i + 1;                       // the row number a spreadsheet shows
     const v = {};
-    for (const col of kind.columns) v[col.field] = table.index[col.field] === undefined ? '' : csv.cleanCell(rec[table.index[col.field]]);
+    for (const col of columns) v[col.field] = table.index[col.field] === undefined ? '' : csv.cleanCell(rec[table.index[col.field]]);
     if (!rec.some((c) => csv.cleanCell(c))) { blank++; continue; }
     if (rec.length > table.header.length && rec.slice(table.header.length).some((c) => csv.cleanCell(c))) {
       items.push({ row, key: v[kind.columns[0].field], action: 'error', message: `The row has ${rec.length} values but the first row names ${table.header.length} columns. A value with a comma in it needs quotes around it.` });

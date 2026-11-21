@@ -30,7 +30,9 @@ router.get('/', requireAuth, async (req, res) => {
     if (assigned_to === 'unassigned') { where.push('r.assigned_to IS NULL'); }
     else if (assigned_to) { where.push('r.assigned_to = ?'); params.push(assigned_to); }
   }
-  if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  const cf = await customFields.listFilter('request', 'r', req.query, req.session.user.role);
+  if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?' + cf.search(q).sql + ')'); params.push(`%${q}%`, `%${q}%`, ...cf.search(q).params); }
+  where.push(...cf.where); params.push(...cf.params);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let requests = await db.prepare(`
@@ -52,7 +54,7 @@ router.get('/', requireAuth, async (req, res) => {
 
   res.render('catalog/requests-list', {
     title: 'My Requests', requests: items, filters: { status, requested_by, assigned_to, q },
-    isEndUser, requesterUsers, assignableUsers, sort, pagination, query: req.query
+    isEndUser, requesterUsers, assignableUsers, sort, pagination, query: req.query, cfFilter: cf
   });
 });
 
@@ -71,7 +73,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
     if (assigned_to === 'unassigned') { where.push('r.assigned_to IS NULL'); }
     else if (assigned_to) { where.push('r.assigned_to = ?'); params.push(assigned_to); }
   }
-  if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  const cf = await customFields.listFilter('request', 'r', req.query, req.session.user.role);
+  if (q) { where.push('(r.number ILIKE ? OR ci.name ILIKE ?' + cf.search(q).sql + ')'); params.push(`%${q}%`, `%${q}%`, ...cf.search(q).params); }
+  where.push(...cf.where); params.push(...cf.params);
     const rangeCutoff = reportRangeCutoff(req.query.range);
   if (rangeCutoff) { where.push('r.created_at >= ?'); params.push(rangeCutoff); }
 const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

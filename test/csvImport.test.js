@@ -229,3 +229,64 @@ test('kb: what a new article needs, and the export format round trips (Author, V
   const t = readTable(KINDS.kb, 'Number,Title,Category,Status,Author,Views,Body,Created,Updated\nKB0000001,T,c,published,Al,3,B,x,y', 'add');
   assert.deepStrictEqual(t.ignored, ['Author', 'Views', 'Created', 'Updated']);
 });
+
+// ------------------------------------------------------------------------------------------------ custom fields (configuration items)
+const defs = [
+  { id: 1, key: 'rack', label: 'Rack', type: 'text', options: [], required: false },
+  { id: 2, key: 'tier', label: 'Service tier', type: 'select', options: [{ value: 'gold', label: 'Gold' }, { value: 'silver', label: 'Silver' }], required: false },
+  { id: 3, key: 'crit', label: 'Critical', type: 'checkbox', options: [], required: false },
+  { id: 4, key: 'bought', label: 'Bought', type: 'date', options: [], required: false },
+  { id: 5, key: 'budget', label: 'Budget', type: 'number', options: [], required: false },
+  { id: 6, key: 'team', label: 'Team', type: 'text', options: [], required: true },
+];
+const customCols = defs.map((d) => ({ field: `cf:${d.key}`, label: d.label, aliases: [d.key, d.label, `cf_${d.key}`], custom: d }));
+const lookups = (extra = {}) => ({ cis: [], people: [], customCols, customValues: new Map(), ...extra });
+
+test('custom field columns are found by label, by key and by cf_key, and a built-in column keeps its own name', async () => {
+  const t = readTable(KINDS.cmdb, 'Name,Type,Rack,service tier,cf_crit,BOUGHT,Location\nx,Server,r,Gold,yes,2026-01-01,DC1', 'add', customCols);
+  assert.deepStrictEqual(t.used, ['Name', 'Type', 'Rack', 'Service tier', 'Critical', 'Bought', 'Location']);
+  assert.deepStrictEqual(t.unknown, []);
+  // a custom field called "Location" cannot take the built-in column's place
+  const clash = readTable(KINDS.cmdb, 'Name,Type,Location\nx,Server,DC1', 'add', [{ field: 'cf:location', label: 'Location', aliases: ['location', 'Location', 'cf_location'], custom: { id: 9, key: 'location' } }]);
+  assert.strictEqual(clash.index.location, 2);
+  assert.strictEqual(clash.index['cf:location'], undefined);
+});
+
+test('a new item: every custom value is checked the way the form checks it, each refusal names the field and the value', async () => {
+  const H = 'Name,Type,Rack,Tier,Critical,Bought,Budget,Team';
+  const plan = async (row, mode = 'add') => (await buildPlan(KINDS.cmdb, `${H}\n${row}`, { mode }, admin, lookups())).items[0];
+  const ok = await plan('a,Server,R1,silver,yes,2026/03/04,12.50,ops');
+  assert.strictEqual(ok.action, 'add');
+  assert.deepStrictEqual([...ok.data.cf], [[1, 'R1'], [2, 'silver'], [3, 'true'], [4, '2026-03-04'], [5, '12.5'], [6, 'ops']]);
+  assert.strictEqual((await plan('a,Server,R1,GOLD,no,,,ops')).data.cf.get(3), 'false', 'a choice by label in any case; "no" is false');
+  for (const [row, pattern] of [
+    ['a,Server,r,Platinum,,,,ops', /Service tier must be one of: Gold, Silver/],
+    ['a,Server,r,,maybe,,,ops', /Critical "maybe" is not yes or no/],
+    ['a,Server,r,,,31/12/2026,,ops', /Bought "31\/12\/2026" is not a date/],
+    ['a,Server,r,,,2026-02-30,,ops', /Bought "2026-02-30" is not a date/],
+    ['a,Server,r,,,,lots,ops', /Budget must be a number/],
+    ['a,Server,r,,,,,', /Team is required/],
+  ]) {
+    const r = await plan(row);
+    assert.strictEqual(r.action, 'error', row);
+    assert.match(r.message, pattern, row);
+  }
+  assert.ok((await plan(`a,Server,${'x'.repeat(300)},,,,,ops`)).message.includes('longer than 255'), 'a text over its limit is refused');
+});
+
+test('an existing item: only what differs is an update, an empty cell leaves the value alone, a required field is not asked of an update', async () => {
+  const existing = { id: 7, ci_number: 'CI0000007', name: 'a', ci_type: 'server', environment: 'production', status: 'in_use' };
+  const stored = new Map([[7, new Map([[1, 'R1'], [2, 'gold'], [3, 'true'], [6, 'ops']])]]);
+  const H = 'CI Number,Rack,Tier,Critical,Budget,Team';
+  const plan = async (row) => (await buildPlan(KINDS.cmdb, `${H}\n${row}`, { mode: 'update' }, admin, lookups({ cis: [existing], customValues: stored }))).items[0];
+  const same = await plan('CI0000007,R1,Gold,yes,,');
+  assert.strictEqual(same.action, 'unchanged');
+  const changed = await plan('CI0000007,R2,,,300,');
+  assert.strictEqual(changed.action, 'update');
+  assert.deepStrictEqual([...changed.data.cf], [[1, 'R2'], [5, '300']]);
+  assert.match(changed.message, /Rack, Budget/);
+  const unticked = await plan('CI0000007,,,no,,');
+  assert.deepStrictEqual([...unticked.data.cf], [[3, 'false']], 'a box that was ticked and is now "no" is a change');
+  const never = await buildPlan(KINDS.cmdb, `${H}\nCI0000007,,,no,,`, { mode: 'update' }, admin, lookups({ cis: [existing], customValues: new Map() }));
+  assert.strictEqual(never.items[0].action, 'unchanged', 'a box that was never ticked and is "no" is not a change');
+});

@@ -1,6 +1,7 @@
 const { db } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const createAsyncRouter = require('../asyncRouter');
+const customFields = require('../customFields');
 
 const router = createAsyncRouter();
 
@@ -20,48 +21,49 @@ router.get('/', requireAuth, async (req, res) => {
 
   if (q) {
     const like = `%${q}%`;
+    // A word typed here also finds records whose custom fields hold it (only fields this person may see).
+    const role = req.session.user.role;
+    const cf = Object.fromEntries(await Promise.all([['incident', 'i'], ['change', 'c'], ['ci', 'ci'], ['problem', 'p'], ['request', 'r']]
+      .map(async ([e, a]) => [e, (await customFields.listFilter(e, a, {}, role)).search(q)])));
 
-    const incidentParams = isEndUser ? [like, like, uid] : [like, like];
     incidents = await db.prepare(`
       SELECT i.*, c.name AS ci_name
       FROM incidents i
       LEFT JOIN cmdb_ci c ON c.id = i.affected_ci_id
-      WHERE (i.number ILIKE ? OR i.short_description ILIKE ?) ${isEndUser ? 'AND i.caller_id = ?' : ''}
+      WHERE (i.number ILIKE ? OR i.short_description ILIKE ?${cf.incident.sql}) ${isEndUser ? 'AND i.caller_id = ?' : ''}
       ORDER BY i.created_at DESC LIMIT 15
-    `).all(...incidentParams);
+    `).all(...(isEndUser ? [like, like, ...cf.incident.params, uid] : [like, like, ...cf.incident.params]));
 
-    const changeParams = isEndUser ? [like, like, uid] : [like, like];
     changes = await db.prepare(`
       SELECT c.*
       FROM changes c
-      WHERE (c.number ILIKE ? OR c.short_description ILIKE ?) ${isEndUser ? 'AND c.requested_by = ?' : ''}
+      WHERE (c.number ILIKE ? OR c.short_description ILIKE ?${cf.change.sql}) ${isEndUser ? 'AND c.requested_by = ?' : ''}
       ORDER BY c.created_at DESC LIMIT 15
-    `).all(...changeParams);
+    `).all(...(isEndUser ? [like, like, ...cf.change.params, uid] : [like, like, ...cf.change.params]));
 
     cis = await db.prepare(`
-      SELECT * FROM cmdb_ci
-      WHERE name ILIKE ? OR ci_number ILIKE ? OR ip_address ILIKE ?
-      ORDER BY name LIMIT 15
-    `).all(like, like, like);
+      SELECT ci.* FROM cmdb_ci ci
+      WHERE ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?${cf.ci.sql}
+      ORDER BY ci.name LIMIT 15
+    `).all(like, like, like, ...cf.ci.params);
 
     if (isStaff) {
       problems = await db.prepare(`
         SELECT p.*, c.name AS ci_name
         FROM problems p
         LEFT JOIN cmdb_ci c ON c.id = p.affected_ci_id
-        WHERE p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?
+        WHERE p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?${cf.problem.sql}
         ORDER BY p.created_at DESC LIMIT 15
-      `).all(like, like, like, like);
+      `).all(like, like, like, like, ...cf.problem.params);
     }
 
-    const requestParams = isEndUser ? [like, like, uid] : [like, like];
     requests = await db.prepare(`
       SELECT r.*, ci.name AS item_name, ci.icon AS item_icon
       FROM service_requests r
       LEFT JOIN catalog_items ci ON ci.id = r.catalog_item_id
-      WHERE (r.number ILIKE ? OR ci.name ILIKE ?) ${isEndUser ? 'AND r.requested_by = ?' : ''}
+      WHERE (r.number ILIKE ? OR ci.name ILIKE ?${cf.request.sql}) ${isEndUser ? 'AND r.requested_by = ?' : ''}
       ORDER BY r.created_at DESC LIMIT 15
-    `).all(...requestParams);
+    `).all(...(isEndUser ? [like, like, ...cf.request.params, uid] : [like, like, ...cf.request.params]));
 
     articles = await db.prepare(`
       SELECT * FROM kb_articles

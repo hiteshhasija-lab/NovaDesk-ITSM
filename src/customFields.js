@@ -340,11 +340,80 @@ async function csvColumns(entity, rows, role) {
   return defs.map((d) => ({ label: d.label, value: (r) => display(d, (many.get(r.id) || new Map()).get(d.id)) }));
 }
 
+// ---------------------------------------------------------------- finding records by their custom fields
+// Only fields the person may see (active, and for staff-only ones a staff role) can be searched or filtered on, so a value
+// they cannot see can never be probed for. `alias` is the table alias the list query gives the records ("i", "ci", ...).
+const likeText = (s) => `%${String(s).replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+const NUMBER_RE_SQL = '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$';      // no bare ? in SQL text: the query layer would take it for a value
+
+// The filters of a list from its query string, as SQL conditions to add with AND, plus what the filter form needs:
+//   cf_<key>=…          text: contains; choice: that choice; yes/no: yes or no
+//   cf_<key>_from/_to   number and date: a range (either end alone is fine)
+// A value that cannot be used is left out and said in `warnings` (never an error page for a typed-in filter).
+// search(term) gives ' OR EXISTS (…)' to add to a list's text search, so a typed word also finds a value in these fields.
+async function listFilter(entity, alias, query, role) {
+  const defs = await definitions(entity, { role });
+  const q = query || {};
+  const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  const where = []; const params = []; const warnings = []; const fields = [];
+  const exists = (d, cond) => ({
+    sql: `EXISTS (SELECT 1 FROM custom_field_values v WHERE v.entity_type = ? AND v.entity_id = ${alias}.id AND v.field_id = ? AND ${cond.sql})`,
+    params: [entity, d.id, ...cond.params],
+  });
+  for (const d of defs) {
+    const k = `cf_${d.key}`;
+    const f = { ...d, value: '', from: '', to: '' };
+    fields.push(f);
+    if (d.type === 'text' || d.type === 'textarea') {
+      const v = text(q[k]).slice(0, 100);
+      if (v) { f.value = v; const e = exists(d, { sql: "v.value ILIKE ? ESCAPE '\\'", params: [likeText(v)] }); where.push(e.sql); params.push(...e.params); }
+    } else if (d.type === 'select') {
+      const v = text(q[k]).toLowerCase();
+      if (v) {
+        const hit = d.options.find((o) => o.value === v);
+        if (!hit) warnings.push(`${d.label}: "${v.slice(0, 40)}" is not one of the choices, so that filter was left out.`);
+        else { f.value = hit.value; const e = exists(d, { sql: 'v.value = ?', params: [hit.value] }); where.push(e.sql); params.push(...e.params); }
+      }
+    } else if (d.type === 'checkbox') {
+      const v = text(q[k]).toLowerCase();
+      if (v === 'yes') { f.value = 'yes'; const e = exists(d, { sql: "v.value = 'true'", params: [] }); where.push(e.sql); params.push(...e.params); }
+      else if (v === 'no') { f.value = 'no'; const e = exists(d, { sql: "v.value = 'true'", params: [] }); where.push(`NOT ${e.sql}`); params.push(...e.params); }
+      else if (v) warnings.push(`${d.label}: use yes or no, so that filter was left out.`);
+    } else {         // number, date
+      const conds = [];
+      for (const [part, op] of [['from', '>='], ['to', '<=']]) {
+        const raw = text(q[`${k}_${part}`]);
+        if (!raw) continue;
+        const r = checkValue(d, raw);
+        if (r.error) { warnings.push(`${r.error} The ${part === 'from' ? 'lower' : 'upper'} end of that filter was left out.`); continue; }
+        f[part] = r.value;
+        if (d.type === 'number') conds.push({ sql: `CASE WHEN v.value ~ '${NUMBER_RE_SQL}' THEN v.value::numeric ${op} ?::numeric ELSE false END`, params: [r.value] });
+        else conds.push({ sql: `v.value ${op} ?`, params: [r.value] });
+      }
+      if (conds.length) { const e = exists(d, { sql: conds.map((c) => c.sql).join(' AND '), params: conds.flatMap((c) => c.params) }); where.push(e.sql); params.push(...e.params); }
+    }
+  }
+  function search(term) {
+    const t = text(term);
+    if (!t || !defs.length) return { sql: '', params: [] };
+    const parts = []; const ps = [];
+    const plain = defs.filter((d) => ['text', 'textarea', 'number', 'date'].includes(d.type));
+    if (plain.length) { parts.push(`(v.field_id IN (${plain.map(() => '?').join(',')}) AND v.value ILIKE ? ESCAPE '\\')`); ps.push(...plain.map((d) => d.id), likeText(t)); }
+    for (const d of defs.filter((x) => x.type === 'select')) {
+      const hits = d.options.filter((o) => o.label.toLowerCase().includes(t.toLowerCase())).map((o) => o.value);
+      if (hits.length) { parts.push(`(v.field_id = ? AND v.value IN (${hits.map(() => '?').join(',')}))`); ps.push(d.id, ...hits); }
+    }
+    if (!parts.length) return { sql: '', params: [] };
+    return { sql: ` OR EXISTS (SELECT 1 FROM custom_field_values v WHERE v.entity_type = ? AND v.entity_id = ${alias}.id AND (${parts.join(' OR ')}))`, params: [entity, ...ps] };
+  }
+  return { where, params, warnings, fields, active: where.length, search };
+}
+
 // A page's answer to custom field values it cannot accept: the same kind of answer as a missing required field.
 const refuse = (res, errors) => res.status(400).render('error', { title: 'Check the form', message: errors.join(' ') });
 
 module.exports = {
   refuse, ENTITIES, TYPES, LIMITS, KEY_RE, FieldError, isStaff, keyFromLabel, slug,
   definitions, definition, parseOptionLines, optionsToLines, validateNew, create, update, move, remove, usage,
-  checkValue, display, typed, valuesFor, valuesForMany, forPage, fromForm, fromApi, attachToRows, csvColumns,
+  checkValue, display, typed, valuesFor, valuesForMany, forPage, fromForm, fromApi, attachToRows, csvColumns, listFilter, saveValues: save,
 };

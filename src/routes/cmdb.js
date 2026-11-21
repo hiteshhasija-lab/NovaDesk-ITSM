@@ -34,7 +34,9 @@ router.get('/', requireAuth, async (req, res) => {
   if (status) { where.push('ci.status = ?'); params.push(status); }
   if (environment) { where.push('ci.environment = ?'); params.push(environment); }
   if (location) { where.push('ci.location = ?'); params.push(location); }
-  if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  const cf = await customFields.listFilter('ci', 'ci', req.query, req.session.user.role);
+  if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?' + cf.search(q).sql + ')'); params.push(`%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params); }
+  where.push(...cf.where); params.push(...cf.params);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let items = await db.prepare(`
@@ -53,7 +55,7 @@ router.get('/', requireAuth, async (req, res) => {
 
   res.render('cmdb/list', {
     title: 'CMDB - Configuration Items', items: pagedItems, filters: { ci_type, status, environment, location, q },
-    locations, sort, pagination, query: req.query
+    locations, sort, pagination, query: req.query, cfFilter: cf
   });
 });
 
@@ -70,7 +72,9 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
   if (status) { where.push('ci.status = ?'); params.push(status); }
   if (environment) { where.push('ci.environment = ?'); params.push(environment); }
   if (location) { where.push('ci.location = ?'); params.push(location); }
-  if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  const cf = await customFields.listFilter('ci', 'ci', req.query, req.session.user.role);
+  if (q) { where.push('(ci.name ILIKE ? OR ci.ci_number ILIKE ? OR ci.ip_address ILIKE ?' + cf.search(q).sql + ')'); params.push(`%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params); }
+  where.push(...cf.where); params.push(...cf.params);
     const rangeCutoff = reportRangeCutoff(req.query.range);
   if (rangeCutoff) { where.push('ci.created_at >= ?'); params.push(rangeCutoff); }
 const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

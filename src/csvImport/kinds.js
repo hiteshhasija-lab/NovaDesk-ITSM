@@ -15,6 +15,7 @@ const { db, nextNumber, nowStr } = require('../db');
 const { checkPassword, hashPassword } = require('../passwords');
 const { CI_TYPE_LABELS, CI_STATUS_LABELS, ENVIRONMENT_LABELS, ASSIGNMENT_GROUPS } = require('../helpers');
 const cmdbActions = require('../cmdbActions');
+const customFields = require('../customFields');
 const sessions = require('../sessionStore');
 const { audit } = require('../audit');
 const { headerKey } = require('./csv');
@@ -230,14 +231,30 @@ const cmdb = {
     ['', 'CORE-SW-02', 'Network Device', 'Production', 'In Stock', '10.0.0.3', '', 'Cisco', 'C9300', 'SN67890', 'DC1 Rack 1', '', 'IRO-Network/Security', '', '', '', '', '', '', 'Spare core switch'],
   ],
 
-  async load() {
+  // The administrator's custom fields for configuration items are columns too: by the field's name or key, or cf_<key>
+  // (which always works, even when a name is also one of the columns above).
+  async customColumns({ actor }) {
+    const defs = await customFields.definitions('ci', { role: actor ? actor.role : 'admin' });
+    const hints = { text: 'Text.', textarea: 'Text.', number: 'A number, like 12 or 3.5.', date: 'Written YYYY-MM-DD.', checkbox: 'yes or no.' };
+    return defs.map((d) => ({
+      field: `cf:${d.key}`, label: d.label, aliases: [d.key, d.label, `cf_${d.key}`], custom: d,
+      help: `Custom field. ${d.type === 'select' ? `One of ${d.options.map((o) => o.label).join(', ')}.` : hints[d.type] || ''}${d.required ? ' Needed for a new item.' : ''}`,
+    }));
+  },
+
+  async load({ actor } = {}) {
+    const rows = await db.prepare("SELECT entity_id, field_id, value FROM custom_field_values WHERE entity_type = 'ci'").all();
+    const customValues = new Map();
+    for (const r of rows) (customValues.get(r.entity_id) || customValues.set(r.entity_id, new Map()).get(r.entity_id)).set(r.field_id, r.value);
     return {
       cis: await db.prepare('SELECT * FROM cmdb_ci').all(),
       people: await db.prepare('SELECT id, username, email, full_name FROM users WHERE active = 1').all(),
+      customCols: await this.customColumns({ actor }),
+      customValues,
     };
   },
 
-  context({ cis, people }) {
+  context({ cis, people, customCols = [], customValues = new Map() }) {
     const group = (rows, keyFn) => { const m = new Map(); for (const r of rows) { const k = keyFn(r); if (!k) continue; (m.get(k) || m.set(k, []).get(k)).push(r); } return m; };
     return {
       byNumber: new Map(cis.map((c) => [String(c.ci_number).toUpperCase(), c])),
@@ -247,6 +264,8 @@ const cmdb = {
       ownerByName: group(people, (p) => lc(p.full_name)),
       seenExisting: new Map(),   // ci id -> row that already dealt with it
       seenNew: new Map(),        // name|type -> row that already adds it
+      customDefs: customCols.map((c) => c.custom),
+      customValues,              // ci id -> Map(field id -> stored value)
     };
   },
 
@@ -271,6 +290,8 @@ const cmdb = {
     if (v.name) { const e = tooLong('Name', v.name, 200); if (e) errors.push(e); }
     for (const [f, label] of CI_DATES) if (v[f]) { const d = pickDate(v[f]); if (d) texts[f] = d; else errors.push(`${label} "${v[f]}" is not a date written YYYY-MM-DD`); }
     let owner_id; if (v.owner) { const r = this.resolveOwner(v.owner, ctx); if (r.error) errors.push(r.error); else owner_id = r.id; }
+    const custom = this.planCustom(v, ctx);
+    errors.push(...custom.errors);
 
     // Which item is this row? By CI number when it has one, otherwise by name (and type, when given).
     let existing = null; let note = null; let key = v.name || v.ci_number;
@@ -300,27 +321,56 @@ const cmdb = {
       if (owner_id !== undefined) wanted.owner_id = owner_id;
       const changes = {};
       for (const [c, val] of Object.entries(wanted)) if ((existing[c] === null || existing[c] === undefined ? '' : existing[c]) !== val) changes[c] = val;
+      // Custom fields: only what differs from what is stored (an empty cell leaves the value alone).
+      const stored = ctx.customValues.get(existing.id) || new Map();
+      const cfNext = new Map(); const cfNames = [];
+      for (const [fieldId, value] of custom.values) {
+        const before = stored.has(fieldId) ? stored.get(fieldId) : null;
+        if (before === value || (value === 'false' && before === null)) continue;
+        cfNext.set(fieldId, value); cfNames.push(custom.labels.get(fieldId));
+      }
       if (errors.length) return { action: 'error', key, message: `${errors.join('. ')}.` };
-      if (!Object.keys(changes).length) return { action: 'unchanged', key, message: 'Nothing to change.' };
-      return { action: 'update', key, message: Object.keys(changes).map((c) => c.replace(/_/g, ' ')).join(', '), data: { existing, changes } };
+      if (!Object.keys(changes).length && !cfNext.size) return { action: 'unchanged', key, message: 'Nothing to change.' };
+      return { action: 'update', key, message: [...Object.keys(changes).map((c) => c.replace(/_/g, ' ')), ...cfNames].join(', '), data: { existing, changes, cf: cfNext } };
     }
 
     if (!v.name) errors.push('Name is empty');
     if (!type && !v.ci_type) errors.push('Type is empty');
+    errors.push(...custom.missing);      // a custom field that is required is needed for a new item
     if (errors.length) return { action: 'error', key, message: `${errors.join('. ')}.` };
     const dup = `${lc(v.name)}|${type}`;
     if (ctx.seenNew.has(dup)) return { action: 'error', key, message: `Same name and type as row ${ctx.seenNew.get(dup)}.` };
     ctx.seenNew.set(dup, row);
-    return { action: 'add', key, message: note || `${CI_TYPE_LABELS[type]}`, data: { name: v.name, ci_type: type, environment, status, owner_id, ...texts } };
+    return { action: 'add', key, message: note || `${CI_TYPE_LABELS[type]}`, data: { name: v.name, ci_type: type, environment, status, owner_id, ...texts, cf: custom.values } };
+  },
+
+  // The custom field columns of one row: { values: Map(field id -> text to store), labels, errors, missing } (missing: required ones that are empty).
+  planCustom(v, ctx) {
+    const values = new Map(); const labels = new Map(); const errors = []; const missing = [];
+    for (const d of ctx.customDefs) {
+      labels.set(d.id, d.label);
+      const raw = v[`cf:${d.key}`] || '';
+      if (!raw) { if (d.required) missing.push(d.type === 'checkbox' ? `${d.label} must be yes` : `${d.label} is required`); continue; }
+      let r;
+      if (d.type === 'checkbox') { const b = pickBool(raw); r = b === null ? { error: `${d.label} "${raw}" is not yes or no` } : { value: b ? 'true' : 'false' }; }
+      else if (d.type === 'date') { const dt = pickDate(raw); r = dt ? { value: dt } : { error: `${d.label} "${raw}" is not a date written YYYY-MM-DD` }; }
+      else { r = customFields.checkValue(d, raw); if (r.error) r.error = r.error.replace(/\.$/, ''); }
+      if (r.error) { errors.push(r.error); continue; }
+      if (d.required && d.type === 'checkbox' && r.value !== 'true') { missing.push(`${d.label} must be yes`); continue; }
+      values.set(d.id, r.value);
+    }
+    return { values, labels, errors, missing };
   },
 
   async apply(item, ctx, { actor }) {
     if (item.action === 'add') {
       const made = await cmdbActions.createCi({ actor, fields: item.data });
+      if (item.data.cf && item.data.cf.size) await customFields.saveValues('ci', made.id, ctx.customDefs, new Map(), item.data.cf, actor, 'created');
       item.message = `${item.message}; ${made.ci_number}`;
       return;
     }
-    await cmdbActions.updateCi({ existing: item.data.existing, fields: { ...item.data.existing, ...item.data.changes } });
+    if (Object.keys(item.data.changes).length) await cmdbActions.updateCi({ existing: item.data.existing, fields: { ...item.data.existing, ...item.data.changes } });
+    if (item.data.cf && item.data.cf.size) await customFields.saveValues('ci', item.data.existing.id, ctx.customDefs, ctx.customValues.get(item.data.existing.id) || new Map(), item.data.cf, actor, null);
   },
 };
 

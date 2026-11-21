@@ -425,7 +425,19 @@ incident, a support contract on a CI, a change window on a change.
   clears it, a choice can be given by its label); changes and problems are read-only in the API. See `/api/docs`.
 - **Webhooks:** every event for these records carries `custom_fields` in the record, with every active field (a receiver is an
   integration an administrator set up, so staff-only fields are included), as they stand when the event is sent.
-- **Not (yet) covered:** CSV import, search and list filters do not use custom fields. Knowledge articles and people have none.
+- **Finding records by them.** Each list (incidents, requests, changes, problems, configuration items) has a *Custom fields* part in its filter
+  form: a text field is matched by a word it contains, a choice and a yes/no by that choice, and a number or a date by a range (either end alone is
+  fine). They combine with each other and with the other filters and the search box, page links and the CSV export keep them, and
+  `cf_<key>`, `cf_<key>_from` and `cf_<key>_to` in the address do the same for a bookmark. The search box on a list, and the global search, also
+  find a word held in a custom field (a choice by its name). Only fields the person may see count: a staff-only field cannot be filtered on or found by an end user, and a field that is switched off
+  is ignored. A value that cannot be used (a letter in a number, a choice that does not exist) is left out of the filter and said on the page.
+- **Importing configuration items with them.** The import page lists the custom fields of configuration items as extra columns, and the example file
+  has them. A column is matched by the field's label, its key or `cf_<key>` (which always works, even if a label is also the name of a built-in column).
+  Values are checked as on the form: a choice by name or value, yes/no, a date written YYYY-MM-DD, a number; a bad value fails that row with the field
+  and the value. A required field is needed for a new item and not for an update, an empty cell leaves a stored value alone, a changed value
+  is noted in the item's history, and a file exported from the CMDB page (with its custom columns) imports again with nothing to change.
+  Checked by `node scripts/custom-find-check.js` (in CI).
+- **Not covered:** custom fields on incidents, requests, changes and problems cannot be imported (those cannot be imported at all). Knowledge articles and people have none.
 
 Everything is audited (`customfield.created`, `.updated`, `.moved`, `.deleted`). Values live in their own table, never as
 a column on a record table, so adding a field changes no table; a database trigger removes a record's values when the

@@ -40,7 +40,9 @@ router.get('/', async (req, res) => {
 router.get('/:kind/template.csv', async (req, res) => {
   const kind = kindOr404(req, res); if (!kind) return;
   const cols = kind.columns.filter((c) => !c.optionalInTemplate);
-  const csv = toCsv(kind.templateRows, cols.map((c) => ({ label: c.label, value: (r) => r[kind.columns.indexOf(c)] })));
+  // The administrator's custom fields for this kind of record come as extra, empty columns.
+  const custom = kind.customColumns ? await kind.customColumns({ actor: req.session.user }) : [];
+  const csv = toCsv(kind.templateRows, [...cols.map((c) => ({ label: c.label, value: (r) => r[kind.columns.indexOf(c)] })), ...custom.map((c) => ({ label: c.label, value: () => '' }))]);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${kind.id}-import-template.csv"`);
   res.send(csv);
@@ -91,7 +93,8 @@ router.post('/job/:id/cancel', async (req, res) => {
 
 router.get('/:kind', async (req, res) => {
   const kind = kindOr404(req, res); if (!kind) return;
-  res.render('import/kind', { title: `Import ${kind.label.toLowerCase()}`, kind, error: null, values: { mode: 'add', defaultStatus: 'draft' } });
+  const custom = kind.customColumns ? await kind.customColumns({ actor: req.session.user }) : [];
+  res.render('import/kind', { title: `Import ${kind.label.toLowerCase()}`, kind, custom, error: null, values: { mode: 'add', defaultStatus: 'draft' } });
 });
 
 router.post('/:kind', (req, res) => {

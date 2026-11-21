@@ -42,10 +42,12 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
   if (priority) { where.push('p.priority = ?'); params.push(priority); }
   if (assigned_to === 'unassigned') { where.push('p.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('p.assigned_to = ?'); params.push(assigned_to); }
+  const cf = await customFields.listFilter('problem', 'p', req.query, req.session.user.role);
   if (q) {
-    where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?' + cf.search(q).sql + ')');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params);
   }
+  where.push(...cf.where); params.push(...cf.params);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   let problems = await db.prepare(`
@@ -66,7 +68,7 @@ router.get('/', requireAuth, requireRole('admin', 'agent'), async (req, res) => 
 
   res.render('problems/list', {
     title: 'Problems', problems: items, filters: { status, priority, assigned_to, q },
-    assignableUsers, sort, pagination, query: req.query
+    assignableUsers, sort, pagination, query: req.query, cfFilter: cf
   });
 });
 
@@ -79,10 +81,12 @@ router.get('/export.csv', requireAuth, requireRole('admin', 'agent'), async (req
   if (priority) { where.push('p.priority = ?'); params.push(priority); }
   if (assigned_to === 'unassigned') { where.push('p.assigned_to IS NULL'); }
   else if (assigned_to) { where.push('p.assigned_to = ?'); params.push(assigned_to); }
+  const cf = await customFields.listFilter('problem', 'p', req.query, req.session.user.role);
   if (q) {
-    where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?)');
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    where.push('(p.number ILIKE ? OR p.short_description ILIKE ? OR c.name ILIKE ? OR c.ci_number ILIKE ?' + cf.search(q).sql + ')');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, ...cf.search(q).params);
   }
+  where.push(...cf.where); params.push(...cf.params);
     const rangeCutoff = reportRangeCutoff(req.query.range);
   if (rangeCutoff) { where.push('p.created_at >= ?'); params.push(rangeCutoff); }
 const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

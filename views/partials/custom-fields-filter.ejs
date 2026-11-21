@@ -1,0 +1,45 @@
+<%# Filters on the administrator's custom fields, inside a list's filter form. Needs cfFilter (customFields.listFilter) and query. %>
+<% if (typeof cfFilter !== 'undefined' && cfFilter && cfFilter.fields.length) { %>
+<div class="col-12">
+  <details class="cf-filter"<%- (cfFilter.active || cfFilter.warnings.length) ? ' open' : '' %>>
+    <summary class="small text-muted" style="cursor:pointer;">Custom fields<% if (cfFilter.active) { %> <span class="badge bg-primary align-middle"><%= cfFilter.active %> in use</span><% } %></summary>
+    <% cfFilter.warnings.forEach(w => { %><div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle"></i> <%= w %></div><% }) %>
+    <div class="row g-2 mt-1">
+      <% cfFilter.fields.forEach(f => { %>
+      <div class="col-sm-6 col-md-3">
+        <label class="form-label small mb-0" for="cf_<%= f.key %>"><%= f.label %></label>
+        <% if (f.type === 'select') { %>
+          <select class="form-select form-select-sm" id="cf_<%= f.key %>" name="cf_<%= f.key %>">
+            <option value="">Any</option>
+            <% f.options.forEach(o => { %><option value="<%= o.value %>"<%= f.value === o.value ? ' selected' : '' %>><%= o.label %></option><% }) %>
+          </select>
+        <% } else if (f.type === 'checkbox') { %>
+          <select class="form-select form-select-sm" id="cf_<%= f.key %>" name="cf_<%= f.key %>">
+            <option value="">Any</option>
+            <option value="yes"<%= f.value === 'yes' ? ' selected' : '' %>>Yes</option>
+            <option value="no"<%= f.value === 'no' ? ' selected' : '' %>>No</option>
+          </select>
+        <% } else if (f.type === 'number') { %>
+          <div class="input-group input-group-sm">
+            <input type="text" inputmode="decimal" class="form-control" id="cf_<%= f.key %>" name="cf_<%= f.key %>_from" value="<%= f.from %>" placeholder="from" aria-label="<%= f.label %>, from">
+            <input type="text" inputmode="decimal" class="form-control" name="cf_<%= f.key %>_to" value="<%= f.to %>" placeholder="to" aria-label="<%= f.label %>, to">
+          </div>
+        <% } else if (f.type === 'date') { %>
+          <div class="input-group input-group-sm">
+            <input type="date" class="form-control" id="cf_<%= f.key %>" name="cf_<%= f.key %>_from" value="<%= f.from %>" aria-label="<%= f.label %>, from">
+            <input type="date" class="form-control" name="cf_<%= f.key %>_to" value="<%= f.to %>" aria-label="<%= f.label %>, to">
+          </div>
+        <% } else { %>
+          <input type="text" class="form-control form-control-sm" id="cf_<%= f.key %>" name="cf_<%= f.key %>" value="<%= f.value %>" maxlength="100" placeholder="contains…">
+        <% } %>
+      </div>
+      <% }) %>
+    </div>
+    <div class="mt-2 d-flex align-items-center gap-3">
+      <button type="submit" class="btn btn-sm btn-outline-primary">Apply</button>
+      <% const clear = { page: null }; cfFilter.fields.forEach(f => { clear['cf_' + f.key] = null; clear['cf_' + f.key + '_from'] = null; clear['cf_' + f.key + '_to'] = null; }); %>
+      <% if (cfFilter.active) { %><a class="small" href="<%- h.withQuery(query, clear) || '?' %>">Clear these filters</a><% } %>
+    </div>
+  </details>
+</div>
+<% } %>
