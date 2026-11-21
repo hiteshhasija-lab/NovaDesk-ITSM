@@ -199,6 +199,11 @@ jobs:
           # Before the sign-in policies step too: it signs in as the demonstration administrator.
           export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
           node scripts/tenant-limits-check.js
+      - name: Download my data (who is asked again, the password and the code, single sign-on, the lock, the limit per hour, the audit log, the email)
+        run: |
+          # Starts its own copy of NovaDesk, a local single sign-on provider and a mail sink; leaves two-step verification and locks cleaned up first.
+          export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=novadesk PGPASSWORD=ci_only_password PGDATABASE=novadesk
+          node scripts/self-data-check.js
       - name: Security measures (forged requests and uploads, headers, password rules, lockout, audit log)
         run: |
           # Runs before the sign-in policies step: that one leaves the demonstration administrator with two-step

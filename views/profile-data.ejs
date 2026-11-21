@@ -1,0 +1,42 @@
+<%- include('partials/head') %>
+<%- include('partials/nav') %>
+<div class="container-fluid px-4 py-4" style="max-width: 860px;">
+  <h4 class="mb-3"><i class="bi bi-download text-secondary me-1"></i>Download my data</h4>
+
+  <div class="card mb-3"><div class="card-body">
+    <p class="small">You can get a copy of what <%= brand.name %> holds about you: your details, your sign-in methods (never the secrets), the records you raised or were given, what you wrote, and a log of what you did. It is one file (JSON) that you can read in any text editor or hand to another service.</p>
+
+    <h6 class="section-title">What is in it right now</h6>
+    <% if (!held.length) { %><p class="small text-muted">Nothing but your account itself.</p><% } else { %>
+    <ul class="list-unstyled small mb-3 row">
+      <% held.forEach(x => { %><li class="col-sm-6"><%= x.label %>: <strong><%= x.count %></strong></li><% }) %>
+    </ul>
+    <% } %>
+    <p class="small text-muted mb-0">Not in it: passwords, the two-step secret, recovery codes and API key secrets (they are never shown to anyone), what other people wrote on the same records, and copies kept elsewhere such as server backups.</p>
+  </div></div>
+
+  <div class="card" id="download"><div class="card-body">
+    <h6 class="section-title">Confirm that it is you</h6>
+    <% if (error) { %><div class="alert alert-danger py-2 small"><%= error %></div><% } %>
+    <form method="POST" action="/profile/data" class="row g-3 align-items-end" autocomplete="off">
+      <div class="col-md-5">
+        <label class="form-label" for="password">Your password</label>
+        <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" <% if (!recentSso) { %>required<% } %>>
+        <% if (recentSso) { %><div class="form-text">You signed in with single sign-on a moment ago, so this can stay empty.</div>
+        <% } else if (viaSso) { %><div class="form-text">You use single sign-on, so there is no password to type: sign out and in again, then come straight back here.</div><% } %>
+      </div>
+      <% if (twoStep) { %>
+      <div class="col-md-4">
+        <label class="form-label" for="code">Code from your app</label>
+        <input type="text" id="code" name="code" class="form-control" inputmode="numeric" autocomplete="one-time-code" <% if (!recentSso) { %>required<% } %>>
+        <div class="form-text">Or a recovery code.</div>
+      </div>
+      <% } %>
+      <div class="col-md-3">
+        <button type="submit" class="btn btn-primary w-100"><i class="bi bi-download"></i> Download</button>
+      </div>
+    </form>
+    <p class="small text-muted mt-3 mb-0">We email you each time this is used, so that nobody can do it quietly from your account. Up to <%= perHour %> downloads an hour. To have your data removed instead, ask your administrator.</p>
+  </div></div>
+</div>
+<%- include('partials/foot') %>

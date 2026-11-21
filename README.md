@@ -310,6 +310,15 @@ in the audit log.
   reported, comments, articles, request notes), the facts of what they did (tickets assigned to them, approvals, items
   they own, files they uploaded), notices sent to them, mail they sent in, and the audit log both ways. Never password
   hashes, two-step secrets or API key hashes, and not what other people wrote on the same records.
+- **Download my data (self-service).** Everyone, with any role, can get that same file about themselves from *Download my data* in
+  the account menu (`/profile/data`), without asking an administrator. Because the file holds personal details, a borrowed or
+  stolen session is not enough: a person who signed in with a password types it again (and the code from their authenticator
+  app when two-step verification is on); a person who signed in through single sign-on has no password here, so a sign-in made
+  in the last 15 minutes is accepted instead (an older one is asked to sign in again). Wrong passwords count towards the
+  same account lock as at sign-in. At most 5 downloads an hour per person. Each download and each refusal is in the audit log
+  (`privacy.self_exported`, `privacy.self_export_refused`), and the person gets an email each time ("Your data was downloaded")
+  so that nobody can do it quietly from their account. The file is always about the signed-in person; nothing in the request
+  can name someone else. Checked by `node scripts/self-data-check.js` (runs in CI, with a local single sign-on provider and a mail sink).
 - **Anonymise a person** (cannot be undone). The account stays, so every ticket, comment and log entry still points at
   someone and keeps its time, but it no longer says who they were: name, username, email and department go; so do the
   password, single sign-on links, two-step verification, API keys, open sessions, group memberships and followed
